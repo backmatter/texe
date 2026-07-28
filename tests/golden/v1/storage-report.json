@@ -1,0 +1,12 @@
+{
+  "schema": "texe.storage-report/v1",
+  "project": [
+    {
+      "path": ".texe/build",
+      "bytes": 4096,
+      "purpose": "build intermediates and timing history"
+    }
+  ],
+  "shared": [],
+  "total_bytes": 4096
+}

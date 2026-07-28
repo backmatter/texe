@@ -1,0 +1,5 @@
+{
+  "schema": "texe.bare-report/v1",
+  "status": "command-required",
+  "next": "texe init --yes"
+}

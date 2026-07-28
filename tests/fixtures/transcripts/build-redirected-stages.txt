@@ -1,0 +1,8 @@
+Preparing LaTeX environment
+Prepared LaTeX environment
+Preparing required packages
+Prepared required packages
+Checking document requirements
+Checked document requirements
+Building PDF
+Built PDF

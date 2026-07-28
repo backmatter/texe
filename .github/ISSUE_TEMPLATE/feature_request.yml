@@ -1,0 +1,37 @@
+name: Feature request
+description: Propose a user-visible improvement or supported workflow.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain the writing or reproducibility problem first. Changes to public contracts or trust boundaries should be discussed before implementation.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is difficult or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest user-facing change that would solve the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Compatibility and trust-boundary effects
+      description: Note effects on manifests, locks, schemas, platforms, networking, command execution, or reproducibility.

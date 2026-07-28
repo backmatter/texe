@@ -1,0 +1,9 @@
+{
+  "schema": "texe.init-report/v1",
+  "manifest": "paper/texe.toml",
+  "created_files": ["texe.toml", "main.tex"],
+  "engine": "pdflatex",
+  "git": true,
+  "vscode": false,
+  "integration_messages": ["initialized Git repository"]
+}

@@ -1,0 +1,26 @@
+[workspace]
+allow_dirty = false
+changelog_update = false
+dependencies_update = false
+git_only = false
+git_release_enable = false
+git_tag_enable = false
+git_tag_name = "v{{ version }}"
+pr_draft = false
+publish = false
+release_always = false
+repo_url = "https://github.com/backmatter/texe"
+semver_check = true
+
+[[package]]
+name = "texe"
+changelog_path = "./CHANGELOG.md"
+changelog_update = true
+git_release_draft = true
+git_release_enable = true
+git_release_latest = false
+git_tag_enable = true
+
+[[package]]
+name = "xtask"
+release = false

@@ -1,0 +1,6 @@
+{
+  "schema": "texe.clean-dry-run/v1",
+  "project": [".texe/build"],
+  "caches": ["/home/example/.local/share/texe/downloads/old"],
+  "freed_bytes": 8192
+}

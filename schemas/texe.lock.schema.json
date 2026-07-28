@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.lock.schema.json",
+  "title": "texe project lock v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generated_with", "source_date_epoch", "toolchain", "packages"],
+  "properties": {
+    "schema": { "const": "texe.lock/v1" },
+    "generated_with": { "type": "string" },
+    "source_date_epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Build timestamp handed to the engine as SOURCE_DATE_EPOCH so a locked project renders identical bytes on every machine. Written by every current texe release."
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "engine", "channel", "target", "fingerprint"],
+      "properties": {
+        "provider": { "type": "string" },
+        "engine": { "type": "string" },
+        "channel": { "type": "string" },
+        "target": { "type": "string" },
+        "fingerprint": { "type": "string" },
+        "registry_url": { "type": "string" },
+        "registry_metadata_digest": { "type": "string" },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["provider", "sha512"],
+            "properties": {
+              "provider": { "type": "string" },
+              "sha512": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "packages": {
+      "$ref": "https://raw.githubusercontent.com/backmatter/pqty/main/schemas/pqty.lock.schema.json"
+    }
+  }
+}

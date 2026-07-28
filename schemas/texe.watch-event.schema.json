@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.watch-event.schema.json",
+  "title": "texe watch event v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "event",
+        "project",
+        "pdf",
+        "viewer",
+        "viewer_opened"
+      ],
+      "properties": {
+        "schema": { "const": "texe.watch-event/v1" },
+        "event": { "const": "watch-started" },
+        "project": { "type": "string" },
+        "pdf": { "type": "string" },
+        "viewer": {
+          "type": ["string", "null"]
+        },
+        "viewer_opened": { "type": "boolean" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "event", "build", "reason", "changed"],
+      "properties": {
+        "schema": { "const": "texe.watch-event/v1" },
+        "event": { "const": "build-started" },
+        "build": { "type": "integer", "minimum": 1 },
+        "reason": {
+          "enum": ["initial", "files-changed"]
+        },
+        "changed": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "event", "build", "report"],
+      "properties": {
+        "schema": { "const": "texe.watch-event/v1" },
+        "event": { "const": "build-succeeded" },
+        "build": { "type": "integer", "minimum": 1 },
+        "report": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "engine",
+            "artifact",
+            "engine_passes",
+            "bibliography_runs",
+            "index_runs",
+            "convergence_rounds",
+            "environment_fingerprint",
+            "cached",
+            "duration_millis",
+            "warning_count",
+            "warnings"
+          ],
+          "properties": {
+            "schema": { "const": "texe.build-report/v1" },
+            "engine": { "type": "string" },
+            "artifact": { "type": "string" },
+            "engine_passes": { "type": "integer", "minimum": 0 },
+            "bibliography_runs": { "type": "integer", "minimum": 0 },
+            "index_runs": { "type": "integer", "minimum": 0 },
+            "convergence_rounds": { "type": "integer", "minimum": 0 },
+            "environment_fingerprint": { "type": "string" },
+            "cached": { "type": "boolean" },
+            "duration_millis": { "type": "integer", "minimum": 0 },
+            "warning_count": { "type": "integer", "minimum": 0 },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "message"],
+                "properties": {
+                  "kind": { "type": "string" },
+                  "message": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "event",
+        "build",
+        "error",
+        "previous_pdf",
+        "watching"
+      ],
+      "properties": {
+        "schema": { "const": "texe.watch-event/v1" },
+        "event": { "const": "build-failed" },
+        "build": { "type": "integer", "minimum": 1 },
+        "error": {
+          "$ref": "texe.error.schema.json"
+        },
+        "previous_pdf": { "type": "boolean" },
+        "watching": { "const": true }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "event"],
+      "properties": {
+        "schema": { "const": "texe.watch-event/v1" },
+        "event": { "const": "watch-stopped" }
+      }
+    }
+  ]
+}

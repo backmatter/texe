@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.doctor-report.schema.json",
+  "title": "texe doctor report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "project_root",
+    "manifest",
+    "provider",
+    "adapter",
+    "engine",
+    "engine_executable",
+    "engine_version",
+    "kpsewhich_executable",
+    "package_manager",
+    "trace_adapter",
+    "texmf_dist",
+    "engine_roots",
+    "toolchain_verification"
+  ],
+  "properties": {
+    "schema": { "const": "texe.doctor-report/v1" },
+    "project_root": { "type": "string" },
+    "manifest": { "type": "string" },
+    "provider": { "type": "string" },
+    "adapter": { "type": "string" },
+    "engine": { "type": "string" },
+    "engine_executable": { "type": "string" },
+    "engine_version": { "type": "string" },
+    "kpsewhich_executable": { "type": "string" },
+    "package_manager": { "type": "string" },
+    "trace_adapter": { "type": "string" },
+    "texmf_dist": { "type": "string" },
+    "engine_roots": { "type": "array", "items": { "type": "string" } },
+    "toolchain_verification": { "enum": ["interval", "deep"] }
+  }
+}

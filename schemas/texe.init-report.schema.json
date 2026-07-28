@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.init-report.schema.json",
+  "title": "texe init report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "manifest",
+    "created_files",
+    "engine",
+    "git",
+    "vscode",
+    "integration_messages"
+  ],
+  "properties": {
+    "schema": { "const": "texe.init-report/v1" },
+    "manifest": { "type": "string" },
+    "created_files": { "type": "array", "items": { "type": "string" } },
+    "engine": { "type": "string" },
+    "git": { "type": "boolean" },
+    "vscode": { "type": "boolean" },
+    "integration_messages": { "type": "array", "items": { "type": "string" } }
+  }
+}

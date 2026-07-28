@@ -1,0 +1,26 @@
+\documentclass{commonreport}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{projectnote}
+
+\title{Managed \LaTeX{} acceptance document}
+\author{texe}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{A common document}\label{sec:common}
+Unicode input works for words such as café and naïve.
+\ProjectNote{Local classes and styles are mounted from the project.}
+
+\input{sections/mathematics}
+
+\section{Graphics and links}
+Equation~\eqref{eq:identity} appears in Section~\ref{sec:math}.
+\begin{center}
+  \includegraphics[width=.35\linewidth]{figures/box.mps}
+\end{center}
+Visit \href{https://www.latex-project.org/}{the \LaTeX{} project}.
+\end{document}

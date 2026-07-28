@@ -1,0 +1,21 @@
+class Texe < Formula
+  desc "Reproducible LaTeX environment for scientific writing"
+  homepage "https://github.com/backmatter/texe"
+  url "https://github.com/backmatter/texe/releases/download/v@VERSION@/texe-aarch64-macos.tar.gz"
+  version "@VERSION@"
+  sha256 "@SHA256@"
+  license "MIT"
+
+  depends_on macos: :big_sur
+
+  def install
+    odie "texe currently supports Apple Silicon Macs only" unless Hardware::CPU.arm?
+
+    bin.install "bin/texe", "bin/pqty", "bin/pqty-fls"
+    doc.install "README.md", "LICENSE", "PDFJS-LICENSE"
+  end
+
+  test do
+    assert_match "texe #{version}", shell_output("#{bin}/texe --version")
+  end
+end

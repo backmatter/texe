@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.error.schema.json",
+  "title": "texe error envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "error"],
+  "properties": {
+    "schema": { "const": "texe.error/v1" },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "code", "message"],
+      "properties": {
+        "category": {
+          "enum": ["usage", "project", "tool", "network", "build", "system", "cancelled"]
+        },
+        "code": { "enum": [2, 3, 4, 5, 6, 7, 130] },
+        "message": { "type": "string" },
+        "action": { "type": "string" },
+        "diagnostic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "family",
+            "message",
+            "explanation",
+            "action",
+            "original",
+            "log",
+            "previous_artifact"
+          ],
+          "properties": {
+            "schema": { "const": "texe.diagnostic/v1" },
+            "family": { "type": "string" },
+            "message": { "type": "string" },
+            "explanation": { "type": "string" },
+            "action": { "type": "string" },
+            "location": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file", "line"],
+              "properties": {
+                "file": { "type": "string" },
+                "line": { "type": "integer", "minimum": 1 },
+                "source": { "type": "string" }
+              }
+            },
+            "original": { "type": "string" },
+            "log": { "type": "string" },
+            "previous_artifact": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "retained"],
+              "properties": {
+                "path": { "type": "string" },
+                "retained": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

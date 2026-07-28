@@ -1,0 +1,4 @@
+Paper environment ready
+project: <PROJECT>
+engine: pdfLaTeX
+details: run `texe doctor --verbose`

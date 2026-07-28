@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
+
+PackageIdentifier: Backmatter.Texe
+PackageVersion: @VERSION@
+PackageLocale: en-US
+Publisher: backmatter
+PublisherUrl: https://github.com/backmatter
+PublisherSupportUrl: https://github.com/backmatter/texe/issues
+PrivacyUrl: https://github.com/backmatter/texe/blob/v@VERSION@/docs/privacy.md
+Author: backmatter
+PackageName: texe
+PackageUrl: https://github.com/backmatter/texe
+License: MIT
+LicenseUrl: https://github.com/backmatter/texe/blob/v@VERSION@/LICENSE
+ShortDescription: Go from an empty computer to a reproducible LaTeX paper.
+Description: >-
+  texe creates, builds, watches, and diagnoses LaTeX papers using a
+  checksummed project-managed toolchain. It includes the compatible pqty and
+  pqty-fls commands and does not require a system TeX Live installation.
+Tags:
+  - latex
+  - science
+  - tex
+ReleaseNotesUrl: https://github.com/backmatter/texe/releases/tag/v@VERSION@
+ManifestType: defaultLocale
+ManifestVersion: 1.12.0

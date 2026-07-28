@@ -1,0 +1,4 @@
+schema = "texe.toolchain-catalog/v1"
+
+[aliases]
+stable = "texlive-2026-07-26"

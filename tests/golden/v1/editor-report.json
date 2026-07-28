@@ -1,0 +1,5 @@
+{
+  "schema": "texe.editor-report/v1",
+  "removed": false,
+  "messages": ["configured the texe VS Code integration"]
+}

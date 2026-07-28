@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.bare-report.schema.json",
+  "title": "texe bare-command report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "next"],
+  "properties": {
+    "schema": { "const": "texe.bare-report/v1" },
+    "status": { "const": "command-required" },
+    "next": { "type": "string" }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.clean.schema.json",
+  "title": "texe clean reports v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "project", "caches", "freed_bytes"],
+      "properties": {
+        "schema": { "const": "texe.clean-report/v1" },
+        "project": { "type": "array", "items": { "type": "string" } },
+        "caches": { "type": "array", "items": { "type": "string" } },
+        "freed_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "project", "caches", "freed_bytes"],
+      "properties": {
+        "schema": { "const": "texe.clean-dry-run/v1" },
+        "project": { "type": "array", "items": { "type": "string" } },
+        "caches": { "type": "array", "items": { "type": "string" } },
+        "freed_bytes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+Package: texe
+Version: @VERSION@
+Section: science
+Priority: optional
+Architecture: amd64
+Installed-Size: @INSTALLED_SIZE@
+Maintainer: texe maintainers
+Homepage: https://github.com/backmatter/texe
+Description: Reproducible LaTeX environment for scientific writing
+ texe creates and builds LaTeX papers with a checksummed, project-managed
+ toolchain. The package includes texe, pqty, and pqty-fls and does not require
+ a system TeX Live installation.

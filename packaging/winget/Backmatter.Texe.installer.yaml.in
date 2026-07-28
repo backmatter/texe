@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+
+PackageIdentifier: Backmatter.Texe
+PackageVersion: @VERSION@
+InstallerType: zip
+NestedInstallerType: portable
+Commands:
+  - texe
+  - pqty
+  - pqty-fls
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/backmatter/texe/releases/download/v@VERSION@/texe-x86_64-windows.zip
+    InstallerSha256: @SHA256@
+    NestedInstallerFiles:
+      - RelativeFilePath: texe-x86_64-windows/bin/texe.exe
+        PortableCommandAlias: texe
+      - RelativeFilePath: texe-x86_64-windows/bin/pqty.exe
+        PortableCommandAlias: pqty
+      - RelativeFilePath: texe-x86_64-windows/bin/pqty-fls.exe
+        PortableCommandAlias: pqty-fls
+ManifestType: installer
+ManifestVersion: 1.12.0

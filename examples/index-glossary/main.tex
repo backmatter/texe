@@ -1,0 +1,22 @@
+\documentclass{article}
+\usepackage{makeidx}
+\usepackage[acronym]{glossaries}
+
+\makeindex
+\makeglossaries
+
+\newglossaryentry{typesetting}{
+  name={typesetting},
+  description={the composition of text for publication}
+}
+\newacronym{api}{API}{application programming interface}
+
+\begin{document}
+An \gls{api} can automate \gls{typesetting}.
+\index{automation}
+\index{typesetting}
+
+\printindex
+\printglossary
+\printglossary[type=\acronymtype]
+\end{document}

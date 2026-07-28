@@ -1,0 +1,56 @@
+{
+  "name": "texe-paper-layout",
+  "displayName": "texe Paper Layout",
+  "description": "Opens a texe paper source and its LaTeX Workshop PDF side by side.",
+  "version": "@VERSION@",
+  "publisher": "backmatter",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "workspaceContains:texe.toml"
+  ],
+  "extensionDependencies": [
+    "James-Yu.latex-workshop"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Opening the PDF requires the LaTeX Workshop extension, which is enabled after the folder is trusted."
+    }
+  },
+  "contributes": {
+    "configuration": {
+      "title": "texe",
+      "properties": {
+        "texe.editor.openPaper": {
+          "scope": "resource",
+          "type": "object",
+          "description": "A one-time source and PDF layout request created by texe.",
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "pdf": {
+              "type": "string"
+            },
+            "request": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "pdf",
+            "request"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "schema": "texe.clean-report/v1",
+  "project": [".texe/build"],
+  "caches": [],
+  "freed_bytes": 4096
+}

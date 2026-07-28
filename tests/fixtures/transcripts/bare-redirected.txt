@@ -1,0 +1,3 @@
+texe needs a command when input is redirected.
+next: run `texe init --yes` to create a paper without prompts
+help: run `texe --help` to see every command

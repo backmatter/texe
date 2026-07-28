@@ -1,0 +1,16 @@
+{
+  "schema": "texe.doctor-report/v1",
+  "project_root": "/home/example/paper",
+  "manifest": "/home/example/paper/texe.toml",
+  "provider": "managed",
+  "adapter": "kpathsea",
+  "engine": "pdflatex",
+  "engine_executable": "/home/example/.local/share/texe/toolchains/pdftex",
+  "engine_version": "pdfTeX 3.141592653",
+  "kpsewhich_executable": "/home/example/.local/share/texe/toolchains/kpsewhich",
+  "package_manager": "/usr/local/bin/pqty",
+  "trace_adapter": "/usr/local/bin/pqty-fls",
+  "texmf_dist": "/home/example/.local/share/texe/toolchains/texmf-dist",
+  "engine_roots": ["/home/example/.local/share/texe/toolchains/texmf-dist"],
+  "toolchain_verification": "deep"
+}

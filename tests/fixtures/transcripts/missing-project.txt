@@ -1,0 +1,2 @@
+texe: no texe project was found from <PROJECT>
+next: run `texe` to create a paper, or `texe init` in an existing LaTeX folder

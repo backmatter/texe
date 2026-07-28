@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.editor-report.schema.json",
+  "title": "texe editor integration report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "removed", "messages"],
+  "properties": {
+    "schema": { "const": "texe.editor-report/v1" },
+    "removed": { "type": "boolean" },
+    "messages": { "type": "array", "items": { "type": "string" } }
+  }
+}

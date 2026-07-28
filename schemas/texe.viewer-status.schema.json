@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.viewer-status.schema.json",
+  "title": "texe local viewer status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generation"],
+  "properties": {
+    "schema": { "const": "texe.viewer-status/v1" },
+    "generation": { "type": "integer", "minimum": 0 }
+  }
+}

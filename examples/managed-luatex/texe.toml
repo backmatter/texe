@@ -1,0 +1,7 @@
+schema = "texe.project/v1"
+
+[project]
+entry = "main.tex"
+
+[toolchain]
+engine = "lualatex"

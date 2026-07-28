@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.project.schema.json",
+  "title": "texe project manifest v1",
+  "$defs": {
+    "portableRelativePath": {
+      "type": "string",
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*[\\u0000-\\u001F\\u007F])(?!\\.\\.?($|/))(?!.*(/\\.\\.?)(/|$))(?!.*//)(?!.*\\/$).+$"
+    },
+    "portableProjectPath": {
+      "allOf": [
+        { "$ref": "#/$defs/portableRelativePath" },
+        { "pattern": "^(?!\\.texe(?:/|$)).+$" }
+      ]
+    },
+    "privatePath": {
+      "type": "string",
+      "pattern": "^\\.texe/(?!/)(?!\\.\\.?($|/))(?!.*(/\\.\\.?)(/|$))(?!.*//)(?!.*\\/$)(?!.*\\\\)(?!.*[\\u0000-\\u001F\\u007F]).+$"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "project", "toolchain"],
+  "properties": {
+    "schema": {
+      "const": "texe.project/v1"
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry"],
+      "properties": {
+        "entry": {
+          "$ref": "#/$defs/portableProjectPath"
+        },
+        "build_dir": {
+          "$ref": "#/$defs/privatePath",
+          "default": ".texe/build"
+        },
+        "generated": {
+          "type": "array",
+          "maxItems": 128,
+          "default": [],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "content"],
+            "properties": {
+              "path": { "$ref": "#/$defs/portableProjectPath" },
+              "content": { "type": "string", "maxLength": 1048576 }
+            }
+          }
+        }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine"],
+      "properties": {
+        "provider": { "type": "string", "default": "managed" },
+        "engine": { "type": "string", "minLength": 1 },
+        "channel": {
+          "type": "string",
+          "default": "stable",
+          "description": "An embedded managed-toolchain alias or exact snapshot ID, such as texlive-2026-07-26."
+        },
+        "adapter": { "type": "string", "default": "kpathsea" },
+        "kpsewhich": { "type": "string", "default": "kpsewhich" },
+        "max_passes": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 20,
+          "default": 5
+        },
+        "shell_escape": { "type": "boolean", "default": false },
+        "allow_unmanaged_commands": {
+          "type": "boolean",
+          "default": false,
+          "description": "Explicitly permit command overrides outside the managed runtime. Such builds warn and skip the no-op cache."
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "roots": {
+          "type": "array",
+          "default": [],
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableProjectPath" }
+        }
+      }
+    },
+    "packages": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "manager": { "type": "string", "default": "pqty" },
+        "trace_adapter": { "type": "string", "default": "pqty-fls" },
+        "lock": {
+          "$ref": "#/$defs/privatePath",
+          "default": ".texe/state/pqty.lock"
+        },
+        "texmf": {
+          "$ref": "#/$defs/privatePath",
+          "default": ".texe/texmf"
+        },
+        "store": { "$ref": "#/$defs/portableRelativePath" },
+        "remote": { "type": "boolean", "default": true },
+        "link": {
+          "type": "string",
+          "enum": [
+            "copy",
+            "experimental-symlink",
+            "experimental-hardlink"
+          ],
+          "default": "copy"
+        }
+      }
+    },
+    "bibliography": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bibtex": { "type": "string", "minLength": 1, "default": "bibtex" },
+        "biber": { "type": "string", "minLength": 1, "default": "biber" },
+        "roots": {
+          "type": "array",
+          "default": [],
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/portableProjectPath" }
+        }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "makeindex": { "type": "string", "minLength": 1, "default": "makeindex" }
+      }
+    }
+  }
+}

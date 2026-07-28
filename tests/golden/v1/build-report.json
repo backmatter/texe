@@ -1,0 +1,19 @@
+{
+  "schema": "texe.build-report/v1",
+  "engine": "pdflatex",
+  "artifact": "main.pdf",
+  "engine_passes": 2,
+  "bibliography_runs": 0,
+  "index_runs": 0,
+  "convergence_rounds": 1,
+  "environment_fingerprint": "sha256:example",
+  "cached": false,
+  "duration_millis": 1250,
+  "warning_count": 1,
+  "warnings": [
+    {
+      "kind": "overfull-hbox",
+      "message": "Overfull box in paragraph"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+schema = "texe.project/v1"
+
+[project]
+entry = "main.tex"
+
+[toolchain]
+provider = "system"
+engine = "pdflatex"
+adapter = "kpathsea"
+
+[packages]
+manager = "pqty"
+trace_adapter = "pqty-fls"
+lock = ".texe/state/pqty.lock"
+texmf = ".texe/texmf"
+remote = false

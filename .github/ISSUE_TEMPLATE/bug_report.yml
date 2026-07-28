@@ -1,0 +1,83 @@
+name: Bug report
+description: Report reproducible incorrect behavior in texe.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. For vulnerabilities, use the private security link instead of this form.
+
+  - type: input
+    id: version
+    attributes:
+      label: texe version
+      description: Paste the complete output of `texe --version`.
+      placeholder: texe 0.1.0 (...)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux x86-64
+        - Windows x86-64
+        - macOS Apple Silicon
+        - Other or unsupported
+    validations:
+      required: true
+
+  - type: input
+    id: installation
+    attributes:
+      label: Installation method
+      placeholder: Debian package, WinGet, Homebrew, portable installer, or source
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: List the commands and smallest safe project needed to reproduce the problem.
+      placeholder: |
+        1. Run ...
+        2. Build ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Include relevant output from `--verbose`, with private paths or paper content removed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Relevant configuration
+      description: Share a reduced `texe.toml` and note whether the provider, shell escape, or command overrides are involved.
+      render: toml
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed confidential paper content, credentials, and private filesystem paths.
+          required: true
+        - label: This report does not contain vulnerability details.
+          required: true

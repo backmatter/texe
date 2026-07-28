@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust package (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86-64
+            os: ubuntu-latest
+          - platform: Windows x86-64
+            os: windows-2025
+          - platform: macOS Apple Silicon
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show pinned toolchain
+        run: rustup show active-toolchain
+
+      - name: Verify release architecture
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            "Linux x86-64") [[ "$(uname -s):$(uname -m)" == "Linux:x86_64" ]] ;;
+            "Windows x86-64") [[ "$PROCESSOR_ARCHITECTURE" == "AMD64" ]] ;;
+            "macOS Apple Silicon") [[ "$(uname -s):$(uname -m)" == "Darwin:arm64" ]] ;;
+          esac
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint all targets
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --locked
+
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings -D missing-docs
+        run: cargo doc --workspace --no-deps --locked
+
+  managed-journey:
+    name: Managed user journey (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86-64
+            os: ubuntu-latest
+          - platform: Windows x86-64
+            os: windows-2025
+          - platform: macOS Apple Silicon
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out texe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read pinned pqty revision
+        id: suite
+        shell: bash
+        run: |
+          revision="$(sed -n 's/^pqty_revision = "\\([^"]*\\)"/\\1/p' suite.lock.toml)"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Check out pinned pqty
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/pqty
+          ref: ${{ steps.suite.outputs.revision }}
+          path: pqty
+          persist-credentials: false
+
+      - name: Verify release architecture
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            "Linux x86-64") [[ "$(uname -s):$(uname -m)" == "Linux:x86_64" ]] ;;
+            "Windows x86-64") [[ "$PROCESSOR_ARCHITECTURE" == "AMD64" ]] ;;
+            "macOS Apple Silicon") [[ "$(uname -s):$(uname -m)" == "Darwin:arm64" ]] ;;
+          esac
+
+      - name: Run the clean managed journey
+        env:
+          PQTY_REPO: ${{ github.workspace }}/pqty
+        run: cargo xtask verify platform
+
+  dependency-policy:
+    name: Dependency security, licenses, and sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check dependency policy
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          rust-version: "1.89.0"

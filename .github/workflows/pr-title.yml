@@ -1,0 +1,28 @@
+name: PR title
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-title:
+    name: Conventional title
+    runs-on: ubuntu-latest
+    env:
+      PR_TITLE: ${{ github.event.pull_request.title }}
+    steps:
+      - name: Check squash-merge title
+        shell: bash
+        run: |
+          pattern='^(feat|fix|docs|refactor|perf|test|build|ci|chore|style|revert)(\([A-Za-z0-9._/-]+\))?!?:[[:space:]].+'
+          if [[ ! "$PR_TITLE" =~ $pattern ]]; then
+            echo "PR titles must use Conventional Commits, for example: feat(cli): add doctor output" >&2
+            exit 1
+          fi

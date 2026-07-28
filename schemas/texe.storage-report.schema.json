@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.storage-report.schema.json",
+  "title": "texe storage report v1",
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "bytes", "purpose"],
+      "properties": {
+        "path": { "type": "string" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "purpose": { "type": "string" }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "project", "shared", "total_bytes"],
+  "properties": {
+    "schema": { "const": "texe.storage-report/v1" },
+    "project": { "type": "array", "items": { "$ref": "#/$defs/entry" } },
+    "shared": { "type": "array", "items": { "$ref": "#/$defs/entry" } },
+    "total_bytes": { "type": "integer", "minimum": 0 }
+  }
+}
