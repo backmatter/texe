@@ -62,26 +62,35 @@ if [[ -z "$archive" ]]; then
   }
   release_base="${TEXE_RELEASE_BASE_URL:-https://github.com/backmatter/texe/releases/latest/download}"
   case "$release_base" in
-    https://*) curl_security=(--proto "=https" --tlsv1.2) ;;
+    https://*) ;;
     http://*)
       [[ "${TEXE_INSTALL_TEST_ALLOW_HTTP:-}" == "1" ]] || {
         echo "install-macos: refusing a non-HTTPS release URL" >&2
         exit 2
       }
-      curl_security=()
       ;;
     *)
       echo "install-macos: release URL must use HTTPS" >&2
       exit 2
       ;;
   esac
+  download_release_file() {
+    local url="$1"
+    local destination="$2"
+    if [[ "$url" == https://* ]]; then
+      curl --proto "=https" --tlsv1.2 --fail --location --show-error --silent \
+        "$url" --output "$destination"
+    else
+      curl --fail --location --show-error --silent \
+        "$url" --output "$destination"
+    fi
+  }
   archive="$work/texe-aarch64-macos.tar.gz"
   checksums="$work/SHA256SUMS"
   echo "downloading the latest texe command suite"
-  curl "${curl_security[@]}" --fail --location --show-error --silent \
-    "$release_base/texe-aarch64-macos.tar.gz" --output "$archive"
-  curl "${curl_security[@]}" --fail --location --show-error --silent \
-    "$release_base/SHA256SUMS" --output "$checksums"
+  download_release_file \
+    "$release_base/texe-aarch64-macos.tar.gz" "$archive"
+  download_release_file "$release_base/SHA256SUMS" "$checksums"
 
   expected="$(
     awk '$2 == "texe-aarch64-macos.tar.gz" { print $1; exit }' "$checksums" |

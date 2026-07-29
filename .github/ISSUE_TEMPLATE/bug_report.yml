@@ -14,7 +14,7 @@ body:
     attributes:
       label: texe version
       description: Paste the complete output of `texe --version`.
-      placeholder: texe 0.1.0 (...)
+      placeholder: Complete texe version output
     validations:
       required: true
 
