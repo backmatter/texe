@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 
 use crate::command::{
     ScratchDir, append, cargo, clean_environment, copy_file, copy_tree, executable_name, nonempty,
@@ -11,6 +12,7 @@ use crate::command::{
 use crate::{Result, message, pqty};
 
 const CASES: &[&str] = &["managed", "luatex", "common", "bibliography", "index"];
+const TIMING_HISTORY_SCHEMA: &str = "texe.timing-history/v1";
 
 pub(crate) fn all() -> Result<()> {
     let repo = repo_root()?;
@@ -284,17 +286,17 @@ fn managed(suite: &SuiteBinaries) -> Result<()> {
     let progress = String::from_utf8_lossy(&first.stderr);
     require(
         progress.contains("texe: packages download plan:")
-            && progress.contains("texe: packages download complete:"),
+            && progress.contains("texe: packages downloaded:"),
         "managed build did not render package download progress",
     )?;
     require(
         !progress.contains("\"schema\":\"pqty.progress/v1\""),
         "raw pqty progress leaked into customer output",
     )?;
-    let timings: Value =
-        serde_json::from_str(&read_text(&project.join(".texe/build/timings.json"))?)?;
+    let timings_path = timing_history_path(&journey.root, &project);
+    let timings: Value = serde_json::from_str(&read_text(&timings_path)?)?;
     require(
-        timings["schema"] == "texe.timing-history/v1"
+        timings["schema"] == TIMING_HISTORY_SCHEMA
             && timings["samples"]
                 .as_array()
                 .is_some_and(|samples| samples.len() == 1),
@@ -328,8 +330,7 @@ fn managed(suite: &SuiteBinaries) -> Result<()> {
         cached["cached"] == true && cached["engine_passes"] == 0,
         "unchanged managed build did not use the no-op cache",
     )?;
-    let timings: Value =
-        serde_json::from_str(&read_text(&project.join(".texe/build/timings.json"))?)?;
+    let timings: Value = serde_json::from_str(&read_text(&timings_path)?)?;
     require(
         timings["samples"]
             .as_array()
@@ -453,6 +454,14 @@ fn managed(suite: &SuiteBinaries) -> Result<()> {
          verification, and empty-cache frozen reproduction"
     );
     Ok(())
+}
+
+fn timing_history_path(root: &Path, project: &Path) -> PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(TIMING_HISTORY_SCHEMA.as_bytes());
+    hasher.update(project.as_os_str().as_encoded_bytes());
+    root.join("data/texe/timings")
+        .join(format!("{}.json", hex::encode(hasher.finalize())))
 }
 
 fn luatex(suite: &SuiteBinaries) -> Result<()> {
