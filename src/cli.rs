@@ -167,7 +167,7 @@ pub(crate) enum Command {
         /// Project directory or texe.toml. Searches ancestors when omitted.
         #[arg(long)]
         project: Option<PathBuf>,
-        /// Remove texe's generated VS Code workspace without changing project settings.
+        /// Remove any legacy texe-generated VS Code workspace without changing project settings.
         #[arg(long)]
         remove: bool,
     },

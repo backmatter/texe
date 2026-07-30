@@ -3,7 +3,7 @@
   <Metadata>
     <Identity Language="en-US" Id="texe-paper-layout" Version="@VERSION@" Publisher="backmatter" />
     <DisplayName>texe Paper Layout</DisplayName>
-    <Description xml:space="preserve">Opens a texe source and LaTeX Workshop PDF side by side.</Description>
+    <Description xml:space="preserve">Keeps a texe source and LaTeX Workshop PDF conveniently side by side.</Description>
     <Tags>latex,pdf,texe</Tags>
     <Categories>Other</Categories>
     <Properties>

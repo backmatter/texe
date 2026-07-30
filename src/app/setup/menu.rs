@@ -129,7 +129,7 @@ fn run_project_menu(
             false,
         ),
         ProjectMenu::OpenVscode => {
-            for message in integrations::setup_vscode(&context.root, true)?.messages {
+            for message in integrations::setup_vscode(&context.root, true, true)?.messages {
                 println!("{message}");
             }
             Ok(())

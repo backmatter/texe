@@ -41,8 +41,12 @@ Managed XeLaTeX is not currently included. Advanced users can select
 ## Editors and PDF viewing
 
 VS Code with LaTeX Workshop is the first supported editor integration. Setup is
-optional and uses a generated workspace below `.texe/` without changing
-`.vscode/settings.json`. It can be removed with:
+optional. It creates `.vscode/settings.json` when absent and asks before
+replacing an existing file. Settings are never merged. VS Code opens the
+project folder directly.
+
+Older texe versions created a workspace below `.texe/`. It can be removed
+without changing project settings with:
 
 ```sh
 texe editor --remove

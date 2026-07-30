@@ -17,6 +17,36 @@ pub(crate) fn path() -> Result<PathBuf, TexeError> {
     write(&crate::toolchain::texe_data_home()?.join("editor"))
 }
 
+pub(crate) fn matches_installed(directory: &Path) -> Result<bool, TexeError> {
+    for (name, expected) in [
+        ("extension.js", MAIN),
+        ("README.md", README),
+        ("LICENSE.txt", LICENSE),
+    ] {
+        if fs::read(directory.join(name)).ok().as_deref() != Some(expected) {
+            return Ok(false);
+        }
+    }
+
+    let installed_path = directory.join("package.json");
+    let Ok(installed_bytes) = fs::read(&installed_path) else {
+        return Ok(false);
+    };
+    let Ok(mut installed) = serde_json::from_slice::<serde_json::Value>(&installed_bytes) else {
+        return Ok(false);
+    };
+    if let Some(object) = installed.as_object_mut() {
+        // VS Code adds installation bookkeeping that is not part of the VSIX.
+        object.remove("__metadata");
+    }
+    let expected = serde_json::from_slice::<serde_json::Value>(&with_current_version(PACKAGE)?)
+        .map_err(|source| TexeError::Json {
+            path: installed_path,
+            source,
+        })?;
+    Ok(installed == expected)
+}
+
 fn write(directory: &Path) -> Result<PathBuf, TexeError> {
     let package = with_current_version(PACKAGE)?;
     let manifest = with_current_version(MANIFEST)?;
@@ -113,7 +143,9 @@ mod tests {
     use std::fs;
     use std::io::Read as _;
 
-    use crate::integrations::vscode::bridge::write;
+    use crate::integrations::vscode::bridge::{
+        LICENSE, MAIN, PACKAGE, README, matches_installed, with_current_version, write,
+    };
 
     #[test]
     fn bundled_bridge_is_a_complete_versioned_vsix() {
@@ -141,6 +173,20 @@ mod tests {
         let package: serde_json::Value = serde_json::from_str(&package).expect("package JSON");
         assert_eq!(package["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(package["publisher"], "backmatter");
+        assert!(
+            package["activationEvents"]
+                .as_array()
+                .expect("activation events")
+                .iter()
+                .any(|event| event == "onCommand:texe.openPaper")
+        );
+        assert!(
+            package["contributes"]["commands"]
+                .as_array()
+                .expect("commands")
+                .iter()
+                .any(|command| command["command"] == "texe.openPaper")
+        );
         let mut manifest = String::new();
         archive
             .by_name("extension.vsixmanifest")
@@ -151,5 +197,29 @@ mod tests {
             "Version=\"{}\" Publisher=\"backmatter\"",
             env!("CARGO_PKG_VERSION")
         )));
+    }
+
+    #[test]
+    fn installed_companion_is_compared_by_contents_not_only_version() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        fs::write(directory.path().join("extension.js"), MAIN).expect("extension source");
+        fs::write(directory.path().join("README.md"), README).expect("readme");
+        fs::write(directory.path().join("LICENSE.txt"), LICENSE).expect("license");
+        let mut package: serde_json::Value =
+            serde_json::from_slice(&with_current_version(PACKAGE).expect("versioned package"))
+                .expect("package JSON");
+        package["__metadata"] = serde_json::json!({
+            "installedTimestamp": 1,
+        });
+        fs::write(
+            directory.path().join("package.json"),
+            serde_json::to_vec_pretty(&package).expect("package bytes"),
+        )
+        .expect("package");
+
+        assert!(matches_installed(directory.path()).expect("matching companion"));
+
+        fs::write(directory.path().join("extension.js"), b"stale").expect("stale extension");
+        assert!(!matches_installed(directory.path()).expect("stale companion"));
     }
 }

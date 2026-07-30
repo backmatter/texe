@@ -13,7 +13,8 @@
   ],
   "main": "./extension.js",
   "activationEvents": [
-    "workspaceContains:texe.toml"
+    "workspaceContains:texe.toml",
+    "onCommand:texe.openPaper"
   ],
   "extensionDependencies": [
     "James-Yu.latex-workshop"
@@ -25,9 +26,39 @@
     }
   },
   "contributes": {
+    "commands": [
+      {
+        "command": "texe.openPaper",
+        "title": "Open Paper Side by Side",
+        "category": "texe",
+        "icon": "$(open-preview)",
+        "enablement": "config.texe.editor.enabled"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "texe.openPaper",
+          "group": "navigation@10",
+          "when": "resourceLangId == latex && config.texe.editor.enabled"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "texe.openPaper",
+          "when": "config.texe.editor.enabled"
+        }
+      ]
+    },
     "configuration": {
       "title": "texe",
       "properties": {
+        "texe.editor.enabled": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": false,
+          "description": "Shows texe's project-specific VS Code conveniences."
+        },
         "texe.editor.openPaper": {
           "scope": "resource",
           "type": "object",

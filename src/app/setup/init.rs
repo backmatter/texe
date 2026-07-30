@@ -56,7 +56,12 @@ pub(crate) fn run_init(command: InitCommand) -> Result<Vec<String>, TexeError> {
     };
     let outcome = init_project_with_starter(path, &settings.entry, &settings.engine, &starter)?;
     let manifest = ProjectManifest::load(&outcome.manifest)?;
-    let integration_messages = configure_integrations(path, &manifest, requested_integrations);
+    let integration_messages = configure_integrations(
+        path,
+        &manifest,
+        requested_integrations,
+        !yes && !presentation.json && !presentation.quiet,
+    );
     if presentation.json {
         print_json(&serde_json::json!({
             "schema": "texe.init-report/v1",
@@ -93,6 +98,7 @@ fn configure_integrations(
     path: &Path,
     manifest: &ProjectManifest,
     requested: InitIntegrations,
+    allow_prompts: bool,
 ) -> Vec<String> {
     let mut messages = Vec::new();
     if requested.git {
@@ -104,7 +110,7 @@ fn configure_integrations(
         }
     }
     if requested.vscode {
-        match integrations::setup_vscode(path, requested.open_vscode) {
+        match integrations::setup_vscode(path, requested.open_vscode, allow_prompts) {
             Ok(report) => messages.extend(report.messages),
             Err(error) => messages.push(format!(
                 "VS Code setup could not be completed ({error}); the paper is still ready and can be opened manually"
