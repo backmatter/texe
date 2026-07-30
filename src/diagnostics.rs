@@ -173,7 +173,10 @@ impl Diagnostic {
 type Classification = (&'static str, String, String, String);
 
 fn classify(evidence: &str, original: &str) -> Classification {
-    let lower = evidence.to_ascii_lowercase();
+    // Classification follows the focused fatal diagnostic. The complete log
+    // remains available for source-command context, but package probes and
+    // warnings elsewhere in a long log must not override the actual failure.
+    let lower = original.to_ascii_lowercase();
     classify_syntax(evidence, &lower)
         .or_else(|| classify_dependencies(&lower))
         .or_else(|| classify_environment(&lower))
@@ -282,6 +285,16 @@ fn classify_dependencies(lower: &str) -> Option<Classification> {
 }
 
 fn classify_environment(lower: &str) -> Option<Classification> {
+    if lower.contains("minted executable is unavailable or disabled") {
+        return Some((
+            "external-command-unavailable",
+            "minted could not run its syntax-highlighting executable.".to_string(),
+            "Shell escape may be disabled, or the executable required by minted may be unavailable."
+                .to_string(),
+            "check `toolchain.shell_escape` and the minted executable reported by the verbose log"
+                .to_string(),
+        ));
+    }
     if lower.contains("shell escape") || lower.contains("shell-escape") || lower.contains("write18")
     {
         return Some((
@@ -326,7 +339,7 @@ fn command_hint(evidence: &str) -> Option<String> {
 }
 
 fn locate(log: &str, entry: &Path) -> Option<(PathBuf, usize)> {
-    for line in log.lines() {
+    for line in log.lines().rev().filter(|line| fatal_diagnostic_line(line)) {
         if let Some(location) = file_line_location(line) {
             return Some(location);
         }
@@ -370,11 +383,24 @@ fn file_line_location(line: &str) -> Option<(PathBuf, usize)> {
 }
 
 fn primary_original(log: &str, stdout: &str, stderr: &str) -> String {
-    if let Some(error) = log
-        .lines()
-        .find(|line| line.starts_with('!') && !line.starts_with("!  ==>"))
-    {
-        return error.trim_start_matches('!').trim().to_string();
+    let lines = log.lines().collect::<Vec<_>>();
+    if let Some(index) = lines.iter().rposition(|line| fatal_diagnostic_line(line)) {
+        let mut focused = lines[index].trim_start_matches('!').trim().to_string();
+        for continuation in lines.iter().skip(index + 1) {
+            let continuation = continuation.trim();
+            if continuation.is_empty()
+                || continuation.starts_with("See the ")
+                || continuation.starts_with("Type ")
+                || continuation.starts_with("l.")
+                || continuation.starts_with("Here is how much")
+                || continuation.contains("==> Fatal error occurred")
+            {
+                break;
+            }
+            focused.push(' ');
+            focused.push_str(continuation);
+        }
+        return focused;
     }
     for text in [stderr, stdout, log] {
         if let Some(line) = text.lines().find(|line| !line.trim().is_empty()) {
@@ -382,6 +408,16 @@ fn primary_original(log: &str, stdout: &str, stderr: &str) -> String {
         }
     }
     "The engine stopped without a detailed message.".to_string()
+}
+
+fn fatal_diagnostic_line(line: &str) -> bool {
+    !line.contains("==> Fatal error occurred")
+        && ((line.starts_with('!') && !line.starts_with("!  ==>"))
+            || (line.contains(": Package ") && line.contains(" Error:"))
+            || line.contains(": LaTeX Error:")
+            || (file_line_location(line).is_some()
+                && !line.to_ascii_lowercase().contains(" warning:")
+                && !line.to_ascii_lowercase().contains(" info:")))
 }
 
 fn confined_file(project_root: &Path, file: &Path) -> Option<PathBuf> {
@@ -443,6 +479,48 @@ mod tests {
     }
 
     #[test]
+    fn minted_failure_is_not_overridden_by_an_earlier_missing_file_probe() {
+        let diagnostic = diagnose(
+            r#"
+Package biblatex Info: ... file 'authoryear.dbx' not found.
+
+./chapters/code.tex:18: Package minted Error: Missing definition for highlighti
+ng style "default" (minted executable is unavailable or disabled); attempting t
+o substitute fallback style.
+
+See the minted package documentation for explanation.
+l.18 \end{minted}
+
+./chapters/code.tex:18:  ==> Fatal error occurred, no output PDF file produced!
+"#,
+            "",
+        );
+
+        assert_eq!(diagnostic.family, "external-command-unavailable");
+        assert!(diagnostic.original.contains("minted executable"));
+        assert!(diagnostic.explanation.contains("may be disabled"));
+    }
+
+    #[test]
+    fn file_line_engine_errors_ignore_the_banner_and_earlier_warning() {
+        let diagnostic = diagnose(
+            r"
+This is pdfTeX, Version 3.141592653.
+./chapters/preface.tex:3: Package example Warning: Probe failed.
+./chapters/results.tex:42: Undefined control sequence.
+l.42 \includegrphics{result.pdf}
+",
+            "",
+        );
+
+        assert_eq!(diagnostic.family, "undefined-command");
+        assert!(diagnostic.original.contains("Undefined control sequence"));
+        let location = diagnostic.location.expect("location");
+        assert_eq!(location.file, Path::new("chapters/results.tex"));
+        assert_eq!(location.line, 42);
+    }
+
+    #[test]
     fn file_line_errors_support_nested_sources() {
         let diagnostic = diagnose(
             "./chapters/results.tex:42: LaTeX Error: Missing } inserted.",
@@ -497,6 +575,11 @@ mod tests {
                 "package-option-conflict",
                 "! LaTeX Error: Option clash for package geometry.",
                 "! LaTeX Error: Package geometry failed.",
+            ),
+            (
+                "external-command-unavailable",
+                "! Package minted Error: minted executable is unavailable or disabled.",
+                "! Package minted Error: Python executable is ready.",
             ),
             (
                 "shell-escape-blocked",
