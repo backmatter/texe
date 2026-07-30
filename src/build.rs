@@ -102,6 +102,7 @@ struct BuildContext<'a> {
     output_dir: PathBuf,
     environment_path: PathBuf,
     state_path: PathBuf,
+    auxiliary_cache_path: PathBuf,
     timestamp: BuildTimestamp,
     progress: Progress,
 }
@@ -114,6 +115,7 @@ struct BuildState {
     engine_passes: usize,
     bibliography: BibliographyState,
     index: IndexState,
+    auxiliary_cache_key: String,
 }
 
 #[derive(Debug)]
@@ -168,6 +170,14 @@ pub fn build_project(
         context.timestamp.locked,
     )?;
     context.record_build(&published, &state.environment.fingerprint)?;
+    let auxiliary_cache = auxiliary::AuxiliaryCache::from_entries(
+        &state.auxiliary_cache_key,
+        state.bibliography.cache_entries(),
+        state.index.cache_entries(),
+    );
+    if let Err(error) = auxiliary::write(&context.auxiliary_cache_path, &auxiliary_cache) {
+        eprintln!("texe: warning: could not save auxiliary build cache: {error}");
+    }
     let report = BuildReport {
         schema: "texe.build-report/v1".to_string(),
         engine: toolchain.engine.clone(),
@@ -208,6 +218,7 @@ pub(crate) fn announce_configuration_warnings(manifest: &ProjectManifest, progre
 }
 
 mod artifact;
+mod auxiliary;
 mod engine;
 mod environment;
 mod errors;
@@ -255,6 +266,7 @@ impl<'a> BuildContext<'a> {
             texmf,
             environment_path: build_root.join("pqty.env.json"),
             state_path: build_root.join(state::STATE_NAME),
+            auxiliary_cache_path: build_root.join(auxiliary::CACHE_NAME),
             build_root,
             discovery_dir,
             output_dir,
@@ -391,14 +403,18 @@ impl<'a> BuildContext<'a> {
             self.manifest.packages.remote,
             &self.progress,
         )?;
+        let auxiliary_cache_key =
+            auxiliary::cache_key(self.manifest, self.toolchain, &environment.fingerprint)?;
+        let auxiliary_cache = auxiliary::read(&self.auxiliary_cache_path, &auxiliary_cache_key);
         Ok(BuildState {
             environment,
             managed_format,
             convergence_rounds: 0,
             required_runtime_providers: BTreeSet::new(),
             engine_passes: 0,
-            bibliography: BibliographyState::default(),
-            index: IndexState::default(),
+            bibliography: BibliographyState::from_cache(auxiliary_cache.bibliography),
+            index: IndexState::from_cache(auxiliary_cache.index),
+            auxiliary_cache_key,
         })
     }
 
@@ -693,6 +709,16 @@ impl<'a> BuildContext<'a> {
         state.environment =
             self.tools
                 .environment(self.project_root, &self.lock, &self.environment_path)?;
+        let auxiliary_cache_key = auxiliary::cache_key(
+            self.manifest,
+            self.toolchain,
+            &state.environment.fingerprint,
+        )?;
+        if auxiliary_cache_key != state.auxiliary_cache_key {
+            state.bibliography = BibliographyState::default();
+            state.index = IndexState::default();
+            state.auxiliary_cache_key = auxiliary_cache_key;
+        }
         state.managed_format = format::ensure(
             self.project_root,
             self.toolchain,
