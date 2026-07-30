@@ -78,6 +78,20 @@ fn discovery_collects_multiple_errors_while_final_passes_fail_fast() {
 }
 
 #[test]
+fn package_retries_do_not_consume_the_auxiliary_pass_budget() {
+    let mut budget = AuxiliaryPassBudget::new(2);
+
+    assert_eq!(budget.next(), Some(1));
+    // A package convergence retry does not record a stable-environment pass.
+    assert_eq!(budget.next(), Some(1));
+
+    budget.record_stable_environment_pass();
+    assert_eq!(budget.next(), Some(2));
+    budget.record_stable_environment_pass();
+    assert_eq!(budget.next(), None);
+}
+
+#[test]
 fn generated_inputs_are_private_and_stale_files_are_removed() {
     let directory = tempfile::tempdir().expect("temporary output");
     let output = directory.path().join("output");
@@ -437,6 +451,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::build::AuxiliaryPassBudget;
 use crate::build::artifact::{BuildTimestamp, build_timestamp, publish_artifact};
 use crate::build::engine::{
     engine_interaction_arguments, write_generated_inputs, write_system_fontconfig,

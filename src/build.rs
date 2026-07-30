@@ -28,6 +28,33 @@ use index::IndexState;
 
 const MAX_CONVERGENCE_ROUNDS: usize = 16;
 
+#[derive(Debug, Clone, Copy)]
+struct AuxiliaryPassBudget {
+    completed: usize,
+    maximum: usize,
+}
+
+impl AuxiliaryPassBudget {
+    const fn new(maximum: usize) -> Self {
+        Self {
+            completed: 0,
+            maximum,
+        }
+    }
+
+    const fn next(self) -> Option<usize> {
+        if self.completed < self.maximum {
+            Some(self.completed + 1)
+        } else {
+            None
+        }
+    }
+
+    fn record_stable_environment_pass(&mut self) {
+        self.completed += 1;
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BuildOptions {
     /// Require the existing package lock and forbid convergence.
@@ -504,11 +531,25 @@ impl<'a> BuildContext<'a> {
     /// citations, and table of contents — the common case in an editing loop —
     /// finishes in one pass instead of paying for a second one to discover that
     /// nothing moved. A first build, a changed reference, or a bibliography run
-    /// still takes as many passes as it needs.
+    /// still takes as many passes as it needs. Engine attempts that discover a
+    /// changed package environment are bounded separately and do not consume
+    /// this auxiliary-stabilization budget.
     fn frozen_build(&self, state: &mut BuildState, frozen: bool) -> Result<PathBuf, TexeError> {
         let mut previous_auxiliary = Some(auxiliary_snapshot(&self.output_dir)?);
-        let mut artifact = None;
-        for pass in 1..=self.manifest.toolchain.max_passes {
+        let mut artifact: Option<PathBuf> = None;
+        let mut pass_budget = AuxiliaryPassBudget::new(self.manifest.toolchain.max_passes);
+        loop {
+            let Some(pass) = pass_budget.next() else {
+                return Err(TexeError::Build(format!(
+                    "{} auxiliary state did not stabilize after {} frozen passes{}",
+                    self.toolchain.engine,
+                    self.manifest.toolchain.max_passes,
+                    artifact.as_ref().map_or_else(String::new, |path| format!(
+                        " (latest artifact: {})",
+                        path.display()
+                    ))
+                )));
+            };
             let run = self.progress.phase(
                 PhaseKind::EngineFinal,
                 format!(
@@ -550,13 +591,14 @@ impl<'a> BuildContext<'a> {
                     &run,
                 ));
             }
+            pass_budget.record_stable_environment_pass();
+            artifact = find_artifact(&self.output_dir, &self.manifest.project.entry);
             if self.process_auxiliary_tools(state, &run)? {
                 // A processor just rewrote derived state. Compare the next pass
                 // against that, not against what preceded it.
                 previous_auxiliary = Some(auxiliary_snapshot(&self.output_dir)?);
                 continue;
             }
-            artifact = find_artifact(&self.output_dir, &self.manifest.project.entry);
             let auxiliary = auxiliary_snapshot(&self.output_dir)?;
             if previous_auxiliary.as_ref() == Some(&auxiliary) {
                 return artifact.ok_or_else(|| {
@@ -569,15 +611,6 @@ impl<'a> BuildContext<'a> {
             }
             previous_auxiliary = Some(auxiliary);
         }
-        Err(TexeError::Build(format!(
-            "{} auxiliary state did not stabilize after {} frozen passes{}",
-            self.toolchain.engine,
-            self.manifest.toolchain.max_passes,
-            artifact.as_ref().map_or_else(String::new, |path| format!(
-                " (latest artifact: {})",
-                path.display()
-            ))
-        )))
     }
 
     fn create_run_trace(
