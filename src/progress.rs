@@ -1,15 +1,20 @@
 //! Human build progress and local timing history.
 //!
-//! Timing observations are deliberately derived, project-local state. They do
-//! not enter `texe.lock`, the build fingerprint, or any engine environment.
-//! The estimates can therefore improve the interactive experience without
-//! changing what a build resolves or the bytes it produces.
+//! Timing observations are deliberately derived, local-only state, keyed by a
+//! hash of the project root below `TEXE_HOME`. They do not enter `texe.lock`,
+//! the build fingerprint, or any engine environment. The estimates can
+//! therefore improve the interactive experience without changing what a build
+//! resolves or the bytes it produces.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use sha2::{Digest as _, Sha256};
+
+use crate::TexeError;
 
 const HISTORY_SCHEMA: &str = "texe.timing-history/v1";
 const MAX_SAMPLES: usize = 20;
@@ -49,8 +54,9 @@ mod render;
 
 pub(crate) use history::format_duration;
 use history::{
-    TimingHistory, TimingSample, comparable_samples, estimate_remaining, median, millis,
-    read_history, remaining_suffix, timing_summary, useful_estimate, write_history,
+    TimingHistory, TimingSample, comparable_samples, estimate_remaining, historical_total_range,
+    live_remaining_status, live_total_status, median, millis, read_history, remaining_suffix,
+    timing_summary, useful_estimate, write_history,
 };
 use pqty::{
     DownloadCategory, DownloadMetrics, PQTY_PROGRESS_SCHEMA, PqtyProgressEvent,
@@ -69,8 +75,26 @@ struct ProgressInner {
     pub(super) engine_millis: Vec<u64>,
     pub(super) estimate_announced: bool,
     pub(super) downloads: BTreeMap<DownloadCategory, DownloadMetrics>,
+    pub(super) inferred_package_plan: Option<history::PackagePlanSample>,
+    pub(super) emitted_warnings: BTreeSet<String>,
+    lifecycle: ProgressLifecycle,
     pub(super) live: Option<LiveProgress>,
     pub(super) plain: Option<PlainProgress>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProgressLifecycle {
+    Running,
+    Finished,
+}
+
+impl ProgressInner {
+    pub(super) fn package_plan(&self) -> Option<history::PackagePlanSample> {
+        self.downloads
+            .get(&DownloadCategory::Packages)
+            .and_then(DownloadMetrics::package_plan)
+            .or(self.inferred_package_plan)
+    }
 }
 
 #[derive(Clone)]
@@ -101,22 +125,29 @@ impl Progress {
         let history = read_history(&history_path);
         let interactive = enabled && !verbose && std::io::stderr().is_terminal();
         let plain = enabled && !verbose && !interactive;
+        let inner = Arc::new(Mutex::new(ProgressInner {
+            started: Instant::now(),
+            engine: engine.to_string(),
+            frozen,
+            incremental: false,
+            max_passes,
+            history,
+            phase_millis: BTreeMap::new(),
+            engine_millis: Vec::new(),
+            estimate_announced: false,
+            downloads: BTreeMap::new(),
+            inferred_package_plan: None,
+            emitted_warnings: BTreeSet::new(),
+            lifecycle: ProgressLifecycle::Running,
+            live: interactive
+                .then(|| LiveProgress::new(matches!(layout, ProgressLayout::Embedded))),
+            plain: plain.then(PlainProgress::default),
+        }));
+        if interactive {
+            spawn_live_ticker(&inner);
+        }
         Self {
-            inner: Arc::new(Mutex::new(ProgressInner {
-                started: Instant::now(),
-                engine: engine.to_string(),
-                frozen,
-                incremental: false,
-                max_passes,
-                history,
-                phase_millis: BTreeMap::new(),
-                engine_millis: Vec::new(),
-                estimate_announced: false,
-                downloads: BTreeMap::new(),
-                live: interactive
-                    .then(|| LiveProgress::new(matches!(layout, ProgressLayout::Embedded))),
-                plain: plain.then(PlainProgress::default),
-            })),
+            inner,
             history_path,
             interactive,
             enabled,
@@ -124,11 +155,19 @@ impl Progress {
         }
     }
 
+    pub(crate) fn with_legacy_history(self, legacy_history_path: &Path) -> Self {
+        if !self.history_path.is_file() {
+            self.inner.lock().expect("progress mutex").history = read_history(legacy_history_path);
+        }
+        self
+    }
+
     pub(crate) fn begin(&self, incremental: bool) {
         let mut inner = self.inner.lock().expect("progress mutex");
         // Start after manifest discovery, but before toolchain preparation, so
         // the estimate covers every potentially slow part of this invocation.
         inner.started = Instant::now();
+        inner.lifecycle = ProgressLifecycle::Running;
         // First builds and incremental builds have radically different timing
         // profiles even when they share an engine and project directory.
         inner.incremental = incremental;
@@ -143,8 +182,7 @@ impl Progress {
                 .map(|sample| sample.total_millis)
                 .collect(),
         );
-        let lower = total.saturating_mul(4) / 5;
-        let upper = total.saturating_mul(13) / 10;
+        let (lower, upper) = historical_total_range(total, inner.incremental);
         inner.estimate_announced = true;
         if self.enabled && self.verbose && useful_estimate(lower, upper) {
             eprintln!(
@@ -176,6 +214,21 @@ impl Progress {
         }
     }
 
+    pub(crate) fn warning(&self, message: &str) {
+        let first = {
+            let mut inner = self.inner.lock().expect("progress mutex");
+            inner.emitted_warnings.insert(message.to_string())
+        };
+        if !first {
+            return;
+        }
+        if self.interactive {
+            let _ = cliclack::log::warning(message);
+        } else {
+            eprintln!("texe: warning: {message}");
+        }
+    }
+
     pub(crate) fn phase<T, E>(
         &self,
         kind: PhaseKind,
@@ -196,13 +249,33 @@ impl Progress {
         if event.schema() != PQTY_PROGRESS_SCHEMA {
             return false;
         }
-        let message = {
+        let refines_package_estimate = matches!(
+            &event,
+            PqtyProgressEvent::Plan {
+                category: DownloadCategory::Packages,
+                ..
+            }
+        );
+        let (message, refined_status, first_package_plan) = {
             let mut inner = self.inner.lock().expect("progress mutex");
-            handle_download_event(
+            let first_package_plan = refines_package_estimate
+                && inner
+                    .downloads
+                    .get(&DownloadCategory::Packages)
+                    .and_then(DownloadMetrics::package_plan)
+                    .is_none();
+            let message = handle_download_event(
                 inner.downloads.entry(event.category()).or_default(),
                 &event,
                 self.interactive,
-            )
+            );
+            let refined_status = refines_package_estimate.then(|| {
+                (
+                    live_remaining_status(&inner, Instant::now()),
+                    live_total_status(&inner, Instant::now()),
+                )
+            });
+            (message, refined_status, first_package_plan)
         };
         if self.enabled
             && let Some(message) = message
@@ -215,17 +288,36 @@ impl Progress {
                 eprintln!("texe: {message}");
             }
         }
+        if self.enabled
+            && let Some((remaining_status, total_status)) = refined_status
+        {
+            if self.interactive {
+                let mut inner = self.inner.lock().expect("progress mutex");
+                if let Some(live) = inner.live.as_mut() {
+                    live.update_total_status(&remaining_status);
+                }
+            } else if self.verbose
+                && first_package_plan
+                && total_status != "total estimate after first LaTeX pass"
+            {
+                eprintln!("texe: package cache state refines {total_status}");
+            }
+        }
         true
     }
 
     fn start(&self, kind: PhaseKind, label: String) -> PhaseGuard {
-        let suffix = {
+        let (suffix, total_status) = {
             let inner = self.inner.lock().expect("progress mutex");
-            remaining_suffix(&inner, Instant::now())
+            let now = Instant::now();
+            (
+                remaining_suffix(&inner, now),
+                live_remaining_status(&inner, now),
+            )
         };
         if self.interactive {
             if let Some(live) = self.inner.lock().expect("progress mutex").live.as_mut() {
-                live.update(kind, &label);
+                live.update(kind, &label, &total_status);
             }
         } else if self.enabled && self.verbose {
             eprintln!("texe: {label}{suffix}");
@@ -253,6 +345,8 @@ impl Progress {
     fn record_phase(&self, kind: PhaseKind, label: &str, elapsed: Duration, succeeded: bool) {
         let millis = millis(elapsed);
         let mut first_engine_estimate = None;
+        let mut refresh_live_estimate = false;
+        let mut refine_package_estimate = false;
         {
             let mut inner = self.inner.lock().expect("progress mutex");
             *inner
@@ -261,12 +355,24 @@ impl Progress {
                 .or_default() += millis;
             if kind.is_engine() {
                 inner.engine_millis.push(millis);
-                if inner.engine_millis.len() == 1
-                    && comparable_samples(&inner).is_empty()
-                    && millis >= 10_000
-                {
-                    first_engine_estimate = estimate_remaining(&inner, Instant::now());
+                if inner.engine_millis.len() == 1 && millis >= 10_000 {
+                    refresh_live_estimate = true;
+                    if comparable_samples(&inner).is_empty() {
+                        first_engine_estimate = estimate_remaining(&inner, Instant::now());
+                    }
                 }
+            }
+            if kind == PhaseKind::Package
+                && succeeded
+                && label.starts_with("fetching/materializing")
+                && inner.inferred_package_plan.is_none()
+            {
+                refine_package_estimate = inner
+                    .downloads
+                    .get(&DownloadCategory::Packages)
+                    .and_then(DownloadMetrics::package_plan)
+                    .is_none();
+                inner.inferred_package_plan = Some(history::PackagePlanSample::no_download_plan());
             }
         }
         if self.enabled && self.verbose && elapsed >= Duration::from_secs(2) {
@@ -277,32 +383,29 @@ impl Progress {
                 format_duration(elapsed)
             );
         }
+        if self.enabled && self.interactive && (refresh_live_estimate || refine_package_estimate) {
+            let mut inner = self.inner.lock().expect("progress mutex");
+            let total_status = live_remaining_status(&inner, Instant::now());
+            if let Some(live) = inner.live.as_mut() {
+                live.update_total_status(&total_status);
+            }
+        } else if self.enabled && self.verbose && refine_package_estimate {
+            let inner = self.inner.lock().expect("progress mutex");
+            let status = live_total_status(&inner, Instant::now());
+            if status != "total estimate after first LaTeX pass" {
+                eprintln!("texe: package cache state refines {status}");
+            }
+        }
         if self.enabled
+            && self.verbose
             && let Some(estimate) = first_engine_estimate
         {
-            if self.interactive {
-                if let Some(bar) = self
-                    .inner
-                    .lock()
-                    .expect("progress mutex")
-                    .live
-                    .as_ref()
-                    .and_then(|live| live.bar.as_ref())
-                {
-                    bar.set_message(format!(
-                        "Building PDF · about {}–{} remaining",
-                        format_duration(Duration::from_millis(estimate.lower_millis)),
-                        format_duration(Duration::from_millis(estimate.upper_millis))
-                    ));
-                }
-            } else if self.verbose {
-                eprintln!(
-                    "texe: first engine pass suggests about {}–{} remaining \
+            eprintln!(
+                "texe: first engine pass suggests about {}–{} remaining \
                      (low confidence; this narrows after a comparable local build)",
-                    format_duration(Duration::from_millis(estimate.lower_millis)),
-                    format_duration(Duration::from_millis(estimate.upper_millis))
-                );
-            }
+                format_duration(Duration::from_millis(estimate.lower_millis)),
+                format_duration(Duration::from_millis(estimate.upper_millis))
+            );
         }
     }
 
@@ -328,6 +431,7 @@ impl Progress {
                 index_runs,
                 convergence_rounds,
                 environment_fingerprint: environment_fingerprint.to_string(),
+                package_plan: inner.package_plan(),
             };
             let summary = timing_summary(total, &sample.phase_millis);
             (inner.history.clone(), sample, summary)
@@ -355,6 +459,7 @@ impl Progress {
 
     pub(crate) fn complete(&self, message: &str) {
         let mut inner = self.inner.lock().expect("progress mutex");
+        inner.lifecycle = ProgressLifecycle::Finished;
         if let Some(live) = inner.live.as_mut() {
             live.complete(message);
         } else if let Some(plain) = inner.plain.as_mut() {
@@ -364,12 +469,44 @@ impl Progress {
 
     pub(crate) fn fail(&self, message: &str) {
         let mut inner = self.inner.lock().expect("progress mutex");
+        inner.lifecycle = ProgressLifecycle::Finished;
         if let Some(live) = inner.live.as_mut() {
             live.fail(message);
         } else if let Some(plain) = inner.plain.as_mut() {
             emit_plain(plain.fail());
         }
     }
+}
+
+fn spawn_live_ticker(inner: &Arc<Mutex<ProgressInner>>) {
+    let weak = Arc::downgrade(inner);
+    let _ = std::thread::Builder::new()
+        .name("texe-progress-countdown".to_string())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(1));
+                let Some(inner) = weak.upgrade() else {
+                    break;
+                };
+                let mut inner = inner.lock().expect("progress mutex");
+                if inner.lifecycle == ProgressLifecycle::Finished {
+                    break;
+                }
+                let status = live_remaining_status(&inner, Instant::now());
+                if let Some(live) = inner.live.as_mut() {
+                    live.update_total_status(&status);
+                }
+            }
+        });
+}
+
+pub(crate) fn history_path(project_root: &Path) -> Result<PathBuf, TexeError> {
+    let mut hasher = Sha256::new();
+    hasher.update(HISTORY_SCHEMA.as_bytes());
+    hasher.update(project_root.as_os_str().as_encoded_bytes());
+    Ok(crate::toolchain::texe_data_home()?
+        .join("timings")
+        .join(format!("{}.json", hex::encode(hasher.finalize()))))
 }
 
 struct PhaseGuard {
@@ -393,17 +530,20 @@ impl Drop for PhaseGuard {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::time::{Duration, Instant};
 
     use crate::progress::history::{
-        RemainingEstimate, TimingHistory, TimingSample, estimate_remaining, format_duration,
-        read_history, useful_estimate, write_history,
+        PackagePlanSample, RemainingEstimate, TimingHistory, TimingSample, estimate_remaining,
+        estimate_total, format_duration, live_remaining_status, live_total_status, read_history,
+        useful_estimate, write_history,
     };
     use crate::progress::pqty::{DownloadCategory, download_plan_message};
     use crate::progress::render::PlainProgress;
-    use crate::progress::{HISTORY_SCHEMA, PhaseKind, Progress, ProgressInner, ProgressLayout};
+    use crate::progress::{
+        HISTORY_SCHEMA, PhaseKind, Progress, ProgressInner, ProgressLayout, ProgressLifecycle,
+    };
 
     fn sample(engine: &str, frozen: bool, total_millis: u64) -> TimingSample {
         TimingSample {
@@ -417,7 +557,21 @@ mod tests {
             index_runs: 0,
             convergence_rounds: 0,
             environment_fingerprint: "sha256:test".to_string(),
+            package_plan: None,
         }
+    }
+
+    fn package_sample(
+        total_millis: u64,
+        package_millis: u64,
+        package_plan: Option<PackagePlanSample>,
+    ) -> TimingSample {
+        let mut sample = sample("pdflatex", false, total_millis);
+        sample
+            .phase_millis
+            .insert("packages".to_string(), package_millis);
+        sample.package_plan = package_plan;
+        sample
     }
 
     #[test]
@@ -455,15 +609,30 @@ mod tests {
             engine_millis: Vec::new(),
             estimate_announced: false,
             downloads: BTreeMap::new(),
+            inferred_package_plan: None,
+            emitted_warnings: BTreeSet::default(),
+            lifecycle: ProgressLifecycle::Running,
             live: None,
             plain: None,
         };
         assert_eq!(
             estimate_remaining(&inner, now),
             Some(RemainingEstimate {
-                lower_millis: 680_000,
-                upper_millis: 1_180_000,
+                lower_millis: 380_000,
+                upper_millis: 1_880_000,
             })
+        );
+        assert_eq!(
+            live_total_status(&inner, now),
+            "estimated total 8m 20s–33m 20s"
+        );
+        assert_eq!(
+            live_remaining_status(&inner, now),
+            "about 6m 20s–31m 20s left"
+        );
+        assert_eq!(
+            live_remaining_status(&inner, now + Duration::from_secs(60)),
+            "about 5m 20s–30m 20s left"
         );
     }
 
@@ -483,6 +652,9 @@ mod tests {
             engine_millis: vec![120_000],
             estimate_announced: false,
             downloads: BTreeMap::new(),
+            inferred_package_plan: None,
+            emitted_warnings: BTreeSet::default(),
+            lifecycle: ProgressLifecycle::Running,
             live: None,
             plain: None,
         };
@@ -493,6 +665,127 @@ mod tests {
                 upper_millis: 1_320_000,
             })
         );
+        assert_eq!(live_total_status(&inner, now), "rough total 4m 10s–24m 10s");
+    }
+
+    #[test]
+    fn package_cache_state_replaces_the_whole_build_cold_range() {
+        let now = Instant::now();
+        let cached_plan = PackagePlanSample {
+            items_total: 100,
+            items_cached: 100,
+            bytes_total: 80 * 1024 * 1024,
+            bytes_cached: 80 * 1024 * 1024,
+            bytes_to_download: 0,
+        };
+        let downloaded_plan = PackagePlanSample {
+            items_total: 100,
+            items_cached: 0,
+            bytes_total: 80 * 1024 * 1024,
+            bytes_cached: 0,
+            bytes_to_download: 80 * 1024 * 1024,
+        };
+
+        let progress = Progress::new(
+            tempfile::tempdir()
+                .expect("temporary directory")
+                .path()
+                .join("timings.json"),
+            "pdflatex",
+            false,
+            5,
+            false,
+            false,
+            ProgressLayout::Standalone,
+        );
+        {
+            let mut inner = progress.inner.lock().expect("progress mutex");
+            inner.started = now;
+            inner.history.samples = vec![
+                package_sample(60_000, 20_000, Some(cached_plan)),
+                package_sample(100_000, 40_000, Some(downloaded_plan)),
+            ];
+        }
+        assert!(progress.handle_pqty_line(
+            r#"{"schema":"pqty.progress/v1","event":"download-plan","category":"packages","items_total":100,"items_cached":100,"bytes_total":83886080,"bytes_cached":83886080,"bytes_to_download":0}"#
+        ));
+
+        let inner = progress.inner.lock().expect("progress mutex");
+        let estimate = estimate_total(&inner, now).expect("historical estimate");
+        assert_eq!(estimate.lower_millis, 56_000);
+        assert_eq!(estimate.upper_millis, 104_000);
+        assert!(!estimate.rough);
+    }
+
+    #[test]
+    fn legacy_phase_history_still_narrows_after_the_package_plan() {
+        let now = Instant::now();
+        let progress = Progress::new(
+            tempfile::tempdir()
+                .expect("temporary directory")
+                .path()
+                .join("timings.json"),
+            "pdflatex",
+            false,
+            5,
+            false,
+            false,
+            ProgressLayout::Standalone,
+        );
+        {
+            let mut inner = progress.inner.lock().expect("progress mutex");
+            inner.started = now;
+            inner.history.samples = vec![
+                package_sample(60_000, 20_000, None),
+                package_sample(100_000, 40_000, None),
+            ];
+        }
+        assert!(progress.handle_pqty_line(
+            r#"{"schema":"pqty.progress/v1","event":"download-plan","category":"packages","items_total":100,"items_cached":100,"bytes_total":83886080,"bytes_cached":83886080,"bytes_to_download":0}"#
+        ));
+
+        let inner = progress.inner.lock().expect("progress mutex");
+        let estimate = estimate_total(&inner, now).expect("historical estimate");
+        assert_eq!(estimate.lower_millis, 60_000);
+        assert_eq!(estimate.upper_millis, 142_000);
+        assert!(estimate.rough);
+    }
+
+    #[test]
+    fn completed_package_preparation_without_a_plan_means_no_download() {
+        let now = Instant::now();
+        let progress = Progress::new(
+            tempfile::tempdir()
+                .expect("temporary directory")
+                .path()
+                .join("timings.json"),
+            "pdflatex",
+            false,
+            5,
+            false,
+            false,
+            ProgressLayout::Standalone,
+        );
+        {
+            let mut inner = progress.inner.lock().expect("progress mutex");
+            inner.started = now;
+            inner.history.samples = vec![package_sample(60_000, 1_000, None)];
+        }
+        progress
+            .phase(
+                PhaseKind::Package,
+                "fetching/materializing package environment",
+                || Ok::<_, ()>(()),
+            )
+            .expect("package preparation");
+
+        let inner = progress.inner.lock().expect("progress mutex");
+        assert_eq!(
+            inner.package_plan(),
+            Some(PackagePlanSample::no_download_plan())
+        );
+        let estimate = estimate_total(&inner, now).expect("historical estimate");
+        assert!(estimate.upper_millis < 80_000);
     }
 
     #[test]
@@ -512,6 +805,37 @@ mod tests {
         )
         .expect("replace history");
         assert!(read_history(&path).samples.is_empty());
+    }
+
+    #[test]
+    fn legacy_project_history_moves_to_shared_storage_after_a_build() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let legacy = directory.path().join("project/.texe/build/timings.json");
+        let shared = directory.path().join("home/timings/project.json");
+        write_history(
+            &legacy,
+            &TimingHistory {
+                schema: HISTORY_SCHEMA.to_string(),
+                samples: vec![sample("pdflatex", false, 42_000)],
+            },
+        )
+        .expect("legacy history");
+        let progress = Progress::new(
+            shared.clone(),
+            "pdflatex",
+            false,
+            5,
+            false,
+            false,
+            ProgressLayout::Standalone,
+        )
+        .with_legacy_history(&legacy);
+        progress.begin(false);
+        progress.finish(1, 0, 0, 0, "sha256:environment");
+
+        let migrated = read_history(&shared);
+        assert_eq!(migrated.samples.len(), 2);
+        assert_eq!(migrated.samples[0].total_millis, 42_000);
     }
 
     #[test]
@@ -543,6 +867,35 @@ mod tests {
             .expect("package download metrics");
         assert_eq!(packages.planned_bytes, Some(5_000));
         assert_eq!(packages.completed_bytes, 5_000);
+        assert_eq!(
+            packages.package_plan(),
+            Some(PackagePlanSample {
+                items_total: 2,
+                items_cached: 1,
+                bytes_total: 9_000,
+                bytes_cached: 4_000,
+                bytes_to_download: 5_000,
+            })
+        );
+        drop(inner);
+
+        assert!(progress.handle_pqty_line(
+            r#"{"schema":"pqty.progress/v1","event":"download-plan","category":"packages","items_total":2,"items_cached":2,"bytes_total":1000,"bytes_cached":1000,"bytes_to_download":0}"#
+        ));
+        let inner = progress.inner.lock().expect("progress mutex");
+        assert_eq!(
+            inner
+                .downloads
+                .get(&DownloadCategory::Packages)
+                .and_then(super::DownloadMetrics::package_plan),
+            Some(PackagePlanSample {
+                items_total: 4,
+                items_cached: 3,
+                bytes_total: 10_000,
+                bytes_cached: 5_000,
+                bytes_to_download: 5_000,
+            })
+        );
         drop(inner);
 
         assert!(!progress.handle_pqty_line(
@@ -551,6 +904,18 @@ mod tests {
         assert!(!progress.handle_pqty_line(
             r#"{"schema":"pqty.progress/v2","event":"download-plan","category":"packages","items_total":0,"items_cached":0}"#
         ));
+
+        progress.finish(1, 0, 0, 0, "sha256:environment");
+        assert_eq!(
+            read_history(&directory.path().join("timings.json")).samples[0].package_plan,
+            Some(PackagePlanSample {
+                items_total: 4,
+                items_cached: 3,
+                bytes_total: 10_000,
+                bytes_cached: 5_000,
+                bytes_to_download: 5_000,
+            })
+        );
     }
 
     #[test]

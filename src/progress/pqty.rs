@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-use crate::progress::history::{format_duration, millis};
+use crate::progress::history::{PackagePlanSample, format_duration, millis};
 use crate::{human_bytes, human_count};
 
 pub(super) const PQTY_PROGRESS_SCHEMA: &str = "pqty.progress/v1";
@@ -92,6 +92,54 @@ impl PqtyProgressEvent {
 }
 
 #[derive(Debug, Default)]
+struct DownloadPlanObservation {
+    plans: usize,
+    items_total: usize,
+    items_cached: usize,
+    bytes_total: Option<u64>,
+    bytes_cached: Option<u64>,
+    bytes_to_download: Option<u64>,
+}
+
+impl DownloadPlanObservation {
+    fn observe(
+        &mut self,
+        items_total: usize,
+        items_cached: usize,
+        bytes_total: Option<u64>,
+        bytes_cached: Option<u64>,
+        bytes_to_download: Option<u64>,
+    ) {
+        let first = self.plans == 0;
+        self.plans = self.plans.saturating_add(1);
+        self.items_total = self.items_total.saturating_add(items_total);
+        self.items_cached = self.items_cached.saturating_add(items_cached);
+        self.bytes_total = add_known(self.bytes_total, bytes_total, first);
+        self.bytes_cached = add_known(self.bytes_cached, bytes_cached, first);
+        self.bytes_to_download = add_known(self.bytes_to_download, bytes_to_download, first);
+    }
+
+    fn sample(&self) -> Option<PackagePlanSample> {
+        Some(PackagePlanSample {
+            items_total: self.items_total,
+            items_cached: self.items_cached,
+            bytes_total: self.bytes_total?,
+            bytes_cached: self.bytes_cached?,
+            bytes_to_download: self.bytes_to_download?,
+        })
+        .filter(|_| self.plans > 0)
+    }
+}
+
+const fn add_known(previous: Option<u64>, additional: Option<u64>, first: bool) -> Option<u64> {
+    match (previous, additional, first) {
+        (_, value, true) => value,
+        (Some(previous), Some(additional), false) => Some(previous.saturating_add(additional)),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Default)]
 pub(super) struct DownloadMetrics {
     pub(super) planned_bytes: Option<u64>,
     pub(super) completed_bytes: u64,
@@ -99,6 +147,22 @@ pub(super) struct DownloadMetrics {
     active_item: Option<String>,
     started: Option<Instant>,
     last_rendered: Option<Instant>,
+    observation: DownloadPlanObservation,
+}
+
+impl DownloadMetrics {
+    pub(super) fn package_plan(&self) -> Option<PackagePlanSample> {
+        self.observation.sample()
+    }
+
+    fn reset_batch(&mut self) {
+        self.planned_bytes = None;
+        self.completed_bytes = 0;
+        self.active_bytes = 0;
+        self.active_item = None;
+        self.started = None;
+        self.last_rendered = None;
+    }
 }
 
 pub(super) fn handle_download_event(
@@ -132,8 +196,15 @@ fn handle_plan(metrics: &mut DownloadMetrics, event: &PqtyProgressEvent) -> Stri
         .is_some_and(|planned| metrics.completed_bytes >= planned)
         && metrics.active_item.is_none()
     {
-        *metrics = DownloadMetrics::default();
+        metrics.reset_batch();
     }
+    metrics.observation.observe(
+        *items_total,
+        *items_cached,
+        *bytes_total,
+        *bytes_cached,
+        *bytes_to_download,
+    );
     metrics.planned_bytes = match (metrics.planned_bytes, bytes_to_download) {
         (Some(previous), Some(additional)) => Some(previous.saturating_add(*additional)),
         (None, Some(download)) if metrics.completed_bytes == 0 => Some(*download),
@@ -248,7 +319,7 @@ fn handle_complete(
             .map_or(Duration::ZERO, |start| start.elapsed());
         let rate = metrics.completed_bytes.saturating_mul(1_000) / millis(elapsed).max(1);
         Some(format!(
-            "{} download complete: {} in {} · {}/s",
+            "{} downloaded: {} in {} · {}/s · installing",
             category.label(),
             human_bytes(metrics.completed_bytes),
             format_duration(elapsed),
@@ -347,7 +418,10 @@ fn download_progress_message(
         )
     });
     let remaining = remaining.map_or_else(String::new, |remaining| {
-        format!(" · about {} remaining", format_duration(remaining))
+        format!(
+            " · about {} of downloads remaining",
+            format_duration(remaining)
+        )
     });
     let current_rate = if rate == 0 {
         metrics.active_bytes.saturating_mul(1_000) / item_elapsed_millis.max(1)

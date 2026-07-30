@@ -30,10 +30,22 @@ impl LiveStage {
             Self::Pdf => "Built PDF",
         }
     }
+
+    const fn step(self) -> usize {
+        match self {
+            Self::Toolchain => 1,
+            Self::Packages => 2,
+            Self::Requirements => 3,
+            Self::Pdf => 4,
+        }
+    }
 }
 
 pub(super) struct LiveProgress {
     stage: Option<LiveStage>,
+    kind: Option<PhaseKind>,
+    detail: String,
+    total_status: String,
     pub(super) bar: Option<cliclack::ProgressBar>,
     embedded: bool,
 }
@@ -42,29 +54,42 @@ impl LiveProgress {
     pub(super) const fn new(embedded: bool) -> Self {
         Self {
             stage: None,
+            kind: None,
+            detail: String::new(),
+            total_status: String::new(),
             bar: None,
             embedded,
         }
     }
 
-    pub(super) fn update(&mut self, kind: PhaseKind, detail: &str) {
+    pub(super) fn update(&mut self, kind: PhaseKind, detail: &str, total_status: &str) {
         let stage = LiveStage::from_phase(kind, self.stage);
-        if self.stage != Some(stage) {
-            self.finish_current();
-            let bar = cliclack::spinner().with_template("{msg} · {elapsed_precise}");
-            bar.start(active_stage_message(stage, kind, detail));
-            self.stage = Some(stage);
+        self.stage = Some(stage);
+        self.kind = Some(kind);
+        self.detail = detail.to_string();
+        self.total_status = total_status.to_string();
+        let message = self.current_message();
+        if let Some(bar) = &self.bar {
+            bar.set_message(message);
+        } else {
+            // Keep one spinner for the complete build. Its elapsed clock is
+            // therefore build-wide instead of restarting for every stage.
+            let bar = cliclack::spinner().with_template("{msg} · total elapsed {elapsed_precise}");
+            bar.start(message);
             self.bar = Some(bar);
-        } else if matches!(
-            kind,
-            PhaseKind::EngineFinal | PhaseKind::Bibliography | PhaseKind::Index
-        ) && let Some(bar) = &self.bar
-        {
-            bar.set_message(active_stage_message(stage, kind, detail));
         }
     }
 
     pub(super) fn show_download(&self, message: &str) {
+        if let Some(bar) = &self.bar {
+            let step = self.stage.map_or(2, LiveStage::step);
+            bar.set_message(format!("[{step}/4] {message} · {}", self.total_status));
+        }
+    }
+
+    pub(super) fn update_total_status(&mut self, total_status: &str) {
+        self.total_status = total_status.to_string();
+        let message = self.current_message();
         if let Some(bar) = &self.bar {
             bar.set_message(message);
         }
@@ -80,6 +105,7 @@ impl LiveProgress {
             let _ = cliclack::outro(message);
         }
         self.stage = None;
+        self.kind = None;
     }
 
     pub(super) fn fail(&mut self, message: &str) {
@@ -92,12 +118,17 @@ impl LiveProgress {
             let _ = cliclack::outro_cancel(message);
         }
         self.stage = None;
+        self.kind = None;
     }
 
-    fn finish_current(&mut self) {
-        if let (Some(stage), Some(bar)) = (self.stage.take(), self.bar.take()) {
-            bar.clear();
-            let _ = cliclack::log::step(stage.completed());
+    fn current_message(&self) -> String {
+        match (self.stage, self.kind) {
+            (Some(stage), Some(kind)) => format!(
+                "{} · {}",
+                live_stage_message(stage, kind, &self.detail),
+                self.total_status
+            ),
+            _ => self.total_status.clone(),
         }
     }
 }
@@ -155,4 +186,9 @@ fn active_stage_message(stage: LiveStage, kind: PhaseKind, detail: &str) -> Stri
         (LiveStage::Pdf, PhaseKind::Index) => "Building index".to_string(),
         (LiveStage::Pdf, _) => "Building PDF".to_string(),
     }
+}
+
+fn live_stage_message(stage: LiveStage, kind: PhaseKind, detail: &str) -> String {
+    let step = stage.step();
+    format!("[{step}/4] {}", active_stage_message(stage, kind, detail))
 }
