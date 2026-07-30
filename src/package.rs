@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read as _;
@@ -159,14 +160,8 @@ impl PqtyClient {
     }
 
     pub(crate) fn ensure_lock(&self, request: &EnsureLockRequest<'_>) -> Result<(), TexeError> {
-        let project_root = request.project_root;
-        let manifest = request.manifest;
-        let toolchain = request.toolchain;
-        let entry = request.entry;
         let lock = request.lock;
-        let frozen = request.frozen;
-        let progress = request.progress;
-        if frozen {
+        if request.frozen {
             if lock.is_file() {
                 return Ok(());
             }
@@ -175,7 +170,28 @@ impl PqtyClient {
                 lock.display()
             )));
         }
-        if let Some(parent) = lock.parent() {
+        // Runtime requirements are intentionally monotonic. A warm engine
+        // trace cannot prove that an input is unnecessary on a clean build,
+        // because TeX sources may load files conditionally on auxiliary state.
+        let mut requirements = locked_consumer_requirements(lock);
+        requirements.extend(baseline_consumer_requirements(
+            request.manifest,
+            request.toolchain,
+        )?);
+        self.write_lock(request, &requirements)
+    }
+
+    fn write_lock(
+        &self,
+        request: &EnsureLockRequest<'_>,
+        requirements: &LockedConsumerRequirements,
+    ) -> Result<(), TexeError> {
+        let project_root = request.project_root;
+        let manifest = request.manifest;
+        let toolchain = request.toolchain;
+        let entry = request.entry;
+        let progress = request.progress;
+        if let Some(parent) = request.lock.parent() {
             fs::create_dir_all(parent).map_err(|source| TexeError::Io {
                 path: parent.to_path_buf(),
                 source,
@@ -183,24 +199,20 @@ impl PqtyClient {
         }
         let input_roots = package_input_roots(manifest);
         let mut arguments = Self::project_arguments("lock", project_root, entry, &input_roots)?;
-        arguments.extend([OsString::from("--output"), lock.as_os_str().to_os_string()]);
+        arguments.extend([
+            OsString::from("--output"),
+            request.lock.as_os_str().to_os_string(),
+        ]);
         if let Some(managed) = &toolchain.managed {
             arguments.push(OsString::from("--tlpdb-url"));
             arguments.push(OsString::from(&managed.registry_url));
             arguments.push(OsString::from("--tlpdb-sha256"));
             arguments.push(OsString::from(&managed.registry_metadata_sha256));
-            for provider in &managed.bootstrap_providers {
-                arguments.push(OsString::from("--require-provider"));
-                arguments.push(OsString::from(provider));
-            }
         } else if manifest.packages.remote {
             arguments.push(OsString::from("--remote"));
             arguments.push(OsString::from("latest"));
-            for provider in locked_format_bootstrap_providers(&toolchain.engine)? {
-                arguments.push(OsString::from("--require-provider"));
-                arguments.push(OsString::from(provider.as_str()));
-            }
         }
+        append_consumer_requirement_arguments(&mut arguments, requirements);
         append_registry_transport_argument(&mut arguments, toolchain);
         append_store_argument(&mut arguments, project_root, manifest);
         self.checked_output_with_progress(&arguments, project_root, progress)
@@ -460,6 +472,81 @@ impl PqtyClient {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct LockedConsumerRequirements {
+    providers: BTreeSet<String>,
+    files: BTreeSet<String>,
+}
+
+impl LockedConsumerRequirements {
+    fn extend(&mut self, other: Self) {
+        self.providers.extend(other.providers);
+        self.files.extend(other.files);
+    }
+}
+
+fn locked_consumer_requirements(lock: &Path) -> LockedConsumerRequirements {
+    let Ok(bytes) = fs::read(lock) else {
+        return LockedConsumerRequirements::default();
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return LockedConsumerRequirements::default();
+    };
+    let Some(requirements) = value.get("consumer_requirements") else {
+        return LockedConsumerRequirements::default();
+    };
+    LockedConsumerRequirements {
+        providers: string_set(requirements, "providers"),
+        files: string_set(requirements, "files"),
+    }
+}
+
+fn baseline_consumer_requirements(
+    manifest: &ProjectManifest,
+    toolchain: &ResolvedToolchain,
+) -> Result<LockedConsumerRequirements, TexeError> {
+    let providers = if let Some(managed) = &toolchain.managed {
+        managed.bootstrap_providers.iter().cloned().collect()
+    } else if manifest.packages.remote {
+        locked_format_bootstrap_providers(&toolchain.engine)?
+            .iter()
+            .cloned()
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    Ok(LockedConsumerRequirements {
+        providers,
+        files: BTreeSet::new(),
+    })
+}
+
+fn string_set(value: &serde_json::Value, field: &str) -> BTreeSet<String> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn append_consumer_requirement_arguments(
+    arguments: &mut Vec<OsString>,
+    requirements: &LockedConsumerRequirements,
+) {
+    for provider in &requirements.providers {
+        arguments.push(OsString::from("--require-provider"));
+        arguments.push(OsString::from(provider));
+    }
+    for file in &requirements.files {
+        arguments.push(OsString::from("--require-file"));
+        arguments.push(OsString::from(file));
+    }
+}
+
 fn package_input_roots(manifest: &ProjectManifest) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     for root in manifest
@@ -627,12 +714,14 @@ impl ErrorContext for TexeError {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::fs;
     use std::path::{Path, PathBuf};
 
     use crate::ProjectManifest;
     use crate::package::{
         CAPABILITIES_SCHEMA, CONVERGENCE_REPORT_SCHEMA, Capabilities, ENVIRONMENT_SCHEMA,
-        LOCK_SCHEMA, PROGRESS_SCHEMA, PqtyClient, TRACE_REPORT_SCHEMA, TRACE_SCHEMA,
+        LOCK_SCHEMA, LockedConsumerRequirements, PROGRESS_SCHEMA, PqtyClient, TRACE_REPORT_SCHEMA,
+        TRACE_SCHEMA, append_consumer_requirement_arguments, locked_consumer_requirements,
         package_input_roots, unresolved_runtime_input_summary,
     };
 
@@ -691,6 +780,66 @@ mod tests {
                 &[]
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn refreshed_locks_preserve_runtime_requirements_not_seen_by_a_warm_build() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let lock = directory.path().join("pqty.lock");
+        fs::write(
+            &lock,
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "pqty.lock/v1",
+                "consumer_requirements": {
+                    "providers": ["runtime-font", "static-package", "runtime-font", ""],
+                    "files": ["fonts/map/runtime.map", "fonts/map/runtime.map", ""]
+                },
+                "closure": [{"provider": "converged-but-not-explicit"}]
+            }))
+            .expect("lock JSON"),
+        )
+        .expect("lock");
+
+        let requirements = locked_consumer_requirements(&lock);
+        assert_eq!(
+            requirements,
+            LockedConsumerRequirements {
+                providers: ["runtime-font".to_string(), "static-package".to_string()]
+                    .into_iter()
+                    .collect(),
+                files: ["fonts/map/runtime.map".to_string()].into_iter().collect(),
+            }
+        );
+        let mut arguments = Vec::new();
+        append_consumer_requirement_arguments(&mut arguments, &requirements);
+        assert_eq!(
+            arguments,
+            [
+                "--require-provider",
+                "runtime-font",
+                "--require-provider",
+                "static-package",
+                "--require-file",
+                "fonts/map/runtime.map",
+            ]
+            .map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn absent_or_invalid_locks_have_no_requirements_to_preserve() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let lock = directory.path().join("pqty.lock");
+        assert_eq!(
+            locked_consumer_requirements(&lock),
+            LockedConsumerRequirements::default()
+        );
+
+        fs::write(&lock, b"not JSON").expect("invalid lock");
+        assert_eq!(
+            locked_consumer_requirements(&lock),
+            LockedConsumerRequirements::default()
         );
     }
 
