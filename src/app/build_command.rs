@@ -73,7 +73,7 @@ pub(super) fn execute_build(
         presentation,
     )?;
     let progress = Progress::new(
-        build_root.join("timings.json"),
+        progress::history_path(&context.root)?,
         &context.manifest.toolchain.engine,
         options.frozen,
         context.manifest.toolchain.max_passes,
@@ -84,8 +84,10 @@ pub(super) fn execute_build(
         } else {
             ProgressLayout::Standalone
         },
-    );
+    )
+    .with_legacy_history(&build_root.join("timings.json"));
     progress.begin(state::read(&build_root.join(state::STATE_NAME)).is_some());
+    build::announce_configuration_warnings(&context.manifest, &progress);
     let build_result = (|| {
         let provider = &context.manifest.toolchain.provider;
         let (toolchain, tools) = progress.phase(

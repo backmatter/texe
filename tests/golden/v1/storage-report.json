@@ -4,7 +4,7 @@
     {
       "path": ".texe/build",
       "bytes": 4096,
-      "purpose": "build intermediates and timing history"
+      "purpose": "build intermediates"
     }
   ],
   "shared": [],

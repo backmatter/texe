@@ -26,6 +26,7 @@ const CACHE_DIRECTORIES: &[&str] = &[
     "downloads",
     "pqty",
     "editor",
+    "timings",
 ];
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -75,10 +76,7 @@ pub fn storage_report(
     if let Some((root, manifest)) = project {
         manifest.validate()?;
         for (relative, purpose) in [
-            (
-                &manifest.project.build_dir,
-                "build intermediates and timing history",
-            ),
+            (&manifest.project.build_dir, "build intermediates"),
             (
                 &manifest.packages.texmf,
                 "materialized project package tree",
@@ -106,6 +104,7 @@ pub fn storage_report(
         ("downloads", "verified reusable downloads"),
         ("pqty", "package registry, downloads, and shared store"),
         ("editor", "bundled VS Code integration"),
+        ("timings", "local per-project build timing history"),
     ] {
         let path = home.join(directory);
         if !path.exists() {

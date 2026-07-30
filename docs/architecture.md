@@ -90,7 +90,7 @@ A frozen build requires that lock, verifies missing cached content against its
 recorded sources, and forbids package convergence.
 
 Everything below `.texe/` is derived. It includes engine output, the internal
-pqty lock and TEXMF tree, timing history, and build state. `texe.build-state/v1`
+pqty lock and TEXMF tree, and build state. `texe.build-state/v1`
 fingerprints the effective manifest, toolchain, lock, source inputs, and
 published outputs. When it still matches, an ordinary build can return the
 existing artifact without starting the engine. Shell escape disables this
@@ -100,10 +100,11 @@ One operating-system lock serializes builds for a project. `texe watch` uses
 the same build path and excludes declared output and state directories from
 its source snapshot.
 
-Managed runtimes, components, formats, downloads, pqty package data, and the
-editor companion live in named shared roots below `TEXE_HOME`. texe gives pqty
-that same cache home on every platform. The data is reproducible from embedded
-recipes and locks. Cleanup only traverses those named owned roots;
+Managed runtimes, components, formats, downloads, pqty package data, timing
+history, and the editor companion live in named shared roots below `TEXE_HOME`.
+texe gives pqty that same cache home on every platform. Managed build data is
+reproducible from embedded recipes and locks; timing history is advisory and
+disposable. Cleanup only traverses those named owned roots;
 projects and unknown files in a custom `TEXE_HOME` are never removal targets.
 
 ## Reproducibility and trust

@@ -111,19 +111,8 @@ pub fn build_project(
     // Held for the whole build, including the fast path: the check reads the
     // published outputs another build could be replacing.
     let _guard = BuildGuard::acquire(&context.build_root)?;
+    announce_configuration_warnings(manifest, &context.progress);
     let unmanaged_commands = manifest.uses_unmanaged_commands();
-    if manifest.toolchain.shell_escape {
-        eprintln!(
-            "texe: warning: shell escape is enabled; external commands and their inputs are not \
-             pinned by texe.lock"
-        );
-    }
-    if unmanaged_commands {
-        eprintln!(
-            "texe: warning: unmanaged command overrides are enabled; project or host commands \
-             may execute and the no-op build cache is disabled"
-        );
-    }
     let cacheable = manifest.toolchain.provider == "managed"
         && !manifest.toolchain.shell_escape
         && !unmanaged_commands;
@@ -174,6 +163,21 @@ pub fn build_project(
         &report.environment_fingerprint,
     );
     Ok(report)
+}
+
+pub(crate) fn announce_configuration_warnings(manifest: &ProjectManifest, progress: &Progress) {
+    if manifest.toolchain.shell_escape {
+        progress.warning(
+            "shell escape is enabled; external commands and their inputs are not pinned by \
+             texe.lock",
+        );
+    }
+    if manifest.uses_unmanaged_commands() {
+        progress.warning(
+            "unmanaged command overrides are enabled; project or host commands may execute and \
+             the no-op build cache is disabled",
+        );
+    }
 }
 
 mod artifact;
