@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest as _, Sha256};
 
 use crate::TexeError;
+use crate::build::auxiliary::{self, CachedOutput, OutputCache};
 use crate::build::process::{
     managed_path, raw_bundled_biber_output, raw_engine_output, raw_output, search_path_from,
 };
@@ -19,12 +20,24 @@ use crate::toolchain::{
 #[derive(Debug, Default)]
 pub(super) struct BibliographyState {
     processed: BTreeMap<PathBuf, String>,
+    cache: OutputCache,
     runs: usize,
 }
 
 impl BibliographyState {
+    pub(super) fn from_cache(cache: BTreeMap<String, CachedOutput>) -> Self {
+        Self {
+            cache: OutputCache::from_entries(cache),
+            ..Self::default()
+        }
+    }
+
     pub(super) fn runs(&self) -> usize {
         self.runs
+    }
+
+    pub(super) fn cache_entries(&self) -> BTreeMap<String, CachedOutput> {
+        self.cache.retained_entries()
     }
 }
 
@@ -68,8 +81,20 @@ pub(super) fn process_pending(
     )?;
     let mut ran = false;
     for control in controls {
-        let digest = bibliography_control_digest(&control, context.output_dir)?;
+        let digest = persistent_control_digest(&control, context)?;
         if state.processed.get(&control.path) == Some(&digest) {
+            continue;
+        }
+        let output = control.path.with_extension("bbl");
+        let persistent_cache = persistent_cache_supported(&control, context.manifest);
+        let cache_key = persistent_cache
+            .then(|| auxiliary::relative_path(context.output_dir, &control.path))
+            .flatten();
+        if state
+            .cache
+            .restore(cache_key.as_deref(), &digest, context.output_dir, &output)
+        {
+            state.processed.insert(control.path, digest);
             continue;
         }
         let name = match control.processor {
@@ -95,6 +120,9 @@ pub(super) fn process_pending(
                 )
             },
         )?;
+        state
+            .cache
+            .record(cache_key, &digest, context.output_dir, &output);
         state.processed.insert(control.path, digest);
         state.runs += 1;
         ran = true;
@@ -232,6 +260,100 @@ fn bibliography_control_digest(
         }
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+fn persistent_control_digest(
+    control: &BibliographyControl,
+    context: &BibliographyContext<'_>,
+) -> Result<String, TexeError> {
+    let mut hasher = Sha256::new();
+    hasher.update(bibliography_control_digest(control, context.output_dir)?.as_bytes());
+    if context.toolchain.managed.is_none()
+        && control.processor == BibliographyProcessor::Bibtex
+        && context.manifest.bibliography.bibtex == "bibtex"
+    {
+        let executable = resolve_executable(context.project_root, "bibtex")?;
+        hasher.update(auxiliary::required_file_digest(&executable)?.as_bytes());
+    }
+    for path in project_bibliography_files(context.project_root, context.manifest)? {
+        let relative = path.strip_prefix(context.project_root).unwrap_or(&path);
+        hasher.update(relative.as_os_str().as_encoded_bytes());
+        hasher.update(b"\0");
+        hasher.update(fs::read(&path).map_err(|source| TexeError::Io {
+            path: path.clone(),
+            source,
+        })?);
+        hasher.update(b"\0");
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn persistent_cache_supported(control: &BibliographyControl, manifest: &ProjectManifest) -> bool {
+    match control.processor {
+        BibliographyProcessor::Bibtex => manifest.bibliography.bibtex == "bibtex",
+        BibliographyProcessor::Biber => manifest.bibliography.biber == "biber",
+    }
+}
+
+fn project_bibliography_files(
+    project_root: &Path,
+    manifest: &ProjectManifest,
+) -> Result<BTreeSet<PathBuf>, TexeError> {
+    let excluded = [
+        project_root.join(&manifest.project.build_dir),
+        project_root.join(&manifest.packages.texmf),
+    ];
+    let mut files = BTreeSet::new();
+    let mut pending = vec![project_root.to_path_buf()];
+    pending.extend(
+        manifest
+            .bibliography
+            .roots
+            .iter()
+            .map(|root| project_root.join(root)),
+    );
+    let mut visited = BTreeSet::new();
+    while let Some(directory) = pending.pop() {
+        if excluded
+            .iter()
+            .any(|excluded| directory == *excluded || directory.starts_with(excluded))
+            || !visited.insert(directory.clone())
+        {
+            continue;
+        }
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(TexeError::Io {
+                    path: directory,
+                    source,
+                });
+            }
+        };
+        for entry in entries {
+            let entry = entry.map_err(|source| TexeError::Io {
+                path: directory.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            let file_type = entry.file_type().map_err(|source| TexeError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            if file_type.is_dir() {
+                pending.push(path);
+            } else if file_type.is_file()
+                && matches!(
+                    path.extension().and_then(OsStr::to_str),
+                    Some("bib" | "bst")
+                )
+            {
+                files.insert(path);
+            }
+        }
+    }
+    Ok(files)
 }
 
 fn hash_bibtex_auxiliary(
@@ -638,10 +760,12 @@ mod tests {
 
     use crate::ProjectManifest;
     use crate::build::bibliography::{
-        BibliographyControl, BibliographyProcessor, BibtexControlProxy,
+        BibliographyContext, BibliographyControl, BibliographyProcessor, BibtexControlProxy,
         bibliography_control_digest, bibliography_controls, bibliography_environment,
         managed_bibliography_path, normalize_bibtex_project_relative_paths,
+        persistent_cache_supported, persistent_control_digest,
     };
+    use crate::progress::{Progress, ProgressLayout};
     use crate::toolchain::ResolvedToolchain;
 
     #[test]
@@ -883,5 +1007,87 @@ roots = ["vendor/natbib"]
         let changed =
             bibliography_control_digest(&control, directory.path()).expect("changed digest");
         assert_ne!(initial, changed);
+    }
+
+    #[test]
+    fn persistent_bibliography_digest_tracks_database_contents() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let root = directory.path();
+        let output = root.join(".texe/build/output");
+        fs::create_dir_all(&output).expect("output");
+        let control = BibliographyControl {
+            path: output.join("main.bcf"),
+            processor: BibliographyProcessor::Biber,
+        };
+        fs::write(&control.path, b"<bcf:controlfile />").expect("control");
+        fs::write(root.join("references.bib"), b"@book{first,}").expect("database");
+        let manifest: ProjectManifest = toml::from_str(
+            r#"
+schema = "texe.project/v1"
+[project]
+entry = "main.tex"
+[toolchain]
+provider = "system"
+engine = "pdflatex"
+"#,
+        )
+        .expect("manifest");
+        let toolchain = system_toolchain();
+        let progress = Progress::new(
+            output.join("timings.json"),
+            "pdflatex",
+            false,
+            5,
+            false,
+            false,
+            ProgressLayout::Standalone,
+        );
+        let texmf = root.join(".texe/texmf");
+        let recorder = output.join("main.fls");
+        let context = BibliographyContext {
+            project_root: root,
+            manifest: &manifest,
+            toolchain: &toolchain,
+            texmf: &texmf,
+            output_dir: &output,
+            recorder_path: &recorder,
+            progress: &progress,
+        };
+        let initial = persistent_control_digest(&control, &context).expect("initial digest");
+
+        fs::write(root.join("references.bib"), b"@book{second,}").expect("changed database");
+        let changed = persistent_control_digest(&control, &context).expect("changed digest");
+
+        assert_ne!(initial, changed);
+    }
+
+    #[test]
+    fn persistent_cache_requires_the_default_bibliography_processor() {
+        let mut manifest: ProjectManifest = toml::from_str(
+            r#"
+schema = "texe.project/v1"
+[project]
+entry = "main.tex"
+[toolchain]
+engine = "pdflatex"
+"#,
+        )
+        .expect("manifest");
+        let bibtex = BibliographyControl {
+            path: PathBuf::from("main.aux"),
+            processor: BibliographyProcessor::Bibtex,
+        };
+        let biber = BibliographyControl {
+            path: PathBuf::from("main.bcf"),
+            processor: BibliographyProcessor::Biber,
+        };
+
+        assert!(persistent_cache_supported(&bibtex, &manifest));
+        assert!(persistent_cache_supported(&biber, &manifest));
+
+        manifest.bibliography.bibtex = "./tools/bibtex".to_string();
+        manifest.bibliography.biber = "./tools/biber".to_string();
+        assert!(!persistent_cache_supported(&bibtex, &manifest));
+        assert!(!persistent_cache_supported(&biber, &manifest));
     }
 }

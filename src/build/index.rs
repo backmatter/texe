@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest as _, Sha256};
 
 use crate::TexeError;
+use crate::build::auxiliary::{self, CachedOutput, OutputCache};
 use crate::build::process::{managed_path, raw_engine_output, raw_output, search_path_from};
 use crate::config::ProjectManifest;
 use crate::progress::{PhaseKind, Progress};
@@ -22,12 +23,24 @@ use crate::toolchain::{ResolvedToolchain, resolve_executable};
 #[derive(Debug, Default)]
 pub(super) struct IndexState {
     processed: BTreeMap<PathBuf, String>,
+    cache: OutputCache,
     runs: usize,
 }
 
 impl IndexState {
+    pub(super) fn from_cache(cache: BTreeMap<String, CachedOutput>) -> Self {
+        Self {
+            cache: OutputCache::from_entries(cache),
+            ..Self::default()
+        }
+    }
+
     pub(super) fn runs(&self) -> usize {
         self.runs
+    }
+
+    pub(super) fn cache_entries(&self) -> BTreeMap<String, CachedOutput> {
+        self.cache.retained_entries()
     }
 }
 
@@ -50,14 +63,26 @@ pub(super) fn process_pending(
 ) -> Result<bool, TexeError> {
     let mut ran = false;
     for control in index_controls(output_dir)? {
-        let digest = control_digest(&control)?;
+        let digest = persistent_control_digest(project_root, manifest, toolchain, &control)?;
         if state.processed.get(&control.input) == Some(&digest) {
             continue;
         }
+        let persistent_cache = persistent_cache_supported(manifest);
+        let cache_key = persistent_cache
+            .then(|| auxiliary::relative_path(output_dir, &control.input))
+            .flatten();
+        state.cache.retain(cache_key.as_deref());
         if !nonempty_file(&control.input) {
             let removed = remove_if_file(&control.output)? | remove_if_file(&control.log)?;
             state.processed.insert(control.input, digest);
             ran |= removed;
+            continue;
+        }
+        if state
+            .cache
+            .restore(cache_key.as_deref(), &digest, output_dir, &control.output)
+        {
+            state.processed.insert(control.input, digest);
             continue;
         }
         let label = control
@@ -79,6 +104,9 @@ pub(super) fn process_pending(
                 )
             },
         )?;
+        state
+            .cache
+            .record(cache_key, &digest, output_dir, &control.output);
         state.processed.insert(control.input, digest);
         state.runs += 1;
         ran = true;
@@ -257,6 +285,25 @@ fn control_digest(control: &IndexControl) -> Result<String, TexeError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+fn persistent_control_digest(
+    project_root: &Path,
+    manifest: &ProjectManifest,
+    toolchain: &ResolvedToolchain,
+    control: &IndexControl,
+) -> Result<String, TexeError> {
+    let mut hasher = Sha256::new();
+    hasher.update(control_digest(control)?.as_bytes());
+    if toolchain.managed.is_none() && manifest.index.makeindex == "makeindex" {
+        let executable = resolve_makeindex(project_root, manifest, toolchain)?;
+        hasher.update(auxiliary::required_file_digest(&executable)?.as_bytes());
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn persistent_cache_supported(manifest: &ProjectManifest) -> bool {
+    manifest.index.makeindex == "makeindex"
+}
+
 fn run_makeindex(
     project_root: &Path,
     manifest: &ProjectManifest,
@@ -368,7 +415,8 @@ fn index_environment(
 mod tests {
     use std::fs;
 
-    use crate::build::index::{glossary_fields, index_controls};
+    use crate::ProjectManifest;
+    use crate::build::index::{glossary_fields, index_controls, persistent_cache_supported};
 
     #[test]
     fn discovers_standard_indexes_and_all_declared_glossaries() {
@@ -408,5 +456,23 @@ mod tests {
     #[test]
     fn rejects_unsafe_glossary_extensions() {
         assert!(glossary_fields(br"\@newglossary{main}{glg}{gls}{../glo}").is_none());
+    }
+
+    #[test]
+    fn persistent_cache_requires_the_default_index_processor() {
+        let mut manifest: ProjectManifest = toml::from_str(
+            r#"
+schema = "texe.project/v1"
+[project]
+entry = "main.tex"
+[toolchain]
+engine = "pdflatex"
+"#,
+        )
+        .expect("manifest");
+        assert!(persistent_cache_supported(&manifest));
+
+        manifest.index.makeindex = "./tools/makeindex".to_string();
+        assert!(!persistent_cache_supported(&manifest));
     }
 }
