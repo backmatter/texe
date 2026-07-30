@@ -137,11 +137,10 @@ resources plus the current PDF. It does not own build logic.
 
 Project-local integrations are adapters under `src/integrations/`. Git owns
 repository initialization and a marked `.gitignore` block. The VS Code adapter
-owns a generated `.code-workspace` below `.texe/editor/` and a small bundled
-layout companion. It never rewrites the project's `.vscode/settings.json`;
-removal deletes only the generated workspace. Keeping editor behavior behind
-this boundary allows additional editors without coupling them to project setup
-or builds.
+owns optional project-local settings and a small bundled layout companion. It
+does not merge existing settings or create a separate workspace. Keeping editor
+behavior behind this boundary allows additional editors without coupling them
+to project setup or builds.
 
 ## Code map
 

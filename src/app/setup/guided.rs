@@ -126,7 +126,7 @@ fn prompt_guided_setup(current: &Path) -> Result<GuidedSetup, TexeError> {
     let vscode_prompt = if vscode_default {
         "Set up VS Code and install missing LaTeX extensions? (Recommended)"
     } else {
-        "Create a VS Code workspace? (`code` command not found)"
+        "Create project-local VS Code settings? (`code` command not found)"
     };
     let vscode = ux::prompt(
         cliclack::confirm(vscode_prompt)

@@ -127,7 +127,11 @@ fn run_editor_command(command: Command, presentation: ux::Presentation) -> Resul
     let report = if remove {
         integrations::remove_vscode(&context.root)?
     } else {
-        integrations::setup_vscode(&context.root, true)?
+        integrations::setup_vscode(
+            &context.root,
+            true,
+            !presentation.json && !presentation.quiet,
+        )?
     };
     if presentation.json {
         print_json(&serde_json::json!({

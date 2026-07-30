@@ -4,15 +4,50 @@ use std::process::{Command, Stdio};
 use crate::TexeError;
 use crate::config::ProjectManifest;
 use crate::integrations::IntegrationReport;
+use crate::ux;
 
 mod bridge;
 mod settings;
 
-pub(crate) fn setup_vscode(root: &Path, open: bool) -> Result<IntegrationReport, TexeError> {
+pub(crate) fn setup_vscode(
+    root: &Path,
+    open: bool,
+    allow_settings_prompt: bool,
+) -> Result<IntegrationReport, TexeError> {
     let mut report = IntegrationReport::default();
-    settings::configure(root)?;
+    let settings_exist = settings::project_settings_exist(root)?;
+    let replace_project_settings = settings_exist
+        && allow_settings_prompt
+        && ux::TerminalCapabilities::detect().can_prompt()
+        && ux::prompt(
+            cliclack::confirm(format!(
+                "{} already exists. Replace the entire file with texe's VS Code settings?",
+                settings::project_settings_path(root).display()
+            ))
+            .initial_value(false)
+            .interact(),
+        )?;
+    let settings_outcome = settings::configure(root, replace_project_settings)?;
+    match settings_outcome {
+        settings::ProjectSettingsOutcome::Created => report.messages.push(
+            "created .vscode/settings.json with texe's LaTeX Workshop defaults".to_string(),
+        ),
+        settings::ProjectSettingsOutcome::Replaced => report.messages.push(
+            "replaced .vscode/settings.json with texe's LaTeX Workshop defaults".to_string(),
+        ),
+        settings::ProjectSettingsOutcome::Preserved => report.messages.push(
+            "kept the existing .vscode/settings.json unchanged; texe did not install editor defaults"
+                .to_string(),
+        ),
+    }
+    if settings_outcome != settings::ProjectSettingsOutcome::Preserved {
+        report.messages.push(
+            "VS Code will build with texe and show the project-root PDF in an editor tab"
+                .to_string(),
+        );
+    }
     report.messages.push(
-        "generated a project-local VS Code workspace that builds with texe and shows the PDF in an editor tab"
+        "VS Code will open the project folder directly; texe does not create a separate workspace"
             .to_string(),
     );
     report.messages.push(
@@ -30,13 +65,13 @@ pub(crate) fn setup_vscode(root: &Path, open: bool) -> Result<IntegrationReport,
         Ok(status) if status.success() => true,
         Ok(status) => {
             report.messages.push(format!(
-                "the VS Code command returned {status}; the workspace was generated, but VS Code was not opened"
+                "the VS Code command returned {status}; setup finished, but VS Code was not opened"
             ));
             false
         }
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
             report.messages.push(
-                "the VS Code command is unavailable; the workspace was generated, but VS Code was not opened"
+                "the VS Code command is unavailable; setup finished, but VS Code was not opened"
                     .to_string(),
             );
             false
@@ -52,7 +87,7 @@ pub(crate) fn setup_vscode(root: &Path, open: bool) -> Result<IntegrationReport,
         ensure_latex_workshop(&mut report);
         ensure_layout_companion(&mut report);
     }
-    if open {
+    if open && code_available {
         report.messages.extend(open_vscode(root)?.messages);
     }
     Ok(report)
@@ -86,13 +121,19 @@ fn ensure_latex_workshop(report: &mut IntegrationReport) {
 
 fn ensure_layout_companion(report: &mut IntegrationReport) {
     let layout_version = installed_extension_version("backmatter.texe-paper-layout");
-    if layout_version.as_deref() == Some(env!("CARGO_PKG_VERSION")) {
+    let same_version = layout_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
+    if same_version
+        && installed_extension_path("backmatter.texe-paper-layout")
+            .is_some_and(|path| bridge::matches_installed(&path).unwrap_or(false))
+    {
         report
             .messages
             .push("texe's side-by-side paper layout is available in VS Code".to_string());
         return;
     }
-    let action = if layout_version.is_some() {
+    let action = if same_version {
+        "refreshed"
+    } else if layout_version.is_some() {
         "updated"
     } else {
         "installed"
@@ -129,6 +170,22 @@ fn ensure_layout_companion(report: &mut IntegrationReport) {
     }
 }
 
+fn installed_extension_path(identifier: &str) -> Option<PathBuf> {
+    let output = Command::new("code")
+        .args(["--locate-extension", identifier])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+}
+
 fn installed_extension_version(identifier: &str) -> Option<String> {
     Command::new("code")
         .args(["--list-extensions", "--show-versions"])
@@ -156,15 +213,9 @@ pub(crate) fn open_vscode(root: &Path) -> Result<IntegrationReport, TexeError> {
     let targets = open_targets(root, &manifest);
     let source = &targets[0];
     let pdf = targets.get(1);
-    let workspace = settings::workspace_path(root);
-    let project = if workspace.is_file() {
-        workspace.as_path()
-    } else {
-        root
-    };
     let mut report = IntegrationReport::default();
     match Command::new("code")
-        .arg(project)
+        .arg(root)
         .args(&targets)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

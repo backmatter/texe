@@ -8,59 +8,73 @@ use crate::atomic;
 use crate::config::ProjectManifest;
 use crate::integrations::IntegrationReport;
 
-const WORKSPACE_PATH: &str = ".texe/editor/texe.code-workspace";
+const LEGACY_WORKSPACE_PATH: &str = ".texe/editor/texe.code-workspace";
+const PROJECT_SETTINGS_PATH: &str = ".vscode/settings.json";
 
-pub(crate) fn configure(root: &Path) -> Result<(), TexeError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectSettingsOutcome {
+    Created,
+    Replaced,
+    Preserved,
+}
+
+pub(crate) fn configure(
+    root: &Path,
+    replace_project_settings: bool,
+) -> Result<ProjectSettingsOutcome, TexeError> {
     let manifest = ProjectManifest::load(&root.join("texe.toml"))?;
-    let path = workspace_path(root);
-    let directory = path.parent().expect("workspace path has a parent");
-    ensure_owned_directory(&root.join(".texe"))?;
-    ensure_owned_directory(directory)?;
+    let settings = desired_settings(&manifest);
+    remove_legacy_workspace(root)?;
 
-    let workspace = serde_json::json!({
-        "folders": [
-            {
-                // The generated workspace lives in .texe/editor/.
-                "path": "../..",
-            }
-        ],
-        "settings": desired_settings(&manifest),
-    });
-    let mut bytes = serde_json::to_vec_pretty(&workspace).map_err(|source| TexeError::Json {
-        path: path.clone(),
-        source,
-    })?;
-    bytes.push(b'\n');
-    atomic::write(&path, &bytes)
+    let project_settings = project_settings_path(root);
+    let project_settings_existed = path_exists(&project_settings)?;
+    let project_settings_outcome = if project_settings_existed && !replace_project_settings {
+        ProjectSettingsOutcome::Preserved
+    } else {
+        let directory = project_settings
+            .parent()
+            .expect("project settings path has a parent");
+        ensure_directory(directory, "VS Code settings")?;
+        validate_settings_target(&project_settings)?;
+        let mut bytes = serde_json::to_vec_pretty(&settings).map_err(|source| TexeError::Json {
+            path: project_settings.clone(),
+            source,
+        })?;
+        bytes.push(b'\n');
+        atomic::write(&project_settings, &bytes)?;
+        if project_settings_existed {
+            ProjectSettingsOutcome::Replaced
+        } else {
+            ProjectSettingsOutcome::Created
+        }
+    };
+
+    Ok(project_settings_outcome)
 }
 
 pub(crate) fn remove(root: &Path) -> Result<IntegrationReport, TexeError> {
-    let path = workspace_path(root);
-    let directory = path.parent().expect("workspace path has a parent");
-    if !validate_owned_directory(&root.join(".texe"), "remove")?
-        || !validate_owned_directory(directory, "remove")?
-        || fs::symlink_metadata(&path)
-            .is_err_and(|source| source.kind() == std::io::ErrorKind::NotFound)
-    {
-        return Ok(IntegrationReport {
-            messages: vec!["no texe-owned VS Code workspace was found".to_string()],
-        });
-    }
-    fs::remove_file(&path).map_err(|source| TexeError::Io {
-        path: path.clone(),
-        source,
-    })?;
-    remove_if_empty(directory)?;
+    let removed = remove_legacy_workspace(root)?;
     Ok(IntegrationReport {
-        messages: vec![
-            "removed texe's generated VS Code workspace; project settings were untouched"
-                .to_string(),
-        ],
+        messages: vec![if removed {
+            "removed texe's legacy generated VS Code workspace; project settings were untouched"
+                .to_string()
+        } else {
+            "texe no longer creates a separate VS Code workspace; project settings were untouched"
+                .to_string()
+        }],
     })
 }
 
-pub(crate) fn workspace_path(root: &Path) -> PathBuf {
-    root.join(WORKSPACE_PATH)
+fn legacy_workspace_path(root: &Path) -> PathBuf {
+    root.join(LEGACY_WORKSPACE_PATH)
+}
+
+pub(crate) fn project_settings_path(root: &Path) -> PathBuf {
+    root.join(PROJECT_SETTINGS_PATH)
+}
+
+pub(crate) fn project_settings_exist(root: &Path) -> Result<bool, TexeError> {
+    path_exists(&project_settings_path(root))
 }
 
 fn remove_if_empty(path: &Path) -> Result<(), TexeError> {
@@ -81,8 +95,37 @@ fn remove_if_empty(path: &Path) -> Result<(), TexeError> {
     }
 }
 
-fn ensure_owned_directory(path: &Path) -> Result<(), TexeError> {
-    if validate_owned_directory(path, "write")? {
+fn remove_legacy_workspace(root: &Path) -> Result<bool, TexeError> {
+    let path = legacy_workspace_path(root);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(TexeError::Io { path, source });
+        }
+    };
+    let private_root = root.join(".texe");
+    let directory = path.parent().expect("legacy workspace path has a parent");
+    if !validate_directory(&private_root, "remove", "legacy VS Code workspace")?
+        || !validate_directory(directory, "remove", "legacy VS Code workspace")?
+        || !metadata.is_file()
+        || metadata.file_type().is_symlink()
+    {
+        return Err(TexeError::Build(format!(
+            "refusing to remove legacy VS Code workspace through non-file {}",
+            path.display()
+        )));
+    }
+    fs::remove_file(&path).map_err(|source| TexeError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    remove_if_empty(directory)?;
+    Ok(true)
+}
+
+fn ensure_directory(path: &Path, subject: &str) -> Result<(), TexeError> {
+    if validate_directory(path, "write", subject)? {
         return Ok(());
     }
     fs::create_dir(path).map_err(|source| TexeError::Io {
@@ -91,13 +134,39 @@ fn ensure_owned_directory(path: &Path) -> Result<(), TexeError> {
     })
 }
 
-fn validate_owned_directory(path: &Path, operation: &str) -> Result<bool, TexeError> {
+fn validate_directory(path: &Path, operation: &str, subject: &str) -> Result<bool, TexeError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(true),
         Ok(_) => Err(TexeError::Build(format!(
-            "refusing to {operation} a VS Code workspace through non-directory {}",
+            "refusing to {operation} {subject} through non-directory {}",
             path.display()
         ))),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(TexeError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn validate_settings_target(path: &Path) -> Result<(), TexeError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => Ok(()),
+        Ok(_) => Err(TexeError::Build(format!(
+            "refusing to replace VS Code settings through non-file {}",
+            path.display()
+        ))),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(TexeError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn path_exists(path: &Path) -> Result<bool, TexeError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(source) => Err(TexeError::Io {
             path: path.to_path_buf(),
@@ -130,6 +199,38 @@ fn desired_settings(manifest: &ProjectManifest) -> BTreeMap<&'static str, serde_
             serde_json::Value::String("onSave".to_string()),
         ),
         (
+            "latex-workshop.latex.autoBuild.onSave.files.ignore",
+            serde_json::json!([]),
+        ),
+        (
+            "latex-workshop.latex.build.enableMagicComments",
+            serde_json::Value::Bool(false),
+        ),
+        (
+            "latex-workshop.latex.jobname",
+            serde_json::Value::String(stem.to_string()),
+        ),
+        (
+            "latex-workshop.latex.outDir",
+            serde_json::Value::String("%WORKSPACE_FOLDER%".to_string()),
+        ),
+        (
+            "latex-workshop.latex.search.rootFiles.include",
+            serde_json::json!([slash_path(&manifest.project.entry)]),
+        ),
+        (
+            "latex-workshop.latex.search.rootFiles.exclude",
+            serde_json::json!(["**/.texe/**"]),
+        ),
+        (
+            "latex-workshop.latex.rootFile.useSubFile",
+            serde_json::Value::Bool(false),
+        ),
+        (
+            "latex-workshop.latex.rootFile.doNotPrompt",
+            serde_json::Value::Bool(true),
+        ),
+        (
             "latex-workshop.view.pdf.viewer",
             serde_json::Value::String("tab".to_string()),
         ),
@@ -141,6 +242,29 @@ fn desired_settings(manifest: &ProjectManifest) -> BTreeMap<&'static str, serde_
             "latex-workshop.message.error.show",
             serde_json::Value::Bool(false),
         ),
+        (
+            "latex-workshop.latex.extraExts",
+            serde_json::json!([".tikz"]),
+        ),
+        (
+            "files.associations",
+            serde_json::json!({
+                "*.tikz": "latex",
+            }),
+        ),
+        (
+            "files.watcherExclude",
+            serde_json::json!({
+                "**/.texe/**": true,
+            }),
+        ),
+        (
+            "search.exclude",
+            serde_json::json!({
+                "**/.texe": true,
+            }),
+        ),
+        ("texe.editor.enabled", serde_json::Value::Bool(true)),
         (
             "texe.editor.openPaper",
             serde_json::json!({
@@ -164,7 +288,9 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use crate::integrations::vscode::settings::{configure, remove, workspace_path};
+    use crate::integrations::vscode::settings::{
+        ProjectSettingsOutcome, configure, legacy_workspace_path, project_settings_path, remove,
+    };
 
     fn write_manifest(root: &Path, entry: &str) {
         fs::write(
@@ -178,7 +304,53 @@ mod tests {
     }
 
     #[test]
-    fn setup_uses_an_owned_workspace_without_touching_project_settings() {
+    fn setup_creates_project_settings_when_the_file_is_missing() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        write_manifest(directory.path(), "sources/main.tex");
+
+        let outcome = configure(directory.path(), false).expect("setup");
+
+        assert_eq!(outcome, ProjectSettingsOutcome::Created);
+        let settings: serde_json::Value = serde_json::from_slice(
+            &fs::read(project_settings_path(directory.path())).expect("project settings"),
+        )
+        .expect("valid project settings");
+        assert_eq!(
+            settings["latex-workshop.latex.external.build.command"],
+            "texe"
+        );
+        assert_eq!(
+            settings["latex-workshop.latex.extraExts"],
+            serde_json::json!([".tikz"])
+        );
+        assert_eq!(
+            settings["latex-workshop.latex.search.rootFiles.include"],
+            serde_json::json!(["sources/main.tex"])
+        );
+        assert_eq!(
+            settings["latex-workshop.latex.search.rootFiles.exclude"],
+            serde_json::json!(["**/.texe/**"])
+        );
+        assert_eq!(
+            settings["latex-workshop.latex.outDir"],
+            "%WORKSPACE_FOLDER%"
+        );
+        assert_eq!(settings["latex-workshop.latex.jobname"], "main");
+        assert_eq!(settings["latex-workshop.latex.rootFile.useSubFile"], false);
+        assert_eq!(settings["latex-workshop.latex.rootFile.doNotPrompt"], true);
+        assert_eq!(settings["files.associations"]["*.tikz"], "latex");
+        assert_eq!(settings["files.watcherExclude"]["**/.texe/**"], true);
+        assert_eq!(settings["search.exclude"]["**/.texe"], true);
+        assert_eq!(settings["texe.editor.enabled"], true);
+        assert_eq!(
+            settings["texe.editor.openPaper"]["source"],
+            "sources/main.tex"
+        );
+        assert!(!legacy_workspace_path(directory.path()).exists());
+    }
+
+    #[test]
+    fn setup_preserves_existing_project_settings_without_replacement_permission() {
         let directory = tempfile::tempdir().expect("temporary directory");
         write_manifest(directory.path(), "sources/main.tex");
         let vscode = directory.path().join(".vscode");
@@ -186,62 +358,80 @@ mod tests {
         let settings = b"{\n  // user setting\n  \"editor.wordWrap\": \"on\",\n}\n";
         fs::write(vscode.join("settings.json"), settings).expect("settings");
 
-        configure(directory.path()).expect("setup");
+        let outcome = configure(directory.path(), false).expect("setup");
+
+        assert_eq!(outcome, ProjectSettingsOutcome::Preserved);
         assert_eq!(
             fs::read(vscode.join("settings.json")).expect("unchanged settings"),
             settings
         );
-        let workspace: serde_json::Value =
-            serde_json::from_slice(&fs::read(workspace_path(directory.path())).expect("workspace"))
-                .expect("valid workspace");
-        assert_eq!(workspace["folders"][0]["path"], "../..");
-        assert_eq!(
-            workspace["settings"]["latex-workshop.latex.external.build.command"],
-            "texe"
-        );
-        assert_eq!(
-            workspace["settings"]["texe.editor.openPaper"]["source"],
-            "sources/main.tex"
-        );
-        assert_eq!(
-            workspace["settings"]["texe.editor.openPaper"]["pdf"],
-            "main.pdf"
-        );
+        assert!(!legacy_workspace_path(directory.path()).exists());
     }
 
     #[test]
-    fn reconfiguration_updates_only_the_generated_workspace() {
+    fn setup_replaces_the_entire_project_settings_file_with_permission() {
         let directory = tempfile::tempdir().expect("temporary directory");
         write_manifest(directory.path(), "main.tex");
-        configure(directory.path()).expect("first setup");
+        let vscode = directory.path().join(".vscode");
+        fs::create_dir_all(&vscode).expect("vscode");
+        fs::write(
+            vscode.join("settings.json"),
+            b"{\"editor.wordWrap\":\"on\"}\n",
+        )
+        .expect("settings");
 
-        write_manifest(directory.path(), "revised.tex");
-        configure(directory.path()).expect("updated setup");
-        let workspace: serde_json::Value =
-            serde_json::from_slice(&fs::read(workspace_path(directory.path())).expect("workspace"))
-                .expect("valid workspace");
+        let outcome = configure(directory.path(), true).expect("setup");
+
+        assert_eq!(outcome, ProjectSettingsOutcome::Replaced);
+        let settings: serde_json::Value =
+            serde_json::from_slice(&fs::read(vscode.join("settings.json")).expect("settings"))
+                .expect("valid project settings");
+        assert!(settings.get("editor.wordWrap").is_none());
         assert_eq!(
-            workspace["settings"]["texe.editor.openPaper"]["source"],
-            "revised.tex"
-        );
-        assert_eq!(
-            workspace["settings"]["texe.editor.openPaper"]["pdf"],
-            "revised.pdf"
+            settings["latex-workshop.latex.external.build.command"],
+            "texe"
         );
     }
 
     #[test]
-    fn removal_deletes_only_the_generated_workspace() {
+    fn reconfiguration_preserves_project_settings_without_a_fallback_workspace() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        write_manifest(directory.path(), "main.tex");
+        configure(directory.path(), false).expect("first setup");
+        let project_settings =
+            fs::read(project_settings_path(directory.path())).expect("project settings");
+
+        write_manifest(directory.path(), "revised.tex");
+        let outcome = configure(directory.path(), false).expect("updated setup");
+
+        assert_eq!(outcome, ProjectSettingsOutcome::Preserved);
+        assert_eq!(
+            fs::read(project_settings_path(directory.path())).expect("project settings"),
+            project_settings
+        );
+        assert!(!legacy_workspace_path(directory.path()).exists());
+    }
+
+    #[test]
+    fn setup_and_removal_delete_only_the_legacy_generated_workspace() {
         let directory = tempfile::tempdir().expect("temporary directory");
         write_manifest(directory.path(), "main.tex");
         let vscode = directory.path().join(".vscode");
         fs::create_dir_all(&vscode).expect("vscode");
         let settings = b"{\"editor.tabSize\":2}\n";
         fs::write(vscode.join("settings.json"), settings).expect("settings");
-        configure(directory.path()).expect("setup");
+        let legacy_workspace = legacy_workspace_path(directory.path());
+        fs::create_dir_all(legacy_workspace.parent().expect("legacy workspace parent"))
+            .expect("legacy workspace directory");
+        fs::write(&legacy_workspace, b"legacy").expect("legacy workspace");
+        configure(directory.path(), false).expect("setup");
 
+        assert!(!legacy_workspace.exists());
+        fs::create_dir_all(legacy_workspace.parent().expect("legacy workspace parent"))
+            .expect("legacy workspace directory");
+        fs::write(&legacy_workspace, b"legacy").expect("legacy workspace");
         remove(directory.path()).expect("remove");
-        assert!(!workspace_path(directory.path()).exists());
+        assert!(!legacy_workspace.exists());
         assert_eq!(
             fs::read(vscode.join("settings.json")).expect("unchanged settings"),
             settings
@@ -260,7 +450,7 @@ mod tests {
         symlink(outside.path(), directory.path().join(".texe/editor")).expect("editor symlink");
         fs::write(outside.path().join("texe.code-workspace"), b"outside").expect("outside file");
 
-        assert!(configure(directory.path()).is_err());
+        assert!(configure(directory.path(), false).is_err());
         assert!(remove(directory.path()).is_err());
         assert_eq!(
             fs::read(outside.path().join("texe.code-workspace")).expect("outside file"),
