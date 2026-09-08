@@ -87,10 +87,17 @@ const {
     // Windows .cmd launchers cannot be spawned directly. Run VS Code's CLI
     // through its Electron executable without introducing shell quoting.
     const windows = process.platform === "win32";
+    const installation = path.dirname(executable);
+    const cliScript = windows
+      ? [installation, ...fs.readdirSync(installation).map((name) => path.join(installation, name))]
+          .map((directory) => path.join(directory, "resources/app/out/cli.js"))
+          .find((candidate) => fs.existsSync(candidate))
+      : undefined;
+    if (windows && !cliScript) throw new Error("Cannot locate VS Code's Windows CLI script");
     execFileSync(
       windows ? executable : cli,
       [
-        ...(windows ? [path.join(path.dirname(executable), "resources/app/out/cli.js")] : []),
+        ...(windows ? [cliScript] : []),
         ...args,
         `--user-data-dir=${profile}`,
         `--extensions-dir=${extensions}`,
