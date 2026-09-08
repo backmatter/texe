@@ -11,9 +11,12 @@ const {
 (async () => {
   delete process.env.ELECTRON_RUN_AS_NODE;
   const repo = path.resolve(__dirname, "../..");
-  const root =
+  const scratch =
     process.env.TEXE_TEST_REUSE ||
     fs.mkdtempSync(path.join(os.tmpdir(), "texe-vscode-"));
+  // Windows TEMP can use DOS 8.3 names, and macOS /var can be an alias.
+  // Give the editor the same canonical directory that the TeX engine records.
+  const root = fs.realpathSync.native(scratch);
   if (process.env.GITHUB_ENV)
     fs.appendFileSync(process.env.GITHUB_ENV, `TEXE_EDITOR_EVIDENCE=${root}\n`);
   const paper = path.join(root, "paper with spaces");
