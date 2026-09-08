@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 const {
   runTests,
   downloadAndUnzipVSCode,
@@ -112,7 +112,7 @@ const {
   }
   console.log(`Real VS Code test workspace: ${root}`);
   fs.writeFileSync(path.join(os.tmpdir(), "texe-vscode-latest"), root);
-  await runTests({
+  const options = {
     vscodeExecutablePath: executable,
     extensionDevelopmentPath: extension,
     extensionTestsPath: path.join(__dirname, "suite.js"),
@@ -127,7 +127,28 @@ const {
       "--disable-gpu",
       "--remote-debugging-port=9337",
     ],
-  });
+  };
+  if (process.platform === "win32") {
+    // test-electron 2.x uses a shell on Windows and splits workspace paths
+    // containing spaces. Code.exe accepts an ordinary argument array.
+    await new Promise((resolve, reject) => {
+      const child = spawn(executable, [
+        ...options.launchArgs,
+        "--no-sandbox",
+        "--disable-gpu-sandbox",
+        "--disable-updates",
+        `--extensionDevelopmentPath=${options.extensionDevelopmentPath}`,
+        `--extensionTestsPath=${options.extensionTestsPath}`,
+      ], { env: options.extensionTestsEnv, stdio: "inherit" });
+      child.once("error", reject);
+      child.once("exit", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`VS Code tests exited with code ${code}`));
+      });
+    });
+  } else {
+    await runTests(options);
+  }
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
