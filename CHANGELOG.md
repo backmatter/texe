@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Publish absolute SyncTeX input paths with corrected byte anchors so Windows
+  source/PDF navigation works independently of the editor's working directory.
 - Recognize actual package declarations during adoption, follow literal local
   includes, choose LuaLaTeX for Unicode packages without an engine hint, and
   provide readable compatibility checks and direct editor-conflict review.

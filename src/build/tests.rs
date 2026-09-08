@@ -425,7 +425,10 @@ fn publishes_only_the_final_artifact_at_the_project_root() {
     let internal = directory.path().join(".texe/build/output/main.pdf");
     fs::create_dir_all(internal.parent().expect("output parent")).expect("output directory");
     fs::write(&internal, b"%PDF-test").expect("internal artifact");
-    fs::write(internal.with_extension("synctex.gz"), b"sync").expect("internal SyncTeX");
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut encoder, b"SyncTeX Version:1\n").unwrap();
+    let sync = encoder.finish().unwrap();
+    fs::write(internal.with_extension("synctex.gz"), &sync).expect("internal SyncTeX");
 
     let published =
         publish_artifact(directory.path(), &internal, b"new lock").expect("artifact is published");
@@ -442,7 +445,7 @@ fn publishes_only_the_final_artifact_at_the_project_root() {
     );
     assert_eq!(
         fs::read(directory.path().join("main.synctex.gz")).expect("published SyncTeX"),
-        b"sync"
+        sync
     );
     assert!(!internal.exists());
     assert!(!internal.with_extension("synctex.gz").exists());

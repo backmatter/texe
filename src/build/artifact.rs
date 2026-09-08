@@ -97,7 +97,14 @@ pub(super) fn publish_artifact(
     let synctex = internal.with_extension("synctex.gz");
     let published_synctex = published.with_extension("synctex.gz");
     let sync_bytes = match fs::read(&synctex) {
-        Ok(bytes) => Some(bytes),
+        Ok(bytes) => Some(
+            super::synctex::for_publication(&bytes, project_root).map_err(|source| {
+                TexeError::Io {
+                    path: synctex.clone(),
+                    source,
+                }
+            })?,
+        ),
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => None,
         Err(source) => {
             return Err(TexeError::Io {

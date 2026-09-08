@@ -2,6 +2,7 @@ mod bibliography;
 mod format;
 mod index;
 pub(crate) mod process;
+mod synctex;
 mod trace;
 
 use std::collections::BTreeSet;

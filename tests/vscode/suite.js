@@ -54,12 +54,12 @@ exports.run = async () => {
   // Pinned integration-test hooks only: production uses public VS Code commands.
   // Reuse the activated module: Windows drive-letter casing can otherwise
   // cause Node to load a second copy and break Workshop's circular imports.
-  const modulePath = path.join(workshop.extensionPath, "out/src/locate/synctex.js");
-  const loaded = Object.values(require.cache).find(
-    (module) => module.filename && path.relative(module.filename, modulePath) === "",
+  const loaded = Object.values(require.cache).filter(
+    (module) => module.filename?.replaceAll("\\", "/").endsWith("/out/src/locate/synctex.js")
+      && module.exports?.synctex,
   );
-  assert.ok(loaded, "activated LaTeX Workshop SyncTeX module was not loaded");
-  const { synctex } = loaded.exports;
+  assert.equal(loaded.length, 1, "expected one activated LaTeX Workshop SyncTeX module");
+  const { synctex } = loaded[0].exports;
   const forward = await synctex.components.synctexToPDFCombined(
     3,
     0,
