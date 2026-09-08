@@ -425,9 +425,13 @@ fn publishes_only_the_final_artifact_at_the_project_root() {
     let internal = directory.path().join(".texe/build/output/main.pdf");
     fs::create_dir_all(internal.parent().expect("output parent")).expect("output directory");
     fs::write(&internal, b"%PDF-test").expect("internal artifact");
-    fs::write(internal.with_extension("synctex.gz"), b"sync").expect("internal SyncTeX");
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut encoder, b"SyncTeX Version:1\n").unwrap();
+    let sync = encoder.finish().unwrap();
+    fs::write(internal.with_extension("synctex.gz"), &sync).expect("internal SyncTeX");
 
-    let published = publish_artifact(directory.path(), &internal).expect("artifact is published");
+    let published =
+        publish_artifact(directory.path(), &internal, b"new lock").expect("artifact is published");
 
     assert_eq!(published.artifact, directory.path().join("main.pdf"));
     assert_eq!(
@@ -441,11 +445,41 @@ fn publishes_only_the_final_artifact_at_the_project_root() {
     );
     assert_eq!(
         fs::read(directory.path().join("main.synctex.gz")).expect("published SyncTeX"),
-        b"sync"
+        sync
     );
     assert!(!internal.exists());
     assert!(!internal.with_extension("synctex.gz").exists());
 }
+#[test]
+fn publication_failure_preserves_the_previous_pdf_and_lock() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let internal = root.join(".texe/build/output/main.pdf");
+    fs::create_dir_all(internal.parent().expect("parent")).expect("output");
+    fs::write(&internal, b"new PDF").expect("PDF");
+    fs::write(root.join("main.pdf"), b"old PDF").expect("previous PDF");
+    fs::write(root.join("texe.lock"), b"old lock").expect("previous lock");
+    fs::create_dir(root.join("main.synctex.gz")).expect("blocked SyncTeX destination");
+    assert!(publish_artifact(root, &internal, b"new lock").is_err());
+    assert_eq!(fs::read(root.join("main.pdf")).expect("PDF"), b"old PDF");
+    assert_eq!(fs::read(root.join("texe.lock")).expect("lock"), b"old lock");
+    assert!(internal.is_file());
+}
+
+#[test]
+fn publication_removes_stale_synctex_when_the_engine_did_not_produce_it() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let internal = root.join(".texe/build/output/main.pdf");
+    fs::create_dir_all(internal.parent().expect("parent")).expect("output");
+    fs::write(&internal, b"new PDF").expect("PDF");
+    fs::write(root.join("main.synctex.gz"), b"stale sync").expect("old SyncTeX");
+    let published = publish_artifact(root, &internal, b"new lock").expect("publish");
+    assert!(published.synctex.is_none());
+    assert!(!root.join("main.synctex.gz").exists());
+    assert_eq!(fs::read(root.join("texe.lock")).expect("lock"), b"new lock");
+}
+
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
@@ -465,3 +499,13 @@ use crate::build::format::ManagedFormat;
 use crate::build::warnings::collect_warnings;
 use crate::config::GeneratedInput;
 use crate::toolchain::ResolvedToolchain;
+
+#[test]
+fn finds_artifacts_without_stripping_dotted_jobnames() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("paper.v2.pdf"), b"%PDF").unwrap();
+    assert_eq!(
+        super::filesystem::find_artifact(directory.path(), Path::new("sources/paper.v2.tex")),
+        Some(directory.path().join("paper.v2.pdf"))
+    );
+}

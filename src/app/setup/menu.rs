@@ -31,7 +31,21 @@ pub(crate) fn run_bare(presentation: ux::Presentation) -> Result<(), TexeError> 
     match load_project(None) {
         Ok(context) => run_project_menu(&context, presentation),
         Err(TexeError::Manifest(message)) if message.contains("could not find texe.toml") => {
-            run_guided_setup(presentation)
+            let existing = ux::prompt(
+                cliclack::select("Start a paper")
+                    .item(
+                        true,
+                        "Open an existing paper",
+                        "TeXstudio or another LaTeX setup",
+                    )
+                    .item(false, "Create a paper", "Start from a template")
+                    .interact(),
+            )?;
+            if existing {
+                crate::app::adoption::guided(presentation)
+            } else {
+                run_guided_setup(presentation)
+            }
         }
         Err(error) => Err(error),
     }
@@ -84,25 +98,14 @@ fn run_project_menu(
             "not built yet".to_string()
         }
     )))?;
-    let options = if pdf.is_file() {
-        [
-            ProjectMenu::WatchAndView,
-            ProjectMenu::Build,
-            ProjectMenu::OpenVscode,
-            ProjectMenu::Doctor,
-            ProjectMenu::Storage,
-            ProjectMenu::Exit,
-        ]
-    } else {
-        [
-            ProjectMenu::Build,
-            ProjectMenu::WatchAndView,
-            ProjectMenu::OpenVscode,
-            ProjectMenu::Doctor,
-            ProjectMenu::Storage,
-            ProjectMenu::Exit,
-        ]
-    };
+    let options = [
+        ProjectMenu::OpenVscode,
+        ProjectMenu::Build,
+        ProjectMenu::WatchAndView,
+        ProjectMenu::Doctor,
+        ProjectMenu::Storage,
+        ProjectMenu::Exit,
+    ];
     let mut menu = cliclack::select("What would you like to do?");
     for (index, option) in options.into_iter().enumerate() {
         menu = menu.item(
@@ -117,7 +120,7 @@ fn run_project_menu(
             BuildOptions::default(),
             false,
             presentation,
-            250,
+            crate::app::watch_command::WatchTiming::default(),
             false,
             true,
         ),

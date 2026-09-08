@@ -78,7 +78,7 @@ jobs:
         id: suite
         shell: bash
         run: |
-          revision="$(sed -n 's/^pqty_revision = "\\([^"]*\\)"/\\1/p' suite.lock.toml)"
+          revision="$(cargo xtask pqty revision)"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
       - name: Check out pinned pqty
@@ -102,6 +102,11 @@ jobs:
             x86_64-windows) unzip -q "dist/${{ matrix.archive }}" -d "$RUNNER_TEMP/native-suite" ;;
             *) tar -C "$RUNNER_TEMP/native-suite" -xzf "dist/${{ matrix.archive }}" ;;
           esac
+
+      - name: Check installed-suite contracts
+        run: >-
+          cargo xtask verify contracts --suite-bin
+          "${{ runner.temp }}/native-suite/texe-${{ matrix.platform }}/bin"
 
       - name: Run the installed-suite journey
         env:

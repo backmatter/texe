@@ -67,7 +67,8 @@ release. The tag workflow:
 - publishes the crate through Trusted Publishing;
 - builds the exact pqty revision from `suite.lock.toml`;
 - packages and extracts each native command suite;
-- runs `cargo xtask verify platform` against the installed binaries;
+- runs `cargo xtask verify contracts` and `cargo xtask verify platform` against
+  the installed binaries;
 - builds and installs the Debian package;
 - tests the Linux, macOS, and Windows portable installers and uninstallers;
 - renders Homebrew and WinGet submissions;

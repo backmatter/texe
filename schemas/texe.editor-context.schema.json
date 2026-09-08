@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.editor-context.schema.json",
+  "title": "texe editor-context v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "project",
+    "source",
+    "pdf",
+    "log",
+    "engine",
+    "executable"
+  ],
+  "properties": {
+    "schema": {
+      "const": "texe.editor-context/v1"
+    },
+    "project": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "pdf": {
+      "type": "string"
+    },
+    "log": {
+      "type": "string"
+    },
+    "engine": {
+      "type": "string"
+    },
+    "executable": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

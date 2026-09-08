@@ -7,7 +7,10 @@ mod git;
 mod vscode;
 
 pub(crate) use git::setup_git;
-pub(crate) use vscode::{open_vscode, remove_vscode, setup_vscode};
+pub(crate) use vscode::{
+    configure_vscode, open_vscode, preview_vscode, preview_vscode_manifest, record_editor_error,
+    remove_vscode, setup_vscode,
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct IntegrationReport {

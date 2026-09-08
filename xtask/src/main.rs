@@ -55,13 +55,14 @@ struct VerifyArgs {
     /// Run one verification case.
     #[arg(value_enum)]
     case: Option<VerifyCase>,
-    /// Use an existing texe/pqty/pqty-fls suite for the platform case.
+    /// Use existing texe/pqty/pqty-fls binaries instead of building the pinned suite.
     #[arg(long, value_name = "DIR", requires = "case")]
     suite_bin: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum VerifyCase {
+    Contracts,
     Platform,
     Managed,
     Luatex,
@@ -74,6 +75,7 @@ enum VerifyCase {
 impl VerifyCase {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::Contracts => "contracts",
             Self::Platform => "platform",
             Self::Managed => "managed",
             Self::Luatex => "luatex",
@@ -87,6 +89,8 @@ impl VerifyCase {
 
 #[derive(Debug, Subcommand)]
 enum PqtyCommand {
+    /// Print the validated pqty revision from suite.lock.toml.
+    Revision,
     /// Verify the pqty checkout against suite.lock.toml.
     Check {
         /// pqty checkout; defaults to PQTY_REPO or ../pqty.
@@ -171,14 +175,13 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         XtaskCommand::Verify(options) => match options.case {
             None => verify::all(),
-            Some(case) => {
-                if options.suite_bin.is_some() && case != VerifyCase::Platform {
-                    return Err(message("--suite-bin is only valid for the platform case"));
-                }
-                verify::case(case.as_str(), options.suite_bin.as_deref())
-            }
+            Some(case) => verify::case(case.as_str(), options.suite_bin.as_deref()),
         },
         XtaskCommand::Pqty { command } => match command {
+            PqtyCommand::Revision => {
+                println!("{}", pqty::revision()?);
+                Ok(())
+            }
             PqtyCommand::Check { checkout } => pqty::verify(checkout.as_deref()),
             PqtyCommand::Update {
                 reference,

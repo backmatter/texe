@@ -74,7 +74,20 @@ where
     let hinted_engine = detect_engine_hint(&directory.join(&entry));
     let engine = match request.engine.as_deref() {
         Some(engine) => validate_engine(engine)?,
-        None => hinted_engine.unwrap_or_else(|| DEFAULT_ENGINE.to_string()),
+        None => hinted_engine.unwrap_or_else(|| {
+            let root = directory
+                .canonicalize()
+                .unwrap_or_else(|_| directory.to_path_buf());
+            let commands = super::source::project_commands(&root, &entry);
+            if ["fontspec", "unicode-math"]
+                .iter()
+                .any(|package| super::source::has_package(&commands, package))
+            {
+                "lualatex".to_string()
+            } else {
+                DEFAULT_ENGINE.to_string()
+            }
+        }),
     };
     Ok(InitSettings { entry, engine })
 }
@@ -200,7 +213,29 @@ fn collect_tex_files(
 }
 
 fn is_document_root(path: &Path) -> bool {
-    fs::read_to_string(path).is_ok_and(|source| source.contains("\\documentclass"))
+    fs::read_to_string(path)
+        .is_ok_and(|source| uncommented_source(&source).contains("\\documentclass"))
+}
+
+pub(crate) fn uncommented_source(source: &str) -> String {
+    source
+        .lines()
+        .map(|line| {
+            let mut backslashes = 0;
+            for (index, character) in line.char_indices() {
+                if character == '%' && backslashes % 2 == 0 {
+                    return &line[..index];
+                }
+                if character == '\\' {
+                    backslashes += 1;
+                } else {
+                    backslashes = 0;
+                }
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn preferred_entry(entries: &[PathBuf]) -> usize {

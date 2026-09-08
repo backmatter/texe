@@ -86,12 +86,26 @@ pub fn restore_package_lock(
     atomic_write(package_lock, &package_bytes)
 }
 
-pub fn write_project_lock(
+#[cfg(test)]
+fn write_project_lock(
     project_root: &Path,
     package_lock: &Path,
     toolchain: &ToolchainIdentity,
     source_date_epoch: u64,
 ) -> Result<PathBuf, TexeError> {
+    let path = project_root.join(LOCK_NAME);
+    atomic_write(
+        &path,
+        &project_lock_bytes(package_lock, toolchain, source_date_epoch)?,
+    )?;
+    Ok(path)
+}
+
+pub(crate) fn project_lock_bytes(
+    package_lock: &Path,
+    toolchain: &ToolchainIdentity,
+    source_date_epoch: u64,
+) -> Result<Vec<u8>, TexeError> {
     let package_bytes = fs::read(package_lock).map_err(|source| TexeError::Io {
         path: package_lock.to_path_buf(),
         source,
@@ -109,14 +123,12 @@ pub fn write_project_lock(
         toolchain: toolchain.clone(),
         packages,
     };
-    let path = project_root.join(LOCK_NAME);
     let mut bytes = serde_json::to_vec_pretty(&lock).map_err(|source| TexeError::Json {
-        path: path.clone(),
+        path: PathBuf::from(LOCK_NAME),
         source,
     })?;
     bytes.push(b'\n');
-    atomic_write(&path, &bytes)?;
-    Ok(path)
+    Ok(bytes)
 }
 
 fn validate_package_lock(packages: &serde_json::Value) -> Result<(), TexeError> {

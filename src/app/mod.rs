@@ -6,8 +6,10 @@ use crate::cli::{Cli, Command};
 use crate::integrations;
 use crate::{TexeError, ux};
 
+mod adoption;
 mod build_command;
 mod doctor;
+mod editor_bridge;
 mod maintenance;
 mod output;
 mod project;
@@ -76,6 +78,8 @@ fn run(cli: Cli) -> Result<(), TexeError> {
 
 fn run_command(command: Command, presentation: ux::Presentation) -> Result<(), TexeError> {
     match command {
+        Command::EditorBuild { project } => editor_bridge::build(project.as_deref()),
+        command @ Command::Adopt { .. } => adoption::run(command, presentation),
         command @ Command::Init { .. } => run_init_command(command, presentation),
         command @ Command::Doctor { .. } => run_doctor_command(command, presentation),
         command @ Command::Clean { .. } => run_clean_command(command, presentation),
@@ -120,13 +124,42 @@ fn run_init_command(command: Command, presentation: ux::Presentation) -> Result<
 }
 
 fn run_editor_command(command: Command, presentation: ux::Presentation) -> Result<(), TexeError> {
-    let Command::Editor { project, remove } = command else {
+    let Command::Editor {
+        project,
+        remove,
+        inspect,
+        preview,
+        configure_only,
+        replace_conflicts,
+    } = command
+    else {
         unreachable!("editor handler received another command");
     };
     let context = load_project(project.as_deref())?;
+    if inspect {
+        let entry = &context.manifest.project.entry;
+        let filename = entry.file_name().expect("validated entry");
+        return print_json(&serde_json::json!({
+            "schema": "texe.editor-context/v1",
+            "project": context.root,
+            "source": entry,
+            "pdf": std::path::PathBuf::from(filename).with_extension("pdf"),
+            "log": context.manifest.project.build_dir.join("output").join(std::path::PathBuf::from(filename).with_extension("log")),
+            "engine": context.manifest.toolchain.engine,
+            "executable": std::env::current_exe().ok(),
+        }));
+    }
+    if preview {
+        return print_json(&integrations::preview_vscode(&context.root)?);
+    }
     let report = if remove {
         integrations::remove_vscode(&context.root)?
+    } else if configure_only {
+        integrations::configure_vscode(&context.root, replace_conflicts)?
     } else {
+        if replace_conflicts {
+            integrations::configure_vscode(&context.root, true)?;
+        }
         integrations::setup_vscode(
             &context.root,
             true,
@@ -219,6 +252,7 @@ fn run_watch_command(command: Command, presentation: ux::Presentation) -> Result
         offline,
         yes,
         poll_ms,
+        debounce_ms,
         view,
     } = command
     else {
@@ -233,7 +267,10 @@ fn run_watch_command(command: Command, presentation: ux::Presentation) -> Result
         },
         verify_toolchain,
         presentation,
-        poll_ms,
+        watch_command::WatchTiming {
+            poll: std::time::Duration::from_millis(poll_ms),
+            debounce: std::time::Duration::from_millis(debounce_ms),
+        },
         yes,
         view,
     )

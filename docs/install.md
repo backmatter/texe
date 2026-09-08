@@ -213,7 +213,7 @@ them again. Projects and their PDFs are never removed.
 - **VS Code does not open:** start it normally and open the project folder. Run
   `texe editor` again after the `code` command becomes available.
 - **VS Code opens in Restricted Mode:** trust the project folder to enable its
-  generated texe workspace and LaTeX Workshop integration.
+  texe and LaTeX Workshop integration.
 
 If the problem remains, run:
 

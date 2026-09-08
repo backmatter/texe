@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.editor-preview.schema.json",
+  "title": "texe editor-preview v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "conflicts",
+    "settings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "texe.editor-preview/v1"
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "settings": {
+      "type": "string"
+    }
+  }
+}

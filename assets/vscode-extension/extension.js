@@ -1,4 +1,6 @@
 const vscode = require("vscode");
+const requests = new Map();
+const runtimeModule = require("./runtime");
 
 async function exists(uri) {
   try {
@@ -10,6 +12,8 @@ async function exists(uri) {
 }
 
 function paperRequest(folder) {
+  if (requests.has(folder.uri.toString()))
+    return requests.get(folder.uri.toString());
   const configuration = vscode.workspace.getConfiguration("texe", folder.uri);
   const request = configuration.get("editor.openPaper");
   if (
@@ -55,7 +59,7 @@ async function openPaper(context, folder, force = false) {
     await vscode.window.showTextDocument(document, {
       viewColumn: vscode.ViewColumn.One,
       preserveFocus: false,
-      preview: false
+      preview: false,
     });
     await context.workspaceState.update(sourceKey, request.request);
   }
@@ -75,15 +79,20 @@ async function openPaper(context, folder, force = false) {
     {
       viewColumn: vscode.ViewColumn.Two,
       preserveFocus: false,
-      preview: false
-    }
+      preview: false,
+    },
   );
+  await vscode.commands.executeCommand("workbench.action.evenEditorWidths");
   await vscode.commands.executeCommand("workbench.action.focusLeftGroup");
   await context.workspaceState.update(layoutKey, request.request);
   return "opened";
 }
 
 async function activate(context) {
+  const runtime = runtimeModule.activate(context, requests, (folder, force) =>
+    openPaper(context, folder, force),
+  );
+  await runtime.ready;
   async function openConfiguredPapers(event) {
     const folders = vscode.workspace.workspaceFolders || [];
     for (const folder of folders) {
@@ -97,6 +106,7 @@ async function activate(context) {
         await openPaper(context, folder);
       } catch (error) {
         console.error("texe could not open the paper layout", error);
+        await runtime.reportFailure(folder, error);
       }
     }
   }
@@ -107,47 +117,52 @@ async function activate(context) {
       const request = paperRequest(folder);
       if (
         request &&
-        vscode.Uri.joinPath(folder.uri, request.pdf).toString() === uri.toString()
+        vscode.Uri.joinPath(folder.uri, request.pdf).toString() ===
+          uri.toString()
       ) {
         try {
           await openPaper(context, folder);
         } catch (error) {
           console.error("texe could not open the completed paper", error);
+          await runtime.reportFailure(folder, error);
         }
       }
     }
   }
 
   async function openPaperManually() {
-    const activeUri = vscode.window.activeTextEditor?.document.uri;
+    const activeUri =
+      vscode.window.activeTextEditor?.document.uri ||
+      vscode.window.tabGroups?.activeTabGroup?.activeTab?.input?.uri;
     const folder =
       (activeUri && vscode.workspace.getWorkspaceFolder(activeUri)) ||
       vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
       await vscode.window.showInformationMessage(
-        "Open a texe project folder before opening its paper."
+        "Open a texe project folder before opening its paper.",
       );
       return;
     }
     try {
+      if (runtime.inspect) await runtime.inspect(folder);
       const result = await openPaper(context, folder, true);
       if (result === "not-configured") {
         await vscode.window.showInformationMessage(
-          "Run `texe editor` to configure this project first."
+          "Run `texe editor` to configure this project first.",
         );
       } else if (result === "source-missing") {
         await vscode.window.showWarningMessage(
-          "The configured texe source file no longer exists."
+          "The configured texe source file no longer exists.",
         );
       } else if (result === "pdf-missing") {
         await vscode.window.showInformationMessage(
-          "The source is open. Build the paper to add its PDF on the right."
+          "The source is open. Build the paper to add its PDF on the right.",
         );
       }
     } catch (error) {
       console.error("texe could not open the paper layout", error);
       await vscode.window.showErrorMessage(
-        "texe could not open the paper layout. See the extension host log for details."
+        "texe could not open the paper layout. Use texe: Check Setup or texe: Show Output for details.",
       );
     }
   }
@@ -164,9 +179,10 @@ async function activate(context) {
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       void openConfiguredPapers(event);
-    })
+    }),
   );
   await openConfiguredPapers();
+  return runtime;
 }
 
 function deactivate() {}

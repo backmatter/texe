@@ -97,6 +97,12 @@ impl ProgressInner {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ProgressOutput {
+    Human,
+    Json,
+}
+
 #[derive(Clone)]
 pub(crate) struct Progress {
     inner: Arc<Mutex<ProgressInner>>,
@@ -104,6 +110,7 @@ pub(crate) struct Progress {
     interactive: bool,
     enabled: bool,
     verbose: bool,
+    output: ProgressOutput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +159,17 @@ impl Progress {
             interactive,
             enabled,
             verbose,
+            output: ProgressOutput::Human,
         }
+    }
+
+    pub(crate) fn with_machine_output(mut self, machine: bool) -> Self {
+        self.output = if machine {
+            ProgressOutput::Json
+        } else {
+            ProgressOutput::Human
+        };
+        self
     }
 
     pub(crate) fn with_legacy_history(self, legacy_history_path: &Path) -> Self {
@@ -307,6 +324,17 @@ impl Progress {
     }
 
     fn start(&self, kind: PhaseKind, label: String) -> PhaseGuard {
+        if matches!(self.output, ProgressOutput::Json) && self.enabled {
+            let elapsed = self.inner.lock().expect("progress mutex").started.elapsed();
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "schema": "texe.build-progress/v1",
+                    "phase": kind.key(),
+                    "elapsed_millis": millis(elapsed),
+                })
+            );
+        }
         let (suffix, total_status) = {
             let inner = self.inner.lock().expect("progress mutex");
             let now = Instant::now();
@@ -953,7 +981,7 @@ mod tests {
                 Some(3 * 1024 * 1024),
                 Some(0),
             ),
-            "Registry Snapshot: all 1 item, 3 MiB, already cached"
+            "registry snapshot: 1 item (3 MiB) cached"
         );
         assert_eq!(
             download_plan_message(
@@ -964,7 +992,7 @@ mod tests {
                 Some(0),
                 Some(5 * 1024 * 1024),
             ),
-            "packages download plan: 5 MiB across 18 items; 0 B of 5 MiB cached"
+            "packages: 5 MiB to download across 18 items; 0 B of 5 MiB cached"
         );
     }
 }

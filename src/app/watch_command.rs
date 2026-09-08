@@ -6,12 +6,27 @@ use crate::app::project::load_project;
 use crate::build::{self, BuildOptions};
 use crate::{TexeError, ux, viewer, watch};
 
+#[derive(Clone, Copy)]
+pub(super) struct WatchTiming {
+    pub(super) poll: std::time::Duration,
+    pub(super) debounce: std::time::Duration,
+}
+
+impl Default for WatchTiming {
+    fn default() -> Self {
+        Self {
+            poll: std::time::Duration::from_millis(250),
+            debounce: std::time::Duration::from_millis(250),
+        }
+    }
+}
+
 pub(super) fn run_watch(
     project: Option<&Path>,
     options: BuildOptions,
     verify_toolchain: bool,
     presentation: ux::Presentation,
-    poll_ms: u64,
+    timing: WatchTiming,
     accept_downloads: bool,
     view: bool,
 ) -> Result<(), TexeError> {
@@ -48,6 +63,11 @@ pub(super) fn run_watch(
     }
 
     let mut build_number = 1_u64;
+    let mut changes =
+        watch::PendingChanges::new(watch::ProjectSnapshot::capture(&root, &manifest)?);
+    if let Some(viewer) = &viewer {
+        viewer.notify_building();
+    }
     announce_watch_build(build_number, &[], presentation)?;
     let initial_result = execute_build(
         project,
@@ -68,30 +88,16 @@ pub(super) fn run_watch(
         presentation,
     )?;
 
-    let mut snapshot = watch::ProjectSnapshot::capture(&root, &manifest)?;
-    let poll = std::time::Duration::from_millis(poll_ms);
     loop {
-        if wait_for_watch_tick(&stop_receiver, poll)? {
+        if wait_for_watch_tick(&stop_receiver, timing.poll)? {
             return finish_watch(presentation);
         }
         let observed = watch::ProjectSnapshot::capture(&root, &manifest)?;
-        if observed == snapshot {
+        let Some(changed_paths) =
+            changes.observe(observed, std::time::Instant::now(), timing.debounce)
+        else {
             continue;
-        }
-        // Editors commonly replace a file through several rapid rename/write
-        // operations. Require two equal observations before parsing/building.
-        let mut settled = observed;
-        for _ in 0..8 {
-            if wait_for_watch_tick(&stop_receiver, std::time::Duration::from_millis(75))? {
-                return finish_watch(presentation);
-            }
-            let next = watch::ProjectSnapshot::capture(&root, &manifest)?;
-            if next == settled {
-                break;
-            }
-            settled = next;
-        }
-        let changes = snapshot.changes_since(&settled);
+        };
         if let Ok(context) = load_project(project) {
             manifest = context.manifest;
             let next_pdf = published_pdf(&root, &manifest.project.entry);
@@ -103,7 +109,11 @@ pub(super) fn run_watch(
             }
         }
         build_number += 1;
-        announce_watch_build(build_number, &changes, presentation)?;
+        changes = watch::PendingChanges::new(watch::ProjectSnapshot::capture(&root, &manifest)?);
+        if let Some(viewer) = &viewer {
+            viewer.notify_building();
+        }
+        announce_watch_build(build_number, &changed_paths, presentation)?;
         let result = execute_build(
             project,
             options,
@@ -116,9 +126,6 @@ pub(super) fn run_watch(
             return finish_watch(presentation);
         }
         present_watch_attempt(build_number, result, &pdf, viewer.as_ref(), presentation)?;
-        // Capture texe.lock and any other project-root outputs exactly as the
-        // completed attempt left them, preventing self-triggered rebuilds.
-        snapshot = watch::ProjectSnapshot::capture(&root, &manifest)?;
     }
 }
 
@@ -212,6 +219,9 @@ fn present_watch_attempt(
             }
         }
         Err(error) => {
+            if let Some(viewer) = viewer {
+                viewer.notify_failure();
+            }
             let previous_pdf = pdf.is_file();
             if presentation.json {
                 print_json_line(&watch_build_failed_event(
@@ -315,8 +325,8 @@ fn announce_viewer(viewer: &viewer::Viewer, pdf: &Path, opened: bool) {
 fn published_pdf(root: &Path, entry: &Path) -> PathBuf {
     root.join(
         entry
-            .file_stem()
-            .unwrap_or_else(|| std::ffi::OsStr::new("main")),
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("main.tex")),
     )
     .with_extension("pdf")
 }

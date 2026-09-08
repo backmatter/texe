@@ -1,0 +1,16 @@
+{
+  "schema": "texe.adoption-report/v1",
+  "project": "/paper",
+  "entry": "main.tex",
+  "engine": "pdflatex",
+  "provider": "managed",
+  "existing_manifest": false,
+  "blockers": [],
+  "warnings": [
+    "Static scan; first build checks package availability."
+  ],
+  "local_classes": [],
+  "external_tools": [],
+  "settings_conflicts": [],
+  "check": true
+}

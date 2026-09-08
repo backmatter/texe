@@ -2,8 +2,8 @@
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>
     <Identity Language="en-US" Id="texe-paper-layout" Version="@VERSION@" Publisher="backmatter" />
-    <DisplayName>texe Paper Layout</DisplayName>
-    <Description xml:space="preserve">Keeps a texe source and LaTeX Workshop PDF conveniently side by side.</Description>
+    <DisplayName>texe</DisplayName>
+    <Description xml:space="preserve">Build, diagnose and view texe papers with LaTeX Workshop.</Description>
     <Tags>latex,pdf,texe</Tags>
     <Categories>Other</Categories>
     <Properties>

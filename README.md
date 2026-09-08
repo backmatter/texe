@@ -7,37 +7,32 @@ separately.
 
 ## Create your first paper
 
-1. [Install texe](docs/install.md) for your computer.
-2. Open **Terminal** on Linux or macOS, or **PowerShell** on Windows.
-3. Move into the folder that should contain the new paper. For example, use
-   `cd ~/Documents` on Linux or macOS, or `cd "$HOME\Documents"` in
-   PowerShell.
-4. Run:
+[Install texe](docs/install.md), open Terminal (PowerShell on Windows), and
+move into the folder where you want to create your paper. Run:
 
-   ```sh
-   texe
-   ```
-
-5. Follow the guided setup. It creates a basic scientific paper with pdfLaTeX
-   and builds the first PDF. Git and VS Code are optional; choose **No** if you
-   do not use them yet.
-
-The first build needs an internet connection and takes longer because texe
-downloads and checks the required LaTeX tools and packages. Later builds reuse
-those downloads.
-
-When setup finishes, texe prints the exact paths to the source and PDF, for
-example:
-
-```text
-Source  my-paper/main.tex
-PDF     my-paper/main.pdf
+```sh
+texe
 ```
 
-Edit `main.tex` to write the paper. If a build fails, the previous successful
-PDF is kept.
+The guided setup creates a basic paper with pdfLaTeX and builds the first PDF.
+Git and VS Code are optional. The first build downloads the required tools and
+packages; later builds reuse them.
+
+texe prints the source and PDF paths. Edit `main.tex` to write the paper.
+If a build fails, the previous successful PDF is kept.
 
 ## Keep writing
+
+For an existing paper (including a TeXstudio project):
+
+```sh
+texe adopt /path/to/paper --check
+texe adopt /path/to/paper
+```
+
+The preflight reads your project before setup writes anything. Existing sources
+stay in place. See [moving to VS Code](docs/vscode.md) for compatibility checks,
+editor conflicts, and familiar shortcuts.
 
 If you chose VS Code during setup, texe opens the source and PDF side by side.
 Saving `main.tex` rebuilds and refreshes the PDF. texe installs the required
@@ -51,7 +46,17 @@ texe watch --view --project my-paper
 ```
 
 The viewer is available only on your computer. It refreshes after stable saves
-and keeps the current page, zoom, and scroll position.
+and keeps the current page, zoom, and scroll position. A viewer status banner
+shows building, failure and disconnection so an older PDF cannot look current. Watch mode waits for
+250 ms without input changes before rebuilding. For editors or generators
+that save in several steps, increase the quiet period:
+
+```sh
+texe watch --view --debounce-ms 1000 --project my-paper
+```
+
+`--poll-ms` controls how often inputs are checked (default: 250 ms). Both
+intervals accept 50–60,000 ms; changes are detected on polling ticks.
 
 Experienced users can create the same starter without prompts:
 
@@ -66,21 +71,10 @@ texe build --project my-paper --yes
 
 ## How texe works
 
-The release contains three compatible commands. Most users interact only with
-`texe`; it calls `pqty` and `pqty-fls` to find and prepare the exact TeX Live
-packages used by the paper.
-
-```text
-paper source
-     |
-     v
-   texe  ----> managed LaTeX engine
-     |
-     `-------> pqty package environment
-     |
-     v
-PDF + texe.lock
-```
+The release bundles `texe`, `pqty`, and `pqty-fls`. texe manages the engine and
+build passes; [pqty](https://github.com/backmatter/pqty) resolves, locks, and
+installs the TeX Live packages. pqty-fls converts engine recorder output into
+package traces.
 
 The managed setup supports pdfLaTeX and LuaLaTeX on Linux x86-64, Windows
 x86-64, and macOS Apple Silicon. Guided setup uses pdfLaTeX. Advanced users
@@ -138,7 +132,7 @@ texe clean --dry-run              # show what generated state would be removed
 texe clean                        # remove generated project state
 ```
 
-Run `texe <command> --help` for every option. Common advanced build options are:
+Run `texe <command> --help` for options:
 
 ```sh
 texe build --frozen               # require the existing lock
@@ -153,21 +147,11 @@ v1 protocol and its JSON Schema.
 
 ## Getting help
 
-Start with the built-in health check from the project folder:
-
-```sh
-texe doctor
-texe doctor --verbose
-```
-
-The [installation troubleshooting guide](docs/install.md#troubleshooting)
-covers common setup problems. If the problem remains, open a
+Run `texe doctor` to check the project and tools; add `--verbose` for details.
+See [troubleshooting](docs/install.md#troubleshooting) or open a
 [bug report](https://github.com/backmatter/texe/issues/new?template=bug_report.yml)
-with the output of `texe --version`, the platform, and the smallest safe
-reproduction. Remove confidential paper content, credentials, and private
-filesystem paths before posting.
-
-Report vulnerabilities privately by following [SECURITY.md](SECURITY.md).
+with the version, platform, command, and a minimal reproduction. Remove private
+content and credentials. Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
 ## Reproducibility, privacy, and trust
 
@@ -200,11 +184,6 @@ Maintainer references:
 - [Architecture](docs/architecture.md)
 - [Managed toolchain recipes](docs/toolchain-recipes.md)
 - [Release runbook](docs/releasing.md)
-
-Machine-facing contracts are defined by the schemas for
-[`texe.lock/v1`](schemas/texe.lock.schema.json),
-[`texe.error/v1`](schemas/texe.error.schema.json), and
-[`texe.watch-event/v1`](schemas/texe.watch-event.schema.json).
 
 ## License
 

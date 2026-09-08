@@ -191,6 +191,7 @@ fn watch_is_a_first_class_cli_workflow() {
     assert_success(&output);
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("--poll-ms"));
+    assert!(help.contains("--debounce-ms"));
     assert!(help.contains("--frozen"));
 }
 
@@ -298,4 +299,133 @@ fn help_describes_the_paper_workflow_in_user_language() {
         "{help}"
     );
     assert!(!help.contains("developer environment"), "{help}");
+}
+
+#[test]
+fn watch_rejects_out_of_range_debounce_before_loading_a_project() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    for value in ["0", "49", "60001", "invalid"] {
+        let output = texe(directory.path(), &["watch", "--debounce-ms", value]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("--debounce-ms"));
+    }
+}
+
+#[test]
+fn adoption_preflight_is_read_only_and_ambiguous_roots_are_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\begin{document}Original\\end{document}\n";
+    fs::write(root.join("paper.v2.tex"), source).unwrap();
+    fs::write(root.join("notes.tex"), "% \\documentclass{article}\n").unwrap();
+    let output = texe(root, &["adopt", "--check", "--json"]);
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["engine"], "lualatex");
+    assert_eq!(report["entry"], "paper.v2.tex");
+    assert!(!root.join("texe.toml").exists());
+    assert!(!root.join(".vscode").exists());
+    fs::write(root.join("other.tex"), source).unwrap();
+    let output = texe(root, &["adopt", "--yes", "--no-build", "--no-editor"]);
+    assert!(!output.status.success());
+    assert!(!root.join("texe.toml").exists());
+    let output = texe(
+        root,
+        &[
+            "adopt",
+            "--yes",
+            "--entry",
+            "paper.v2.tex",
+            "--no-build",
+            "--no-editor",
+        ],
+    );
+    assert_success(&output);
+    assert_eq!(
+        fs::read_to_string(root.join("paper.v2.tex")).unwrap(),
+        source
+    );
+    let output = texe(root, &["editor", "--inspect"]);
+    assert_success(&output);
+    let info: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(info["pdf"], "paper.v2.pdf");
+    assert_eq!(
+        std::path::Path::new(info["log"].as_str().unwrap()),
+        std::path::Path::new(".texe/build/output/paper.v2.log")
+    );
+}
+
+#[test]
+fn adoption_blockers_precede_project_mutations() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::write(
+        root.join("main.tex"),
+        "\\documentclass{article}\n\\usepackage{minted}\n",
+    )
+    .unwrap();
+    let output = texe(root, &["adopt", "--yes", "--no-build", "--no-editor"]);
+    assert!(!output.status.success());
+    assert!(!root.join("texe.toml").exists());
+    assert!(!root.join(".vscode").exists());
+}
+
+#[test]
+fn adoption_explains_compatibility_and_scans_real_declarations() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::write(
+        root.join("main.tex"),
+        "\\documentclass{article}\n\\begin{document}The newly minted coin.\\end{document}",
+    )
+    .unwrap();
+    let output = texe(root, &["adopt", "--check"]);
+    assert_success(&output);
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Ready for the first build"));
+    assert!(!root.join("texe.toml").exists());
+    fs::write(
+        root.join("main.tex"),
+        "\\documentclass{article}\n\\input{preamble}\n",
+    )
+    .unwrap();
+    fs::write(root.join("preamble.tex"), "\\usepackage{fontspec}").unwrap();
+    let output = texe(root, &["adopt", "--check", "--json"]);
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["engine"], "lualatex");
+    let output = texe(
+        root,
+        &["adopt", "--engine", "pdflatex", "--check", "--json"],
+    );
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["blockers"][0].as_str().unwrap().contains("LuaLaTeX"));
+    assert!(!root.join("texe.toml").exists());
+}
+
+#[test]
+fn adoption_can_accept_previewed_editor_conflicts_without_a_manifest_workaround() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::write(root.join("main.tex"), "\\documentclass{article}").unwrap();
+    fs::create_dir(root.join(".vscode")).unwrap();
+    let original = "{\"latex-workshop.latex.autoBuild.run\":\"onSave\",\"editor.fontSize\":19}";
+    fs::write(root.join(".vscode/settings.json"), original).unwrap();
+    let output = texe(root, &["adopt", "--yes", "--no-build"]);
+    assert!(!output.status.success());
+    assert!(!root.join("texe.toml").exists());
+    let output = Command::new(env!("CARGO_BIN_EXE_texe"))
+        .args(["adopt", "--yes", "--no-build", "--replace-conflicts"])
+        .current_dir(root)
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let settings: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(".vscode/settings.json")).unwrap()).unwrap();
+    assert_eq!(settings["editor.fontSize"], 19);
+    assert_eq!(
+        settings["latex-workshop.latex.external.build.args"][0],
+        "editor-build"
+    );
 }

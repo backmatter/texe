@@ -1,0 +1,5 @@
+{
+  "schema": "texe.build-progress/v1",
+  "phase": "engine-final",
+  "elapsed_millis": 1200
+}

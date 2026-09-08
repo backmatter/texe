@@ -62,6 +62,7 @@ pub(super) fn execute_build(
     accept_downloads: bool,
     embedded: bool,
 ) -> Result<BuildOutcome, TexeError> {
+    let started = std::time::Instant::now();
     let context = load_project(project)?;
     let build_root = context.root.join(&context.manifest.project.build_dir);
     confirm_first_download(
@@ -85,7 +86,8 @@ pub(super) fn execute_build(
             ProgressLayout::Standalone
         },
     )
-    .with_legacy_history(&build_root.join("timings.json"));
+    .with_legacy_history(&build_root.join("timings.json"))
+    .with_machine_output(presentation.json);
     progress.begin(state::read(&build_root.join(state::STATE_NAME)).is_some());
     build::announce_configuration_warnings(&context.manifest, &progress);
     let build_result = (|| {
@@ -111,7 +113,9 @@ pub(super) fn execute_build(
         )
     })();
     let report = match build_result {
-        Ok(report) => {
+        Ok(mut report) => {
+            report.duration_millis =
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             if report.cached {
                 progress.complete(&format!(
                     "PDF is up to date · {}",

@@ -316,9 +316,11 @@ impl ProjectManifest {
 }
 
 mod discovery;
+pub(crate) mod source;
 mod starter;
 mod validation;
 
+pub(crate) use discovery::uncommented_source;
 pub use discovery::{configure_init, discover_manifest, resolve_manifest};
 pub use starter::{init_project, init_project_with_starter};
 

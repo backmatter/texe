@@ -1,7 +1,7 @@
 {
   "name": "texe-paper-layout",
-  "displayName": "texe Paper Layout",
-  "description": "Opens a texe paper source and its LaTeX Workshop PDF side by side.",
+  "displayName": "texe",
+  "description": "Build, diagnose and view texe papers with LaTeX Workshop.",
   "version": "@VERSION@",
   "publisher": "backmatter",
   "license": "MIT",
@@ -14,7 +14,8 @@
   "main": "./extension.js",
   "activationEvents": [
     "workspaceContains:texe.toml",
-    "onCommand:texe.openPaper"
+    "onCommand:texe.openPaper",
+    "onTaskType:texe"
   ],
   "extensionDependencies": [
     "James-Yu.latex-workshop"
@@ -33,10 +34,106 @@
         "category": "texe",
         "icon": "$(open-preview)",
         "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.build",
+        "title": "Build Paper",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.buildAndView",
+        "title": "Build and View",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled",
+        "icon": "$(play)"
+      },
+      {
+        "command": "texe.cancelBuild",
+        "title": "Cancel Build",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.showProblems",
+        "title": "Show Problems",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.showOutput",
+        "title": "Show Output",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.checkSetup",
+        "title": "Check Setup",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.chooseExecutable",
+        "title": "Choose Executable",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.openBuildLog",
+        "title": "Open Build Log",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.enableDownloads",
+        "title": "Allow Build Downloads",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.enableFamiliarShortcuts",
+        "title": "Enable Familiar Shortcuts",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.showError",
+        "title": "Show Error",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.writingLayout",
+        "title": "Use Writing Layout",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.restoreWritingLayout",
+        "title": "Restore Previous Writing Settings",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.gettingStarted",
+        "title": "Writing Guide",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
+      },
+      {
+        "command": "texe.forwardSync",
+        "title": "Source to PDF",
+        "category": "texe",
+        "enablement": "config.texe.editor.enabled"
       }
     ],
     "menus": {
       "editor/title": [
+        {
+          "command": "texe.buildAndView",
+          "group": "navigation@8",
+          "when": "resourceLangId == latex && config.texe.editor.enabled"
+        },
         {
           "command": "texe.openPaper",
           "group": "navigation@10",
@@ -80,8 +177,115 @@
             "request"
           ],
           "additionalProperties": false
+        },
+        "texe.executablePath": {
+          "scope": "resource",
+          "type": "string",
+          "default": "texe",
+          "description": "Path to the texe executable on this machine. Missing absolute paths fall back to PATH."
+        },
+        "texe.buildOnSave": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Build source changes after a short delay; LaTeX Workshop auto-build should remain disabled."
+        },
+        "texe.allowDownloads": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically download missing TeX tools and packages when building. Disable for offline texe builds using only cached dependencies."
+        },
+        "texe.editor.familiarShortcuts": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": false,
+          "description": "Use F5 for Build and View and F6 for Build in LaTeX editors."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "texe.buildAndView",
+        "key": "f5",
+        "when": "editorLangId == latex && config.texe.editor.enabled && config.texe.editor.familiarShortcuts"
+      },
+      {
+        "command": "texe.build",
+        "key": "f6",
+        "when": "editorLangId == latex && config.texe.editor.enabled && config.texe.editor.familiarShortcuts"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "texe",
+        "required": [],
+        "properties": {}
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "texe.startWriting",
+        "title": "Write your paper with texe",
+        "description": "Build, fix errors, and navigate between your source and PDF.",
+        "steps": [
+          {
+            "id": "build",
+            "title": "Build and view",
+            "description": "[Build your paper](command:texe.buildAndView). Save edits to refresh the PDF automatically; texe installs missing tools and packages.",
+            "completionEvents": [
+              "onCommand:texe.buildAndView"
+            ],
+            "media": {
+              "markdown": "writing-guide.md"
+            }
+          },
+          {
+            "id": "layout",
+            "title": "Make room for writing",
+            "description": "[Use Writing Layout](command:texe.writingLayout) to wrap source text, hide generated files, and close the secondary sidebar. [Restore previous writing settings](command:texe.restoreWritingLayout).",
+            "completionEvents": [
+              "onCommand:texe.writingLayout"
+            ],
+            "media": {
+              "markdown": "writing-guide.md"
+            }
+          },
+          {
+            "id": "shortcuts",
+            "title": "Use familiar shortcuts",
+            "description": "[Enable F5 for Build and View and F6 for Build](command:texe.enableFamiliarShortcuts).",
+            "completionEvents": [
+              "onCommand:texe.enableFamiliarShortcuts"
+            ],
+            "media": {
+              "markdown": "writing-guide.md"
+            }
+          },
+          {
+            "id": "navigate",
+            "title": "Find your place",
+            "description": "[Source to PDF](command:texe.forwardSync) locates the cursor in your PDF. Ctrl+click in the PDF (Cmd+click on macOS) goes back to source.",
+            "completionEvents": [
+              "onCommand:texe.forwardSync"
+            ],
+            "media": {
+              "markdown": "writing-guide.md"
+            }
+          },
+          {
+            "id": "problems",
+            "title": "Fix errors and warnings",
+            "description": "[Open Problems](command:texe.showProblems) to inspect the latest build. Failed builds keep the previous PDF.",
+            "completionEvents": [
+              "onCommand:texe.showProblems"
+            ],
+            "media": {
+              "markdown": "writing-guide.md"
+            }
+          }
+        ]
+      }
+    ]
   }
 }

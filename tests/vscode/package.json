@@ -1,0 +1,11 @@
+{
+  "name": "texe-vscode-tests",
+  "private": true,
+  "scripts": {
+    "test": "node run.js"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "2.5.2",
+    "prettier": "3.6.2"
+  }
+}

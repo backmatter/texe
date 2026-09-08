@@ -28,7 +28,7 @@ revision in `suite.lock.toml`. Clone it beside texe:
 
 ```sh
 git clone https://github.com/backmatter/pqty.git ../pqty
-pqty_revision="$(sed -n 's/^pqty_revision = "\([^"]*\)"/\1/p' suite.lock.toml)"
+pqty_revision="$(cargo xtask pqty revision)"
 git -C ../pqty switch --detach "$pqty_revision"
 cargo xtask pqty check ../pqty
 ```
@@ -56,6 +56,49 @@ cargo deny check
 
 CI repeats these checks on Linux x86-64, Windows x86-64, and macOS Apple
 Silicon.
+
+## Local command-suite contracts
+
+Run the actual texe, pqty, and pqty-fls binaries against a tiny synthetic local
+registry, with isolated caches and no TeX engine or downloads:
+
+```sh
+cargo xtask verify contracts
+```
+
+The default verifies and builds the pinned pqty checkout. To test development
+binaries already assembled in one directory, use
+`cargo xtask verify contracts --suite-bin /path/to/bin`. This explicit option
+checks behavior; it does not certify the binaries against the release pin.
+
+See [verification coverage](docs/verification.md) for the promises covered by
+each test tier and how to enforce network isolation on Linux.
+
+## Build performance
+
+Measure optimized binaries (`cargo build --release --locked` in texe and
+`cargo build --release --workspace --locked` in pqty), assembled in a suite
+directory containing `texe`, `pqty`, and `pqty-fls`. Debug-build timings include
+substantial unoptimized hashing and package-processing overhead.
+
+With system TeX Live installed, run:
+
+```sh
+python3 scripts/benchmark-build.py /path/to/suite --runs 5 --output timings.json
+```
+
+Add `--baseline /path/to/previous-suite` to interleave before/after measurements.
+Use `--fixture references` to exercise a longer document with maths, hyperlinks,
+a table of contents, and cross-references.
+The benchmark builds a small paper offline in temporary projects with isolated
+texe caches. It reports full process wall time, the first build separately, and
+the median of subsequent prose edits, plus engine and convergence counts.
+It invokes the actual suite binaries directly. This measures orchestration
+overhead; it does not predict large-document, bibliography, or download times.
+Avoid concurrent compilation when collecting timings.
+
+`cargo xtask verify local --suite-bin /path/to/suite` also checks that warm edits
+do not repeat runtime convergence or discovery, and verifies failure recovery.
 
 ## Networked acceptance tests
 
