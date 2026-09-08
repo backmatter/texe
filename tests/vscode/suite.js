@@ -50,10 +50,16 @@ exports.run = async () => {
   await page.screenshot(path.join(process.env.TEXE_TEST_ROOT, "01-built.png"));
   console.log("PASS real PDF webview rendered document text");
   const workshop = vscode.extensions.getExtension("James-Yu.latex-workshop");
+  await workshop.activate();
   // Pinned integration-test hooks only: production uses public VS Code commands.
-  const { synctex } = require(
-    path.join(workshop.extensionPath, "out/src/locate/synctex.js"),
+  // Reuse the activated module: Windows drive-letter casing can otherwise
+  // cause Node to load a second copy and break Workshop's circular imports.
+  const modulePath = path.join(workshop.extensionPath, "out/src/locate/synctex.js");
+  const loaded = Object.values(require.cache).find(
+    (module) => module.filename && path.relative(module.filename, modulePath) === "",
   );
+  assert.ok(loaded, "activated LaTeX Workshop SyncTeX module was not loaded");
+  const { synctex } = loaded.exports;
   const forward = await synctex.components.synctexToPDFCombined(
     3,
     0,
