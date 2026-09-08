@@ -14,7 +14,7 @@ use crate::TexeError;
 
 const PDFJS_ARCHIVE: &[u8] = include_bytes!("../assets/pdfjs/pdfjs-5.7.284-dist.zip");
 
-const TEXE_BRIDGE_JS: &str = r#"
+const TEXE_BRIDGE_JS: &str = r##"
 const POLL_INTERVAL_MS = 700;
 const RELOAD_TIMEOUT_MS = 15_000;
 
@@ -52,7 +52,7 @@ async function restoreView(pdfViewer, view) {
   pdfViewer.scrollMode = view.scrollMode;
   pdfViewer.spreadMode = view.spreadMode;
   pdfViewer.currentScaleValue = view.scaleValue;
-  pdfViewer.currentPageNumber = Math.min(view.pageNumber, pdfViewer.pagesCount);
+  pdfViewer.currentPageNumber = Math.max(1, Math.min(view.pageNumber, pdfViewer.pagesCount));
 
   // PDF.js updates scale and page layout asynchronously. Restore the exact
   // viewport only after those layout updates have settled.
@@ -74,12 +74,25 @@ async function reloadPdf(app, nextGeneration) {
   await restoreView(app.pdfViewer, view);
 }
 
-async function readGeneration() {
-  const response = await fetch("/status", { cache: "no-store" });
+function showStatus(message, stale = false) {
+  let status = document.getElementById("texe-build-status");
+  if (!status) {
+    status = document.createElement("div");
+    status.id = "texe-build-status";
+    status.setAttribute("role", "status");
+    status.style.cssText = "position:fixed;bottom:0;left:0;right:0;z-index:10000;padding:6px 12px;font:13px sans-serif;background:#20252b;color:white;pointer-events:none";
+    document.body.appendChild(status);
+  }
+  status.textContent = message;
+  status.style.background = stale ? "#873b12" : "#20252b";
+}
+
+async function readStatus() {
+  const response = await fetch("/status", { cache: "no-store", signal: AbortSignal.timeout(3000) });
   if (!response.ok) {
     throw new Error(`viewer status returned ${response.status}`);
   }
-  return Number((await response.json()).generation);
+  return response.json();
 }
 
 async function poll(app) {
@@ -88,11 +101,20 @@ async function poll(app) {
   }
 
   try {
-    const nextGeneration = await readGeneration();
+    const status = await readStatus();
+    const nextGeneration = Number(status.generation);
+    const messages = {
+      waiting: "Waiting for the first build.",
+      building: "Building… The displayed PDF may be from an earlier build.",
+      failed: nextGeneration === 0 ? "Build failed. No PDF has been produced yet. See the terminal for the error." : "Build failed. The displayed PDF is from the previous successful build. See the terminal for the error.",
+      ready: "PDF up to date",
+    };
+    showStatus(messages[status.state] || "Waiting for build status", status.state === "failed");
     if (generation === undefined) {
       generation = nextGeneration;
       document.documentElement.dataset.texeGeneration = String(generation);
-      return;
+      if (app.pdfDocument || nextGeneration === 0) return;
+      generation = -1;
     }
     if (nextGeneration === 0 || nextGeneration === generation) {
       return;
@@ -103,6 +125,7 @@ async function poll(app) {
     generation = nextGeneration;
     document.documentElement.dataset.texeGeneration = String(generation);
   } catch (error) {
+    showStatus("Viewer disconnected or unable to refresh. The displayed PDF may be out of date. Keep texe watch running; reconnecting automatically…", true);
     console.warn("texe could not refresh the PDF; it will retry", error);
   } finally {
     reloadInProgress = false;
@@ -121,12 +144,23 @@ if (window.PDFViewerApplication) {
 } else {
   document.addEventListener("webviewerloaded", start, { once: true });
 }
-"#;
+"##;
 
 struct Shared {
     pdf: Mutex<PathBuf>,
     generation: AtomicU64,
+    state: Mutex<&'static str>,
     stop: AtomicBool,
+}
+
+impl Shared {
+    fn viewer_path(&self) -> &'static str {
+        if self.generation.load(Ordering::SeqCst) == 0 {
+            "/web/viewer.html?file="
+        } else {
+            "/web/viewer.html?file=%2Fpaper.pdf"
+        }
+    }
 }
 
 pub(crate) struct Viewer {
@@ -155,6 +189,7 @@ impl Viewer {
         let shared = Arc::new(Shared {
             pdf: Mutex::new(pdf.to_path_buf()),
             generation: AtomicU64::new(u64::from(pdf.is_file())),
+            state: Mutex::new("waiting"),
             stop: AtomicBool::new(false),
         });
         let server = Arc::clone(&shared);
@@ -167,11 +202,26 @@ impl Viewer {
     }
 
     pub(crate) fn url(&self) -> String {
-        format!("http://{}/web/viewer.html?file=%2Fpaper.pdf", self.address)
+        format!("http://{}{}", self.address, self.shared.viewer_path())
     }
 
     pub(crate) fn notify_success(&self) {
         self.shared.generation.fetch_add(1, Ordering::SeqCst);
+        self.set_state("ready");
+    }
+
+    pub(crate) fn notify_building(&self) {
+        self.set_state("building");
+    }
+    pub(crate) fn notify_failure(&self) {
+        self.set_state("failed");
+    }
+    fn set_state(&self, state: &'static str) {
+        *self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
     }
 
     pub(crate) fn set_pdf(&self, pdf: &Path) {
@@ -273,7 +323,7 @@ fn respond(stream: &mut TcpStream, shared: &Shared) -> std::io::Result<()> {
         .and_then(|path| path.split('?').next());
 
     match path {
-        Some("/") => send_redirect(stream, "/web/viewer.html?file=%2Fpaper.pdf"),
+        Some("/") => send_redirect(stream, shared.viewer_path()),
         Some("/web/viewer.html") => {
             let html = bundled_pdfjs_asset("web/viewer.html")?
                 .ok_or_else(|| std::io::Error::other("PDF.js viewer.html is missing"))?;
@@ -302,10 +352,16 @@ fn respond(stream: &mut TcpStream, shared: &Shared) -> std::io::Result<()> {
             TEXE_BRIDGE_JS.as_bytes(),
         ),
         Some("/status") => {
-            let body = format!(
-                "{{\"schema\":\"texe.viewer-status/v1\",\"generation\":{}}}",
-                shared.generation.load(Ordering::SeqCst)
-            );
+            let state = *shared
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let body = serde_json::json!({
+                "schema": "texe.viewer-status/v1",
+                "generation": shared.generation.load(Ordering::SeqCst),
+                "state": state,
+            })
+            .to_string();
             send(
                 stream,
                 "200 OK",
@@ -498,6 +554,29 @@ mod tests {
 
     fn response_text(address: SocketAddr, path: &str) -> String {
         String::from_utf8(get(address, path)).expect("text response")
+    }
+
+    #[test]
+    fn viewer_reports_failure_without_advancing_the_previous_pdf() {
+        let tmp = tempfile::tempdir().unwrap();
+        let viewer = super::Viewer::start(&tmp.path().join("main.pdf")).unwrap();
+        assert!(viewer.url().ends_with("?file="));
+        viewer.notify_building();
+        assert!(response_text(viewer.address, "/status").contains("building"));
+        viewer.notify_success();
+        let generation = viewer
+            .shared
+            .generation
+            .load(std::sync::atomic::Ordering::SeqCst);
+        viewer.notify_failure();
+        assert!(response_text(viewer.address, "/status").contains("failed"));
+        assert_eq!(
+            viewer
+                .shared
+                .generation
+                .load(std::sync::atomic::Ordering::SeqCst),
+            generation
+        );
     }
 
     #[test]

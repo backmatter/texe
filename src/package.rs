@@ -492,13 +492,42 @@ fn locked_consumer_requirements(lock: &Path) -> LockedConsumerRequirements {
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return LockedConsumerRequirements::default();
     };
-    let Some(requirements) = value.get("consumer_requirements") else {
-        return LockedConsumerRequirements::default();
-    };
-    LockedConsumerRequirements {
-        providers: string_set(requirements, "providers"),
-        files: string_set(requirements, "files"),
+    let mut requirements = value
+        .get("consumer_requirements")
+        .map(|value| LockedConsumerRequirements {
+            providers: string_set(value, "providers"),
+            files: string_set(value, "files"),
+        })
+        .unwrap_or_default();
+    // Convergence records dynamically loaded files on closure entries. Keep
+    // these roots across scans too, or a prose edit drops them and forces
+    // another discovery/convergence cycle. Static dependencies remain free to
+    // disappear when the source no longer requests them.
+    if let Some(closure) = value.get("closure").and_then(serde_json::Value::as_array) {
+        for entry in closure {
+            for request in string_set(entry, "runtime_requests") {
+                let owned_paths = entry
+                    .get("files")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|file| file.get("tds_path").and_then(serde_json::Value::as_str))
+                    .filter(|path| {
+                        *path == request || path.rsplit('/').next() == Some(request.as_str())
+                    })
+                    .map(str::to_string)
+                    .collect::<BTreeSet<_>>();
+                if owned_paths.is_empty() {
+                    requirements.files.insert(request);
+                } else {
+                    // Keep the locked owner's exact paths when another
+                    // provider also ships the same basename.
+                    requirements.files.extend(owned_paths);
+                }
+            }
+        }
     }
+    requirements
 }
 
 fn baseline_consumer_requirements(
@@ -713,6 +742,7 @@ impl ErrorContext for TexeError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -824,6 +854,61 @@ mod tests {
                 "fonts/map/runtime.map",
             ]
             .map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn refreshed_locks_preserve_converged_files_without_explicit_requirements() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let lock = directory.path().join("pqty.lock");
+        fs::write(
+            &lock,
+            serde_json::to_vec(&serde_json::json!({
+                "closure": [
+                    {"provider": "l3backend", "runtime_requests": ["l3backend-pdftex.def", ""]},
+                    {"provider": "static-only", "runtime_requests": []},
+                    {"provider": "duplicate", "runtime_requests": ["l3backend-pdftex.def"]}
+                ]
+            }))
+            .expect("lock JSON"),
+        )
+        .expect("lock");
+        assert_eq!(
+            locked_consumer_requirements(&lock),
+            LockedConsumerRequirements {
+                providers: BTreeSet::new(),
+                files: ["l3backend-pdftex.def".to_string()].into_iter().collect(),
+            }
+        );
+    }
+
+    #[test]
+    fn converged_files_keep_exact_ownership_for_ambiguous_basenames() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let lock = directory.path().join("pqty.lock");
+        fs::write(
+            &lock,
+            serde_json::to_vec(&serde_json::json!({
+                "consumer_requirements": {"providers": ["bootstrap"]},
+                "closure": [{
+                    "provider": "selected",
+                    "runtime_requests": ["shared.def"],
+                    "files": [{"tds_path": "tex/selected/shared.def"}]
+                }]
+            }))
+            .expect("lock JSON"),
+        )
+        .expect("lock");
+        let requirements = locked_consumer_requirements(&lock);
+        assert_eq!(
+            requirements.files,
+            ["tex/selected/shared.def".to_string()]
+                .into_iter()
+                .collect()
+        );
+        assert_eq!(
+            requirements.providers,
+            ["bootstrap".to_string()].into_iter().collect()
         );
     }
 

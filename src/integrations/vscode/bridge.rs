@@ -7,6 +7,9 @@ use sha2::{Digest as _, Sha256};
 use crate::TexeError;
 
 const PACKAGE: &[u8] = include_bytes!("../../../assets/vscode-extension/package.json");
+const RUNTIME: &[u8] = include_bytes!("../../../assets/vscode-extension/runtime.js");
+const WRITING_GUIDE: &[u8] = include_bytes!("../../../assets/vscode-extension/writing-guide.md");
+const BUILD_BRIDGE: &[u8] = include_bytes!("../../../assets/vscode-extension/build-bridge.js");
 const MAIN: &[u8] = include_bytes!("../../../assets/vscode-extension/extension.js");
 const README: &[u8] = include_bytes!("../../../assets/vscode-extension/README.md");
 const LICENSE: &[u8] = include_bytes!("../../../assets/vscode-extension/LICENSE");
@@ -20,6 +23,9 @@ pub(crate) fn path() -> Result<PathBuf, TexeError> {
 pub(crate) fn matches_installed(directory: &Path) -> Result<bool, TexeError> {
     for (name, expected) in [
         ("extension.js", MAIN),
+        ("runtime.js", RUNTIME),
+        ("build-bridge.js", BUILD_BRIDGE),
+        ("writing-guide.md", WRITING_GUIDE),
         ("README.md", README),
         ("LICENSE.txt", LICENSE),
     ] {
@@ -50,11 +56,14 @@ pub(crate) fn matches_installed(directory: &Path) -> Result<bool, TexeError> {
 fn write(directory: &Path) -> Result<PathBuf, TexeError> {
     let package = with_current_version(PACKAGE)?;
     let manifest = with_current_version(MANIFEST)?;
-    let files: [(&str, &[u8]); 6] = [
+    let files: [(&str, &[u8]); 9] = [
         ("[Content_Types].xml", CONTENT_TYPES),
         ("extension.vsixmanifest", &manifest),
         ("extension/package.json", &package),
         ("extension/extension.js", MAIN),
+        ("extension/runtime.js", RUNTIME),
+        ("extension/build-bridge.js", BUILD_BRIDGE),
+        ("extension/writing-guide.md", WRITING_GUIDE),
         ("extension/README.md", README),
         ("extension/LICENSE.txt", LICENSE),
     ];
@@ -144,7 +153,8 @@ mod tests {
     use std::io::Read as _;
 
     use crate::integrations::vscode::bridge::{
-        LICENSE, MAIN, PACKAGE, README, matches_installed, with_current_version, write,
+        BUILD_BRIDGE, LICENSE, MAIN, PACKAGE, README, RUNTIME, WRITING_GUIDE, matches_installed,
+        with_current_version, write,
     };
 
     #[test]
@@ -159,6 +169,9 @@ mod tests {
             "extension.vsixmanifest",
             "extension/package.json",
             "extension/extension.js",
+            "extension/runtime.js",
+            "extension/build-bridge.js",
+            "extension/writing-guide.md",
             "extension/README.md",
             "extension/LICENSE.txt",
         ] {
@@ -203,6 +216,9 @@ mod tests {
     fn installed_companion_is_compared_by_contents_not_only_version() {
         let directory = tempfile::tempdir().expect("temporary directory");
         fs::write(directory.path().join("extension.js"), MAIN).expect("extension source");
+        fs::write(directory.path().join("runtime.js"), RUNTIME).expect("runtime source");
+        fs::write(directory.path().join("build-bridge.js"), BUILD_BRIDGE).expect("build bridge");
+        fs::write(directory.path().join("writing-guide.md"), WRITING_GUIDE).expect("writing guide");
         fs::write(directory.path().join("README.md"), README).expect("readme");
         fs::write(directory.path().join("LICENSE.txt"), LICENSE).expect("license");
         let mut package: serde_json::Value =

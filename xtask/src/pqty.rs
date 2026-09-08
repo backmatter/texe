@@ -52,6 +52,23 @@ pub(crate) fn read_lock() -> Result<SuiteLock> {
     Ok(toml::from_str(&text)?)
 }
 
+pub(crate) fn revision() -> Result<String> {
+    let lock = read_lock()?;
+    require_equal("command suite schema", SUITE_SCHEMA, &lock.schema)?;
+    validate_revision(&lock.pqty_revision)?;
+    Ok(lock.pqty_revision)
+}
+
+fn validate_revision(revision: &str) -> Result<()> {
+    if revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(message(
+            "pqty_revision must be a full 40-character Git commit ID",
+        ))
+    }
+}
+
 fn source_digest(checkout: &Path) -> Result<String> {
     let files = output(Command::new("git").current_dir(checkout).args([
         "ls-files",
@@ -247,6 +264,21 @@ fn require_equal(label: &str, expected: &str, actual: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{SUITE_SCHEMA, SuiteLock};
+
+    #[test]
+    fn checkout_revision_must_be_a_full_commit_id() {
+        assert!(super::validate_revision("8dfaa9597c364039eab85763b3629f4e6cd877f7").is_ok());
+        for value in [
+            "",
+            "main",
+            "v0.1.0",
+            "8dfaa95",
+            "../../pqty",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        ] {
+            assert!(super::validate_revision(value).is_err(), "{value}");
+        }
+    }
 
     #[test]
     fn suite_lock_requires_every_consumed_protocol_schema() {

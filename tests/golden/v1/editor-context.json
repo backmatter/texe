@@ -1,0 +1,9 @@
+{
+  "schema": "texe.editor-context/v1",
+  "project": "/paper",
+  "source": "paper.v2.tex",
+  "pdf": "paper.v2.pdf",
+  "log": ".texe/build/output/paper.v2.log",
+  "engine": "pdflatex",
+  "executable": "/usr/bin/texe"
+}

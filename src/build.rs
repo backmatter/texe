@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::TexeError;
 use crate::config::ProjectManifest;
 use crate::guard::BuildGuard;
-use crate::lockfile::{restore_package_lock, write_project_lock};
+use crate::lockfile::{project_lock_bytes, restore_package_lock};
 use crate::package::{
     Convergence, EnsureLockRequest, PackageEnvironment, PqtyClient, ReconcileRequest,
 };
@@ -162,14 +162,12 @@ pub fn build_project(
             .output_dir
             .join(format!("{}.log", job_stem(&manifest.project.entry)?)),
     );
-    let published = publish_artifact(project_root, &internal_artifact)?;
-    write_project_lock(
-        project_root,
-        &context.lock,
-        &toolchain.identity,
-        context.timestamp.locked,
-    )?;
-    context.record_build(&published, &state.environment.fingerprint)?;
+    let project_lock =
+        project_lock_bytes(&context.lock, &toolchain.identity, context.timestamp.locked)?;
+    let published = publish_artifact(project_root, &internal_artifact, &project_lock)?;
+    if let Err(error) = context.record_build(&published, &state.environment.fingerprint) {
+        eprintln!("texe: warning: could not save build cache: {error}");
+    }
     let auxiliary_cache = auxiliary::AuxiliaryCache::from_entries(
         &state.auxiliary_cache_key,
         state.bibliography.cache_entries(),

@@ -118,10 +118,11 @@ pub(crate) fn from_engine_log(
     process_stdout: &str,
     process_stderr: &str,
 ) -> Diagnostic {
-    let original = primary_original(log, process_stdout, process_stderr);
-    let evidence = format!("{original}\n{log}");
+    let logical_log = unwrap_log(log);
+    let original = primary_original(&logical_log, process_stdout, process_stderr);
+    let evidence = format!("{original}\n{logical_log}");
     let (family, message, explanation, action) = classify(&evidence, &original);
-    let location = locate(log, entry).map(|(file, line)| {
+    let location = locate(&logical_log, entry).map(|(file, line)| {
         let safe_file = confined_file(project_root, &file).unwrap_or_else(|| entry.to_path_buf());
         let source = fs::read_to_string(project_root.join(&safe_file))
             .ok()
@@ -382,23 +383,43 @@ fn file_line_location(line: &str) -> Option<(PathBuf, usize)> {
     None
 }
 
+// Managed TeX wraps its terminal/log output at 79 columns, including paths
+// and fatal-summary words. Rejoin physical continuations before classifying.
+fn unwrap_log(log: &str) -> String {
+    let mut result = String::new();
+    let mut wrapped = false;
+    for line in log.lines() {
+        if !result.is_empty() && !wrapped {
+            result.push('\n');
+        }
+        result.push_str(line);
+        wrapped = line.chars().count() == 79;
+    }
+    result
+}
+
 fn primary_original(log: &str, stdout: &str, stderr: &str) -> String {
     let lines = log.lines().collect::<Vec<_>>();
     if let Some(index) = lines.iter().rposition(|line| fatal_diagnostic_line(line)) {
         let mut focused = lines[index].trim_start_matches('!').trim().to_string();
+        let mut previous_width = lines[index].chars().count();
         for continuation in lines.iter().skip(index + 1) {
+            let width = continuation.chars().count();
             let continuation = continuation.trim();
             if continuation.is_empty()
                 || continuation.starts_with("See the ")
                 || continuation.starts_with("Type ")
                 || continuation.starts_with("l.")
                 || continuation.starts_with("Here is how much")
-                || continuation.contains("==> Fatal error occurred")
+                || continuation.contains("==>")
             {
                 break;
             }
-            focused.push(' ');
+            if previous_width < 79 {
+                focused.push(' ');
+            }
             focused.push_str(continuation);
+            previous_width = width;
         }
         return focused;
     }
@@ -411,7 +432,7 @@ fn primary_original(log: &str, stdout: &str, stderr: &str) -> String {
 }
 
 fn fatal_diagnostic_line(line: &str) -> bool {
-    !line.contains("==> Fatal error occurred")
+    !line.contains("==>")
         && ((line.starts_with('!') && !line.starts_with("!  ==>"))
             || (line.contains(": Package ") && line.contains(" Error:"))
             || line.contains(": LaTeX Error:")
@@ -499,6 +520,26 @@ l.18 \end{minted}
         assert_eq!(diagnostic.family, "external-command-unavailable");
         assert!(diagnostic.original.contains("minted executable"));
         assert!(diagnostic.explanation.contains("may be disabled"));
+    }
+
+    #[test]
+    fn wrapped_fatal_summary_does_not_hide_the_source_error() {
+        let diagnostic = diagnose(
+            "/tmp/texe-vscode-hlxmI3/paper with spaces/paper.v2.tex:3: Undefined control seq\nuence.\nl.3 \\undefinedTexeCommand\n\n/tmp/texe-vscode-hlxmI3/paper with spaces/paper.v2.tex:3:  ==> Fatal error occu\nrred, no output PDF file produced!\n",
+            "",
+        );
+        assert_eq!(diagnostic.family, "undefined-command");
+        assert!(diagnostic.original.contains("Undefined control sequence"));
+    }
+
+    #[test]
+    fn wrapping_inside_the_word_error_does_not_select_the_fatal_summary() {
+        let diagnostic = diagnose(
+            "/tmp/texe-vscode-final-hropnsl2/paper with spaces/paper.v2.tex:3: Undefined con\ntrol sequence.\nl.3 \\undefinedTexeCommand\n\n/tmp/texe-vscode-final-hropnsl2/paper with spaces/paper.v2.tex:3:  ==> Fatal er\nror occurred, no output PDF file produced!\n",
+            "",
+        );
+        assert_eq!(diagnostic.family, "undefined-command");
+        assert!(diagnostic.original.contains("Undefined control sequence"));
     }
 
     #[test]

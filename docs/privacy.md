@@ -7,19 +7,27 @@ logs, and generated PDFs stay on the computer.
 ## Connections texe may make
 
 - The first managed build downloads the selected LaTeX engine and required
-  package archives from TeX Live mirrors. Every accepted download is checked
+  package archives from TeX Live mirrors. Later builds download newly required
+  packages as needed. Every accepted download is checked
   against its recorded size and cryptographic digest.
 - Choosing VS Code setup asks the local `code` command to install LaTeX
   Workshop when it is missing and to install texe's bundled layout companion.
   texe does not force-update an existing LaTeX Workshop installation; its own
   companion follows the installed texe version. Any extension-marketplace
-  connection is made by VS Code; the bundled companion performs no networking.
+  connection is made by VS Code. The bundled companion automatically downloads
+  missing TeX tools and packages during builds. Set `texe.allowDownloads` to
+  false for offline texe builds. Check Setup does not initiate downloads.
 - `texe watch --view` binds a random port on `127.0.0.1`. It serves only the
   pinned PDF.js viewer resources, its local reload/state bridge, the current
-  PDF, and a generation counter. It has no CDN or analytics dependency and
+  PDF, a generation counter, and build state. It has no CDN or analytics dependency and
   never serves project source or a directory listing. PDF.js help links or
   links in the paper can leave the local viewer only when the user clicks
   them.
+
+- The VS Code companion also opens an authenticated loopback build bridge.
+  LaTeX Workshop uses its project-local random token to request builds through
+  the companion’s queue. The endpoint and token live in `.texe/editor` and are
+  removed when the companion closes. This bridge has no external service.
 
 `texe build --offline` forbids managed runtime, component, registry, and
 package network access. It succeeds only when every required verified cache

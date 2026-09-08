@@ -5,7 +5,7 @@ const test = require("node:test");
 
 const extensionPath = path.resolve(
   __dirname,
-  "../assets/vscode-extension/extension.js"
+  "../assets/vscode-extension/extension.js",
 );
 
 function uri(value) {
@@ -13,14 +13,14 @@ function uri(value) {
     value,
     toString() {
       return `file://${value}`;
-    }
+    },
   };
 }
 
 function folder(value) {
   return {
     name: path.basename(value),
-    uri: uri(value)
+    uri: uri(value),
   };
 }
 
@@ -33,7 +33,7 @@ function createHarness({
   requests = new Map(),
   existing = [],
   activeFolder,
-  failShowingSource = false
+  failShowingSource = false,
 } = {}) {
   const files = new Set(existing);
   const state = new Map();
@@ -44,7 +44,7 @@ function createHarness({
     information: [],
     openedDocuments: [],
     shownDocuments: [],
-    warnings: []
+    warnings: [],
   };
   const handlers = {};
 
@@ -57,14 +57,14 @@ function createHarness({
       handlers.changed = callback;
       return { dispose() {} };
     },
-    dispose() {}
+    dispose() {},
   };
   const vscode = {
     ViewColumn: { One: 1, Two: 2 },
     Uri: {
       joinPath(base, relative) {
         return uri(path.posix.join(base.value, relative));
-      }
+      },
     },
     commands: {
       async executeCommand(...arguments) {
@@ -74,7 +74,7 @@ function createHarness({
         handlers.command = callback;
         calls.registeredCommand = name;
         return { dispose() {} };
-      }
+      },
     },
     extensions: {
       getExtension(name) {
@@ -83,13 +83,17 @@ function createHarness({
           isActive: false,
           async activate() {
             calls.activatedExtensions += 1;
-          }
+          },
         };
-      }
+      },
     },
     window: {
       activeTextEditor: activeFolder
-        ? { document: { uri: uri(path.posix.join(activeFolder.uri.value, "active.tex")) } }
+        ? {
+            document: {
+              uri: uri(path.posix.join(activeFolder.uri.value, "active.tex")),
+            },
+          }
         : undefined,
       async showErrorMessage(message) {
         calls.errors.push(message);
@@ -105,7 +109,7 @@ function createHarness({
       },
       async showWarningMessage(message) {
         calls.warnings.push(message);
-      }
+      },
     },
     workspace: {
       fs: {
@@ -114,7 +118,7 @@ function createHarness({
             throw new Error("not found");
           }
           return {};
-        }
+        },
       },
       workspaceFolders: folders,
       createFileSystemWatcher(pattern) {
@@ -126,12 +130,12 @@ function createHarness({
           get(key) {
             assert.equal(key, "editor.openPaper");
             return requests.get(folderUri.toString());
-          }
+          },
         };
       },
       getWorkspaceFolder(candidate) {
         return folders.find((item) =>
-          candidate.toString().startsWith(item.uri.toString())
+          candidate.toString().startsWith(item.uri.toString()),
         );
       },
       async openTextDocument(candidate) {
@@ -141,8 +145,8 @@ function createHarness({
       onDidChangeConfiguration(callback) {
         handlers.configuration = callback;
         return { dispose() {} };
-      }
-    }
+      },
+    },
   };
   const context = {
     subscriptions: [],
@@ -152,8 +156,8 @@ function createHarness({
       },
       async update(key, value) {
         state.set(key, value);
-      }
-    }
+      },
+    },
   };
 
   return {
@@ -161,7 +165,7 @@ function createHarness({
     context,
     files,
     handlers,
-    vscode
+    vscode,
   };
 }
 
@@ -169,6 +173,13 @@ function loadExtension(vscode) {
   const originalLoad = Module._load;
   delete require.cache[extensionPath];
   Module._load = function load(request, parent, isMain) {
+    if (request === "./runtime")
+      return {
+        activate: () => ({
+          ready: Promise.resolve(),
+          reportFailure: async () => {},
+        }),
+      };
     if (request === "vscode") {
       return vscode;
     }
@@ -192,7 +203,7 @@ for (const event of ["created", "changed"]) {
     const harness = createHarness({
       folders: [project],
       requests: new Map([[project.uri.toString(), projectRequest]]),
-      existing: ["file:///paper/main.tex"]
+      existing: ["file:///paper/main.tex"],
     });
     const extension = loadExtension(harness.vscode);
 
@@ -212,7 +223,7 @@ for (const event of ["created", "changed"]) {
     assert.equal(harness.calls.commands[0][1].toString(), pdf.toString());
     assert.equal(
       harness.calls.commands[1][0],
-      "workbench.action.focusLeftGroup"
+      "workbench.action.evenEditorWidths",
     );
   });
 }
@@ -225,7 +236,7 @@ test("the manual command force-reopens the active folder layout", async () => {
     folders: [first, active],
     requests: new Map([[active.uri.toString(), activeRequest]]),
     existing: ["file:///active/paper.tex", "file:///active/paper.pdf"],
-    activeFolder: active
+    activeFolder: active,
   });
   const extension = loadExtension(harness.vscode);
 
@@ -237,11 +248,14 @@ test("the manual command force-reopens the active folder layout", async () => {
   assert.equal(harness.calls.openedDocuments.length, openedBeforeCommand + 1);
   assert.equal(
     harness.calls.openedDocuments.at(-1),
-    "file:///active/paper.tex"
+    "file:///active/paper.tex",
   );
   assert.equal(
-    harness.calls.commands.at(-2)[1].toString(),
-    "file:///active/paper.pdf"
+    harness.calls.commands
+      .filter((command) => command[0] === "vscode.openWith")
+      .at(-1)[1]
+      .toString(),
+    "file:///active/paper.pdf",
   );
 });
 
@@ -265,7 +279,7 @@ test("manual command explains missing workspace, configuration, source, and PDF"
     const project = folder("/paper");
     const harness = createHarness({
       folders: [project],
-      requests: new Map([[project.uri.toString(), request()]])
+      requests: new Map([[project.uri.toString(), request()]]),
     });
     await loadExtension(harness.vscode).activate(harness.context);
     await harness.handlers.command();
@@ -277,7 +291,7 @@ test("manual command explains missing workspace, configuration, source, and PDF"
     const harness = createHarness({
       folders: [project],
       requests: new Map([[project.uri.toString(), request()]]),
-      existing: ["file:///paper/main.tex"]
+      existing: ["file:///paper/main.tex"],
     });
     await loadExtension(harness.vscode).activate(harness.context);
     await harness.handlers.command();
@@ -291,7 +305,7 @@ test("manual command reports extension-host failures", async () => {
     folders: [project],
     requests: new Map([[project.uri.toString(), request()]]),
     existing: ["file:///paper/main.tex", "file:///paper/main.pdf"],
-    failShowingSource: true
+    failShowingSource: true,
   });
   const extension = loadExtension(harness.vscode);
 

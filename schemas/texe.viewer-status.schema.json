@@ -4,9 +4,25 @@
   "title": "texe local viewer status v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "generation"],
+  "required": [
+    "schema",
+    "generation"
+  ],
   "properties": {
-    "schema": { "const": "texe.viewer-status/v1" },
-    "generation": { "type": "integer", "minimum": 0 }
+    "schema": {
+      "const": "texe.viewer-status/v1"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "state": {
+      "enum": [
+        "waiting",
+        "building",
+        "failed",
+        "ready"
+      ]
+    }
   }
 }

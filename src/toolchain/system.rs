@@ -39,7 +39,7 @@ impl ToolchainProvider for SystemToolchainProvider {
         }
         let engine_executable = resolve_executable(project_root, &request.engine)?;
         let kpsewhich_executable = resolve_executable(project_root, &request.kpsewhich)?;
-        let texmf_dist = query_directory(&kpsewhich_executable, "TEXMFDIST")?;
+        let (texmf_dist, configuration_roots) = query_directories(&kpsewhich_executable)?;
 
         let mut roots = Vec::new();
         for root in [texmf_dist.join("fonts"), texmf_dist.join("web2c")] {
@@ -47,11 +47,7 @@ impl ToolchainProvider for SystemToolchainProvider {
                 roots.push(root);
             }
         }
-        for variable in ["TEXMFSYSVAR", "TEXMFSYSCONFIG", "TEXMFVAR", "TEXMFCONFIG"] {
-            if let Ok(root) = query_directory(&kpsewhich_executable, variable) {
-                roots.push(root);
-            }
-        }
+        roots.extend(configuration_roots);
         roots.extend(system_font_roots());
         let mut seen = BTreeSet::new();
         roots.retain(|root| seen.insert(root.clone()));
@@ -151,9 +147,13 @@ pub fn resolve_executable(project_root: &Path, command: &str) -> Result<PathBuf,
     Err(TexeError::ToolNotFound(command.to_string()))
 }
 
-fn query_directory(kpsewhich: &Path, variable: &str) -> Result<PathBuf, TexeError> {
+fn query_directories(kpsewhich: &Path) -> Result<(PathBuf, Vec<PathBuf>), TexeError> {
+    // One Kpathsea initialization per build, rather than one per variable.
+    // Newline delimiters preserve spaces and platform path-list separators.
+    const QUERY: &str =
+        "-expand-var=$TEXMFDIST\n$TEXMFSYSVAR\n$TEXMFSYSCONFIG\n$TEXMFVAR\n$TEXMFCONFIG";
     let output = Command::new(kpsewhich)
-        .arg(format!("-var-value={variable}"))
+        .arg(QUERY)
         .output()
         .map_err(|source| TexeError::Spawn {
             tool: kpsewhich.to_path_buf(),
@@ -166,15 +166,32 @@ fn query_directory(kpsewhich: &Path, variable: &str) -> Result<PathBuf, TexeErro
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
         });
     }
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let path = PathBuf::from(&value);
-    if value.is_empty() || !path.is_dir() {
+    parse_directories(kpsewhich, &String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_directories(kpsewhich: &Path, output: &str) -> Result<(PathBuf, Vec<PathBuf>), TexeError> {
+    let values = output.lines().map(str::trim).collect::<Vec<_>>();
+    if values.len() != 5 {
         return Err(TexeError::Toolchain(format!(
-            "{variable} from {} is not a directory: {value}",
+            "{} returned an invalid directory query response",
             kpsewhich.display()
         )));
     }
-    Ok(path)
+    let distribution = PathBuf::from(values[0]);
+    if values[0].is_empty() || !distribution.is_dir() {
+        return Err(TexeError::Toolchain(format!(
+            "TEXMFDIST from {} is not a directory: {}",
+            kpsewhich.display(),
+            values[0]
+        )));
+    }
+    let roots = values[1..]
+        .iter()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .collect();
+    Ok((distribution, roots))
 }
 
 pub fn executable_version(path: &Path) -> Result<String, TexeError> {
@@ -197,4 +214,35 @@ pub fn executable_version(path: &Path) -> Result<String, TexeError> {
         .next()
         .unwrap_or_default()
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_directories;
+    use std::path::Path;
+
+    #[test]
+    fn directory_query_preserves_spaces_and_ignores_missing_optional_roots() {
+        let scratch = tempfile::tempdir().unwrap();
+        let distribution = scratch.path().join("TeX distribution");
+        let config = scratch.path().join("system config");
+        std::fs::create_dir(&distribution).unwrap();
+        std::fs::create_dir(&config).unwrap();
+        let output = format!(
+            "{}\r\n{}\r\n\r\n$TEXMFVAR\r\n{}\r\n",
+            distribution.display(),
+            config.display(),
+            scratch.path().join("absent").display()
+        );
+        let (actual, roots) = parse_directories(Path::new("kpsewhich"), &output).unwrap();
+        assert_eq!(actual, distribution);
+        assert_eq!(roots, vec![config]);
+    }
+
+    #[test]
+    fn directory_query_rejects_missing_distribution_and_malformed_output() {
+        for output in ["\n\n\n\n\n", "one line\n", "$TEXMFDIST\n\n\n\n\n"] {
+            assert!(parse_directories(Path::new("kpsewhich"), output).is_err());
+        }
+    }
 }

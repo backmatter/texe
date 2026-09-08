@@ -17,7 +17,7 @@ pub(super) enum DownloadCategory {
 impl DownloadCategory {
     pub(super) const fn label(self) -> &'static str {
         match self {
-            Self::Registry => "Registry Snapshot",
+            Self::Registry => "registry snapshot",
             Self::Packages => "packages",
         }
     }
@@ -360,23 +360,20 @@ pub(super) fn download_plan_message(
 ) -> String {
     match (bytes_total, bytes_cached, bytes_to_download) {
         (Some(total), Some(_), Some(0)) => format!(
-            "{}: all {}, {}, already cached",
+            "{}: {} ({}) cached",
             category.label(),
             human_count(items_total, "item", "items"),
             human_bytes(total)
         ),
         (Some(total), Some(cached), Some(download)) => format!(
-            "{} download plan: {} across {}; {} of {} cached",
+            "{}: {} to download across {}; {} of {} cached",
             category.label(),
             human_bytes(download),
             human_count(items_total.saturating_sub(items_cached), "item", "items"),
             human_bytes(cached),
             human_bytes(total)
         ),
-        _ => format!(
-            "{} download started; the server did not declare a size",
-            category.label()
-        ),
+        _ => format!("{}: download size unknown", category.label()),
     }
 }
 

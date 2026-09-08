@@ -2,3 +2,6 @@ target/
 dist/
 .texe/
 pqty.lock
+
+tests/vscode/node_modules/
+tests/vscode/.vscode-test/

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.adoption-report.schema.json",
+  "title": "texe adoption-report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "project",
+    "entry",
+    "engine",
+    "provider",
+    "existing_manifest",
+    "blockers",
+    "warnings",
+    "local_classes",
+    "external_tools",
+    "settings_conflicts",
+    "check"
+  ],
+  "properties": {
+    "schema": {
+      "const": "texe.adoption-report/v1"
+    },
+    "project": {
+      "type": "string"
+    },
+    "entry": {
+      "type": "string"
+    },
+    "engine": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "existing_manifest": {
+      "type": "boolean"
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "local_classes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "external_tools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "settings_conflicts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "check": {
+      "type": "boolean"
+    }
+  }
+}

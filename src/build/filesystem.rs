@@ -125,10 +125,10 @@ fn is_auxiliary(path: &Path) -> bool {
 }
 
 pub(super) fn find_artifact(output_dir: &Path, entry: &Path) -> Option<PathBuf> {
-    let stem = entry.file_stem()?;
+    let filename = entry.file_name()?;
     ["pdf", "dvi"]
         .into_iter()
-        .map(|extension| output_dir.join(stem).with_extension(extension))
+        .map(|extension| output_dir.join(filename).with_extension(extension))
         .find(|path| path.is_file())
 }
 

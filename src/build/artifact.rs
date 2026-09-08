@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::TexeError;
-use crate::atomic::write as atomic_write;
+use crate::atomic::replace_files;
 use crate::lockfile::read_source_date_epoch;
 
 /// The build timestamp this run hands to the engine, and the one its lock
@@ -81,6 +81,7 @@ impl PublishedBuild {
 pub(super) fn publish_artifact(
     project_root: &Path,
     internal: &Path,
+    project_lock: &[u8],
 ) -> Result<PublishedBuild, TexeError> {
     let name = internal.file_name().ok_or_else(|| {
         TexeError::Build(format!(
@@ -93,34 +94,40 @@ pub(super) fn publish_artifact(
         path: internal.to_path_buf(),
         source,
     })?;
-    atomic_write(&published, &bytes)?;
-    fs::remove_file(internal).map_err(|source| TexeError::Io {
-        path: internal.to_path_buf(),
-        source,
-    })?;
     let synctex = internal.with_extension("synctex.gz");
-    let published_synctex = if synctex.is_file() {
-        let published_synctex = project_root.join(synctex.file_name().ok_or_else(|| {
-            TexeError::Build(format!(
-                "SyncTeX artifact has no filename: {}",
-                synctex.display()
-            ))
-        })?);
-        let bytes = fs::read(&synctex).map_err(|source| TexeError::Io {
-            path: synctex.clone(),
-            source,
-        })?;
-        atomic_write(&published_synctex, &bytes)?;
-        fs::remove_file(&synctex).map_err(|source| TexeError::Io {
-            path: synctex,
-            source,
-        })?;
-        Some(published_synctex)
-    } else {
-        None
+    let published_synctex = published.with_extension("synctex.gz");
+    let sync_bytes = match fs::read(&synctex) {
+        Ok(bytes) => Some(bytes),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => None,
+        Err(source) => {
+            return Err(TexeError::Io {
+                path: synctex,
+                source,
+            });
+        }
     };
+    // The PDF is the final commit point. Earlier writes roll back on failure.
+    replace_files(&[
+        (
+            &project_root.join(crate::lockfile::LOCK_NAME),
+            Some(project_lock),
+        ),
+        (&published_synctex, sync_bytes.as_deref()),
+        (&published, Some(&bytes)),
+    ])?;
+    // A cleanup failure cannot turn an already published build into a failure.
+    for path in [internal, synctex.as_path()] {
+        if let Err(error) = fs::remove_file(path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "texe: warning: could not remove internal artifact {}: {error}",
+                path.display()
+            );
+        }
+    }
     Ok(PublishedBuild {
         artifact: published,
-        synctex: published_synctex,
+        synctex: sync_bytes.map(|_| published_synctex),
     })
 }

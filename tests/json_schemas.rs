@@ -4,6 +4,22 @@ use std::collections::BTreeSet;
 fn machine_protocol_schemas_are_closed_and_validate_v1_golden_artifacts() {
     let cases = [
         (
+            include_str!("../schemas/texe.build-progress.schema.json"),
+            include_str!("golden/v1/build-progress.json"),
+        ),
+        (
+            include_str!("../schemas/texe.editor-context.schema.json"),
+            include_str!("golden/v1/editor-context.json"),
+        ),
+        (
+            include_str!("../schemas/texe.editor-preview.schema.json"),
+            include_str!("golden/v1/editor-preview.json"),
+        ),
+        (
+            include_str!("../schemas/texe.adoption-report.schema.json"),
+            include_str!("golden/v1/adoption-report.json"),
+        ),
+        (
             include_str!("../schemas/texe.build-report.schema.json"),
             include_str!("golden/v1/build-report.json"),
         ),
@@ -60,6 +76,10 @@ fn machine_protocol_schemas_are_closed_and_validate_v1_golden_artifacts() {
 #[test]
 fn every_public_schema_has_a_canonical_raw_github_id() {
     for (filename, text) in [
+        (
+            "texe.build-progress.schema.json",
+            include_str!("../schemas/texe.build-progress.schema.json"),
+        ),
         (
             "texe.bare-report.schema.json",
             include_str!("../schemas/texe.bare-report.schema.json"),

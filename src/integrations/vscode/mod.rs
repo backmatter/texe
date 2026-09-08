@@ -15,30 +15,28 @@ pub(crate) fn setup_vscode(
     allow_settings_prompt: bool,
 ) -> Result<IntegrationReport, TexeError> {
     let mut report = IntegrationReport::default();
-    let settings_exist = settings::project_settings_exist(root)?;
-    let replace_project_settings = settings_exist
+    let preview = settings::preview(root)?;
+    let conflicts = preview["conflicts"].as_array().expect("conflicts");
+    let replace_project_settings = !conflicts.is_empty()
         && allow_settings_prompt
         && ux::TerminalCapabilities::detect().can_prompt()
         && ux::prompt(
-            cliclack::confirm(format!(
-                "{} already exists. Replace the entire file with texe's VS Code settings?",
-                settings::project_settings_path(root).display()
-            ))
-            .initial_value(false)
-            .interact(),
+            cliclack::confirm(format!("Replace these conflicting settings? {conflicts:?}"))
+                .initial_value(false)
+                .interact(),
         )?;
     let settings_outcome = settings::configure(root, replace_project_settings)?;
     match settings_outcome {
-        settings::ProjectSettingsOutcome::Created => report.messages.push(
-            "created .vscode/settings.json with texe's LaTeX Workshop defaults".to_string(),
-        ),
+        settings::ProjectSettingsOutcome::Created => report
+            .messages
+            .push("created .vscode/settings.json with texe's LaTeX Workshop defaults".to_string()),
         settings::ProjectSettingsOutcome::Replaced => report.messages.push(
-            "replaced .vscode/settings.json with texe's LaTeX Workshop defaults".to_string(),
-        ),
-        settings::ProjectSettingsOutcome::Preserved => report.messages.push(
-            "kept the existing .vscode/settings.json unchanged; texe did not install editor defaults"
+            "merged texe settings into .vscode/settings.json; recorded reversible changes"
                 .to_string(),
         ),
+        settings::ProjectSettingsOutcome::Preserved => report
+            .messages
+            .push("texe settings are already current".to_string()),
     }
     if settings_outcome != settings::ProjectSettingsOutcome::Preserved {
         report.messages.push(
@@ -128,7 +126,7 @@ fn ensure_layout_companion(report: &mut IntegrationReport) {
     {
         report
             .messages
-            .push("texe's side-by-side paper layout is available in VS Code".to_string());
+            .push("texe's VS Code companion is available in VS Code".to_string());
         return;
     }
     let action = if same_version {
@@ -142,7 +140,7 @@ fn ensure_layout_companion(report: &mut IntegrationReport) {
         Ok(extension) => extension,
         Err(error) => {
             report.messages.push(format!(
-                "could not prepare texe's VS Code paper layout ({error}); the source and PDF will still open as tabs"
+                "could not prepare texe's VS Code companion ({error}); run `texe build` in a terminal until the companion is installed"
             ));
             return;
         }
@@ -159,13 +157,13 @@ fn ensure_layout_companion(report: &mut IntegrationReport) {
         .status()
     {
         Ok(status) if status.success() => report.messages.push(format!(
-            "{action} texe's side-by-side paper layout for VS Code"
+            "{action} texe's VS Code companion for VS Code"
         )),
         Ok(status) => report.messages.push(format!(
-            "could not install texe's VS Code paper layout ({status}); the source and PDF will still open as tabs"
+            "could not install texe's VS Code companion ({status}); run `texe build` in a terminal until the companion is installed"
         )),
         Err(source) => report.messages.push(format!(
-            "could not install texe's VS Code paper layout ({source}); the source and PDF will still open as tabs"
+            "could not install texe's VS Code companion ({source}); run `texe build` in a terminal until the companion is installed"
         )),
     }
 }
@@ -257,8 +255,8 @@ fn open_targets(root: &Path, manifest: &ProjectManifest) -> Vec<PathBuf> {
     let stem = manifest
         .project
         .entry
-        .file_stem()
-        .unwrap_or_else(|| std::ffi::OsStr::new("main"));
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("main.tex"));
     let pdf = root.join(stem).with_extension("pdf");
     let mut targets = vec![source];
     if pdf.is_file() {
@@ -268,6 +266,27 @@ fn open_targets(root: &Path, manifest: &ProjectManifest) -> Vec<PathBuf> {
         targets.push(pdf);
     }
     targets
+}
+
+pub(crate) fn preview_vscode(root: &Path) -> Result<serde_json::Value, TexeError> {
+    settings::preview(root)
+}
+pub(crate) fn configure_vscode(root: &Path, replace: bool) -> Result<IntegrationReport, TexeError> {
+    settings::configure(root, replace)?;
+    Ok(IntegrationReport {
+        messages: vec!["updated texe's VS Code settings".into()],
+    })
+}
+
+pub(crate) fn preview_vscode_manifest(
+    root: &Path,
+    manifest: &ProjectManifest,
+) -> Result<serde_json::Value, TexeError> {
+    settings::preview_manifest(root, manifest)
+}
+
+pub(crate) fn record_editor_error(root: &Path, error: Option<&TexeError>) -> Result<(), TexeError> {
+    settings::record_editor_error(root, error)
 }
 
 #[cfg(test)]

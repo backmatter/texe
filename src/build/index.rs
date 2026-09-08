@@ -129,10 +129,7 @@ fn index_controls(output_dir: &Path) -> Result<Vec<IndexControl>, TexeError> {
             let Some(fields) = glossary_fields(line) else {
                 continue;
             };
-            let Some(stem) = path.file_stem() else {
-                continue;
-            };
-            let base = path.with_file_name(stem);
+            let base = &path;
             let input = base.with_extension(fields.input);
             if !input.is_file() {
                 continue;

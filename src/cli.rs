@@ -52,6 +52,12 @@ impl From<TemplateChoice> for StarterTemplate {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    /// Hand a LaTeX Workshop build to the active VS Code companion.
+    #[command(hide = true)]
+    EditorBuild {
+        #[arg(long)]
+        project: Option<PathBuf>,
+    },
     /// Initialize a texe project.
     Init {
         /// Directory to initialize.
@@ -81,6 +87,27 @@ pub(crate) enum Command {
         /// Configure VS Code, install missing LaTeX extensions, and open the project.
         #[arg(long)]
         vscode: bool,
+    },
+    /// Check and adopt an existing paper for texe and VS Code.
+    Adopt {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        entry: Option<PathBuf>,
+        #[arg(long)]
+        engine: Option<String>,
+        /// Inspect compatibility without writing files or downloading anything.
+        #[arg(long)]
+        check: bool,
+        #[arg(short = 'y', long)]
+        yes: bool,
+        #[arg(long)]
+        no_build: bool,
+        #[arg(long)]
+        no_editor: bool,
+        /// Accept the editor setting conflicts shown by the compatibility check.
+        #[arg(long, conflicts_with = "no_editor")]
+        replace_conflicts: bool,
     },
     /// Validate the project, tools, engine, and runtime roots.
     Doctor {
@@ -158,6 +185,9 @@ pub(crate) enum Command {
         /// Filesystem polling interval in milliseconds.
         #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(50..=60_000))]
         poll_ms: u64,
+        /// Wait for this many milliseconds without input changes before rebuilding.
+        #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(50..=60_000))]
+        debounce_ms: u64,
         /// Open a loopback-only browser viewer and refresh it after successful builds.
         #[arg(long)]
         view: bool,
@@ -167,9 +197,21 @@ pub(crate) enum Command {
         /// Project directory or texe.toml. Searches ancestors when omitted.
         #[arg(long)]
         project: Option<PathBuf>,
-        /// Remove any legacy texe-generated VS Code workspace without changing project settings.
+        /// Undo texe-owned settings while preserving later user edits.
         #[arg(long)]
         remove: bool,
+        /// Print authoritative project paths without changing anything.
+        #[arg(long, conflicts_with_all = ["remove", "preview", "configure_only", "replace_conflicts"])]
+        inspect: bool,
+        /// Preview the merged settings and conflicting keys without writing.
+        #[arg(long, conflicts_with_all = ["remove", "configure_only", "replace_conflicts"])]
+        preview: bool,
+        /// Update settings without installing extensions or launching VS Code.
+        #[arg(long, conflicts_with = "remove")]
+        configure_only: bool,
+        /// Accept replacement of the conflicting texe integration values.
+        #[arg(long, conflicts_with = "remove")]
+        replace_conflicts: bool,
     },
     /// Show project and shared managed storage without removing anything.
     Storage {

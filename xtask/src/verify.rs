@@ -1,3 +1,5 @@
+mod contracts;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -38,6 +40,7 @@ pub(crate) fn all() -> Result<()> {
         .args(["doc", "--workspace", "--no-deps", "--locked"]);
     run(&mut docs)?;
     let suite = SuiteBinaries::build()?;
+    contracts::run(&suite)?;
     for selected in CASES {
         println!("== {selected}");
         case_with_suite(selected, &suite)?;
@@ -48,8 +51,11 @@ pub(crate) fn all() -> Result<()> {
 pub(crate) fn case(selected: &str, suite_bin: Option<&Path>) -> Result<()> {
     match selected {
         "platform" => platform(suite_bin),
-        "managed" | "luatex" | "common" | "bibliography" | "index" | "local" => {
-            let suite = SuiteBinaries::build()?;
+        "contracts" | "managed" | "luatex" | "common" | "bibliography" | "index" | "local" => {
+            let suite = match suite_bin {
+                Some(directory) => SuiteBinaries::from_directory(directory)?,
+                None => SuiteBinaries::build()?,
+            };
             case_with_suite(selected, &suite)
         }
         _ => Err(message(format!("unknown verification case `{selected}`"))),
@@ -58,6 +64,7 @@ pub(crate) fn case(selected: &str, suite_bin: Option<&Path>) -> Result<()> {
 
 fn case_with_suite(selected: &str, suite: &SuiteBinaries) -> Result<()> {
     match selected {
+        "contracts" => contracts::run(suite),
         "managed" => managed(suite),
         "luatex" => luatex(suite),
         "common" => common(suite),
@@ -105,6 +112,53 @@ fn platform(selected_bin: Option<&Path>) -> Result<()> {
             "Ada Ångström",
         ],
     )?)?;
+    let pilot = root.join("Existing multi-file paper");
+    copy_tree(&repo.join("examples/pilot"), &pilot)?;
+    let original_session = fs::read(pilot.join("main.txss"))?;
+    let preflight = texe(root, &bin, &["adopt", path(&pilot)?, "--check", "--json"])?;
+    successful(&preflight)?;
+    require(
+        json(&preflight)?["blockers"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "pilot adoption was blocked",
+    )?;
+    successful(&texe(
+        root,
+        &bin,
+        &["adopt", path(&pilot)?, "--yes", "--no-editor", "--no-build"],
+    )?)?;
+    let pilot_build = texe(
+        root,
+        &bin,
+        &["build", "--project", path(&pilot)?, "--yes", "--json"],
+    )?;
+    successful(&pilot_build)?;
+    require(
+        json(&pilot_build)?["bibliography_runs"]
+            .as_u64()
+            .is_some_and(|runs| runs > 0),
+        "pilot bibliography was not built",
+    )?;
+    require(
+        fs::read(pilot.join("main.txss"))? == original_session,
+        "adoption changed TeXstudio session",
+    )?;
+    nonempty(&pilot.join("main.pdf"))?;
+    successful(&texe(
+        root,
+        &bin,
+        &[
+            "build",
+            "--project",
+            path(&pilot)?,
+            "--frozen",
+            "--offline",
+            "--force",
+            "--json",
+        ],
+    )?)?;
+
     let empty_first = texe(
         root,
         &bin,
@@ -285,8 +339,7 @@ fn managed(suite: &SuiteBinaries) -> Result<()> {
     nonempty(&project.join("main.pdf"))?;
     let progress = String::from_utf8_lossy(&first.stderr);
     require(
-        progress.contains("texe: packages download plan:")
-            && progress.contains("texe: packages downloaded:"),
+        progress.contains("texe: packages:") && progress.contains("texe: packages downloaded:"),
         "managed build did not render package download progress",
     )?;
     require(
@@ -767,7 +820,38 @@ fn local(suite: &SuiteBinaries) -> Result<()> {
     let project = journey.root.join("project");
     copy_tree(&journey.repo.join("examples/convergence"), &project)?;
     journey.success(&["doctor", "--project", path(&project)?])?;
-    let first = journey.json(&["build", "--project", path(&project)?, "--yes", "--json"])?;
+    let output = journey.output(&["build", "--project", path(&project)?, "--yes", "--json"])?;
+    successful(&output)?;
+    let first = json(&output)?;
+    let events = String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|event| event["schema"] == "texe.build-progress/v1")
+        .collect::<Vec<_>>();
+    require(
+        events
+            .first()
+            .is_some_and(|event| event["phase"] == "toolchain"),
+        "JSON builds did not emit toolchain progress",
+    )?;
+    require(
+        events.iter().any(|event| event["phase"] == "engine-final"),
+        "JSON builds did not emit typesetting progress",
+    )?;
+    let history: Value =
+        serde_json::from_slice(&fs::read(timing_history_path(&journey.root, &project))?)?;
+    let phases = history["samples"]
+        .as_array()
+        .and_then(|samples| samples.last())
+        .and_then(|sample| sample["phase_millis"].as_object())
+        .ok_or_else(|| message("build timing phases absent"))?;
+    let total: u64 = phases.values().filter_map(Value::as_u64).sum();
+    require(
+        first["duration_millis"]
+            .as_u64()
+            .is_some_and(|duration| duration >= total),
+        "build duration omitted preparation phases",
+    )?;
     require(first["cached"] == false, "system build was cached")?;
     require_contains(
         &project.join(".texe/state/pqty.lock"),
@@ -791,6 +875,16 @@ fn local(suite: &SuiteBinaries) -> Result<()> {
     append(&project.join("main.tex"), "\n% edit\n")?;
     let edited = journey.json(&["build", "--project", path(&project)?, "--yes", "--json"])?;
     require(edited["cached"] == false, "edited system build was cached")?;
+    require(
+        second["convergence_rounds"] == 0 && edited["convergence_rounds"] == 0,
+        "warm system build repeated runtime convergence",
+    )?;
+    // Promoting previously indirect runtime files to explicit requirements can
+    // change environment provenance once. Subsequent edits must stay warm.
+    require(
+        edited["engine_passes"] == 1,
+        "warm edited system build repeated discovery",
+    )?;
     let frozen = journey.json(&[
         "build",
         "--project",
@@ -804,7 +898,91 @@ fn local(suite: &SuiteBinaries) -> Result<()> {
         frozen["cached"] == false && frozen["convergence_rounds"] == 0,
         "forced frozen system rebuild did not run correctly",
     )?;
-    println!("system-provider journey passed");
+    // A warm environment must still discover dependencies introduced by an
+    // edit, even when the source scanner cannot see the package command.
+    let source = project.join("main.tex");
+    fs::write(
+        &source,
+        read_text(&source)?.replace(
+            "\\begin{document}",
+            "\\csname usepackage\\endcsname{amsmath}\n\\begin{document}",
+        ),
+    )?;
+    journey.json(&["build", "--project", path(&project)?, "--offline", "--json"])?;
+    require_contains(
+        &project.join(".texe/state/pqty.lock"),
+        "\"provider\": \"amsmath\"",
+    )?;
+    local_failure_recovery(&journey, &project)?;
+    println!(
+        "system-provider journey passed: real PDF, runtime convergence, frozen reproduction, failed-publication preservation, and cache-write recovery"
+    );
+    Ok(())
+}
+
+fn local_failure_recovery(journey: &Journey, project: &Path) -> Result<()> {
+    let source = project.join("main.tex");
+    let original_source = read_text(&source)?;
+    let previous_pdf = fs::read(project.join("main.pdf"))?;
+    let previous_lock = fs::read(project.join("texe.lock"))?;
+    let synctex = project.join("main.synctex.gz");
+    let backup_synctex = project.join("previous.synctex.gz");
+    if synctex.exists() {
+        fs::rename(&synctex, &backup_synctex)?;
+    }
+    fs::create_dir(&synctex)?;
+    fs::write(
+        &source,
+        original_source.replace("\\end{document}", "Changed output.\n\\end{document}"),
+    )?;
+    let failed = journey.output(&[
+        "build",
+        "--project",
+        path(project)?,
+        "--offline",
+        "--force",
+        "--yes",
+        "--json",
+    ])?;
+    require(
+        !failed.status.success(),
+        "blocked SyncTeX destination did not fail publication",
+    )?;
+    require_schema(&failed, "texe.error/v1")?;
+    require(
+        fs::read(project.join("main.pdf"))? == previous_pdf
+            && fs::read(project.join("texe.lock"))? == previous_lock,
+        "publication failure replaced the previous PDF or lock",
+    )?;
+    fs::remove_dir(&synctex)?;
+    if backup_synctex.exists() {
+        fs::rename(&backup_synctex, &synctex)?;
+    }
+    fs::write(&source, original_source)?;
+    let cache = project.join(".texe/build/build-state.json");
+    if cache.exists() {
+        fs::remove_file(&cache)?;
+    }
+    fs::create_dir(&cache)?;
+    let recovered = journey.output(&[
+        "build",
+        "--project",
+        path(project)?,
+        "--offline",
+        "--force",
+        "--yes",
+        "--json",
+    ])?;
+    successful(&recovered)?;
+    require_schema(&recovered, "texe.build-report/v1")?;
+    require(
+        String::from_utf8_lossy(&recovered.stderr).contains("could not save build cache"),
+        "cache write failure did not produce a warning",
+    )?;
+    require(
+        fs::read(project.join("main.pdf"))? == previous_pdf,
+        "recovered PDF differed from the previous successful build",
+    )?;
     Ok(())
 }
 

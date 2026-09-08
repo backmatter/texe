@@ -48,7 +48,7 @@ The kpathsea adapter supports pdfTeX, XeTeX, and LuaTeX. A normal managed build:
 6. runs BibTeX, Biber, MakeIndex, or glossaries when their control files
    require it;
 7. performs frozen passes until the relevant auxiliary files stabilize;
-8. atomically publishes the PDF and SyncTeX file.
+8. publishes the lock and SyncTeX, then atomically replaces the PDF.
 
 The adapter owns engine invocation, pass scheduling, logs, bibliography and
 index tools, font maps, and SyncTeX. pqty owns source discovery, package
@@ -56,7 +56,10 @@ resolution, package integrity, and the materialized TEXMF tree.
 
 Managed processes receive explicit TeX, Lua, font, bibliography, and command
 search paths. Shell escape is disabled unless the project opts in. A failed
-build does not replace a previously published PDF.
+build does not replace a previously published PDF. Publication restores earlier
+writes if a later write fails; derived-cache and cleanup failures are warnings
+after publication. Each file replacement is atomic, but the group is not a
+single filesystem transaction across a process crash.
 
 ## pqty boundary
 
@@ -68,14 +71,15 @@ schemas texe consumes:
 - `pqty.trace/v1`
 - `pqty.trace-report/v1`
 - `pqty.convergence-report/v1`
+- `pqty.progress/v1`
 
 Every pqty call uses `--no-config`; project, Registry Snapshot, and store
 choices come from texe. Package trees use pqty's read-only copy mode by
 default. The experimental link modes are explicit.
 
-`suite.lock.toml` pins the pqty tag, version, revision, and source digest used
-to build the three-command release suite. Packaging verifies all four before
-compilation.
+`suite.lock.toml` pins the pqty version, revision, source digest, and protocol
+schemas used to build the three-command release suite. Packaging checks the
+checkout and its advertised capabilities against these pins before compilation.
 
 ## Persistent and derived state
 
@@ -138,10 +142,11 @@ resources plus the current PDF. It does not own build logic.
 
 Project-local integrations are adapters under `src/integrations/`. Git owns
 repository initialization and a marked `.gitignore` block. The VS Code adapter
-owns optional project-local settings and a small bundled layout companion. It
-does not merge existing settings or create a separate workspace. Keeping editor
-behavior behind this boundary allows additional editors without coupling them
-to project setup or builds.
+merges project-local JSONC settings and records original and applied values for
+selective removal. Its bundled companion runs texe with explicit project paths,
+queues builds on save, publishes diagnostics, and uses LaTeX Workshop for PDF
+viewing and SyncTeX. The CLI's editor-context protocol supplies manifest paths;
+the companion does not parse TOML or implement a second build engine.
 
 ## Code map
 

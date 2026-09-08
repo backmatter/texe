@@ -77,7 +77,68 @@ jobs:
           persist-credentials: false
 
       - name: Run mocked extension-host tests
-        run: node --test tests/vscode-extension.test.js
+        run: node --test tests/*.test.js
+
+  vscode-real:
+    name: Real VS Code paper workflow (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      TEXE_TEST_MANAGED: "1"
+      TEXE_TEST_SUITE: ${{ github.workspace }}/target/release
+    steps:
+      - name: Check out texe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read pinned pqty revision
+        id: suite
+        run: |
+          revision="$(cargo xtask pqty revision)"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+      - name: Check out pinned pqty
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/pqty
+          ref: ${{ steps.suite.outputs.revision }}
+          path: pqty
+          persist-credentials: false
+      - name: Install virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Build the command suite
+        run: |
+          cargo build --release --locked
+          cargo build --release --manifest-path pqty/Cargo.toml --workspace --locked
+          suffix=""
+          if [[ "$RUNNER_OS" == "Windows" ]]; then suffix=".exe"; fi
+          cp "pqty/target/release/pqty${suffix}" "pqty/target/release/pqty-fls${suffix}" target/release/
+      - name: Install test harness
+        run: npm ci --prefix tests/vscode --ignore-scripts
+      - name: Exercise real editor, PDF viewer and SyncTeX
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            xvfb-run -a npm test --prefix tests/vscode
+          else
+            npm test --prefix tests/vscode
+          fi
+      - name: Retain editor screenshots and results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vscode-workflow-evidence-${{ matrix.os }}
+          path: |
+            ${{ env.TEXE_EDITOR_EVIDENCE }}/*.png
+            ${{ env.TEXE_EDITOR_EVIDENCE }}/results.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   managed-journey:
     name: Managed user journey (${{ matrix.platform }})
@@ -104,7 +165,7 @@ jobs:
         id: suite
         shell: bash
         run: |
-          revision="$(sed -n 's/^pqty_revision = "\\([^"]*\\)"/\\1/p' suite.lock.toml)"
+          revision="$(cargo xtask pqty revision)"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
       - name: Check out pinned pqty
@@ -123,6 +184,11 @@ jobs:
             "Windows x86-64") [[ "$PROCESSOR_ARCHITECTURE" == "AMD64" ]] ;;
             "macOS Apple Silicon") [[ "$(uname -s):$(uname -m)" == "Darwin:arm64" ]] ;;
           esac
+
+      - name: Run local command-suite contracts
+        env:
+          PQTY_REPO: ${{ github.workspace }}/pqty
+        run: cargo xtask verify contracts
 
       - name: Run the clean managed journey
         env:

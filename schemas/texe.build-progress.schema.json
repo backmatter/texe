@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.build-progress.schema.json",
+  "title": "texe build progress v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "phase", "elapsed_millis"],
+  "properties": {
+    "schema": {
+      "const": "texe.build-progress/v1"
+    },
+    "phase": {
+      "enum": [
+        "toolchain",
+        "packages",
+        "format",
+        "engine-discovery",
+        "engine-final",
+        "bibliography",
+        "index"
+      ]
+    },
+    "elapsed_millis": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
