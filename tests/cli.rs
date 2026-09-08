@@ -349,7 +349,10 @@ fn adoption_preflight_is_read_only_and_ambiguous_roots_are_rejected() {
     assert_success(&output);
     let info: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(info["pdf"], "paper.v2.pdf");
-    assert_eq!(info["log"], ".texe/build/output/paper.v2.log");
+    assert_eq!(
+        std::path::Path::new(info["log"].as_str().unwrap()),
+        std::path::Path::new(".texe/build/output/paper.v2.log")
+    );
 }
 
 #[test]

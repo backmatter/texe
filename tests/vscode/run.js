@@ -84,16 +84,23 @@ const {
     );
   } else {
     const [cli, ...args] = resolveCliArgsFromVSCodeExecutablePath(executable);
+    // Windows .cmd launchers cannot be spawned directly. Run VS Code's CLI
+    // through its Electron executable without introducing shell quoting.
+    const windows = process.platform === "win32";
     execFileSync(
-      cli,
+      windows ? executable : cli,
       [
+        ...(windows ? [path.join(path.dirname(executable), "resources/app/out/cli.js")] : []),
         ...args,
         `--user-data-dir=${profile}`,
         `--extensions-dir=${extensions}`,
         "--install-extension",
         "James-Yu.latex-workshop@10.17.1",
       ],
-      { stdio: "inherit" },
+      {
+        stdio: "inherit",
+        env: windows ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" } : process.env,
+      },
     );
   }
   console.log(`Real VS Code test workspace: ${root}`);
