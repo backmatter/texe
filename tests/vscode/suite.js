@@ -49,6 +49,10 @@ exports.run = async () => {
   );
   await page.screenshot(path.join(process.env.TEXE_TEST_ROOT, "01-built.png"));
   console.log("PASS real PDF webview rendered document text");
+  const syncBytes = fs.readFileSync(path.join(root, "paper.v2.synctex.gz"));
+  fs.writeFileSync(path.join(process.env.TEXE_TEST_ROOT, "paper.synctex.gz"), syncBytes);
+  const syncText = require("node:zlib").gunzipSync(syncBytes).toString("utf8");
+  console.log("SYNCTEX EVIDENCE", JSON.stringify({ source: source.fsPath, text: syncText.slice(0, 8000) }));
   const workshop = vscode.extensions.getExtension("James-Yu.latex-workshop");
   await workshop.activate();
   // Pinned integration-test hooks only: production uses public VS Code commands.

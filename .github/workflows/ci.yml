@@ -137,6 +137,8 @@ jobs:
           path: |
             ${{ env.TEXE_EDITOR_EVIDENCE }}/*.png
             ${{ env.TEXE_EDITOR_EVIDENCE }}/results.json
+            ${{ env.TEXE_EDITOR_EVIDENCE }}/*.synctex.gz
+            ${{ env.TEXE_EDITOR_EVIDENCE }}/profile/logs/**
           if-no-files-found: ignore
           retention-days: 7
 
