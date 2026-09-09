@@ -24,7 +24,7 @@ sudo defaults write /Library/Preferences/com.apple.loginwindow SHOWFULLNAME -boo
 sudo pmset displaysleep 0
 caffeinate -u -t 6000 &
 agent=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
-sudo "$agent" -activate -configure -access -on -users "$(whoami)" -privs -all
+sudo "$agent" -activate -configure -access -on -users "$(whoami),texepreview" -privs -all
 sudo "$agent" -configure -clientopts -setvnclegacy -vnclegacy yes
 sudo "$agent" -configure -clientopts -setvncpw -vncpw "$TEXE_PREVIEW_VNC_PASSWORD"
 sudo launchctl enable system/com.apple.screensharing
