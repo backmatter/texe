@@ -2,12 +2,18 @@ name: Interactive native app testing
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Native app to test
+        type: choice
+        default: both
+        options: [both, windows-2025, macos-15]
 
 permissions:
   contents: read
 
 concurrency:
-  group: texe-interactive-preview
+  group: texe-interactive-preview-${{ inputs.platform || 'both' }}
   cancel-in-progress: true
 
 jobs:
@@ -15,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, windows-2025]
+        os: ${{ fromJSON(inputs.platform == 'windows-2025' && '["windows-2025"]' || inputs.platform == 'macos-15' && '["macos-15"]' || '["macos-15", "windows-2025"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 110
     steps:
