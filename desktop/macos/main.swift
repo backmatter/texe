@@ -2,9 +2,11 @@ import AppKit
 import UniformTypeIdentifiers
 
 final class WelcomeContent: NSView {
+    var fill = NSColor(calibratedRed: 0.992, green: 0.988, blue: 0.980, alpha: 1)
+    override var isFlipped: Bool { true }
     override var isOpaque: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
+        fill.setFill()
         dirtyRect.fill()
     }
 }
@@ -12,10 +14,9 @@ final class WelcomeContent: NSView {
 // The app is a thin native client of the bundled, versioned CLI. All project
 // validation, downloads, editor integration and builds remain in texe.
 final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 700),
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 680),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
-    let name = NSTextField(string: "my-paper")
     let title = NSTextField(string: "My Paper")
     let author = NSTextField(string: "")
     let editor = NSPopUpButton()
@@ -46,68 +47,118 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         editItem.submenu = editMenu
         NSApp.mainMenu = menu
-        window.minSize = NSSize(width: 700, height: 700)
+        window.minSize = NSSize(width: 900, height: 700)
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = NSColor(calibratedRed: 0.992, green: 0.988, blue: 0.980, alpha: 1)
+        window.appearance = NSAppearance(named: .aqua)
         let content = WelcomeContent(frame: window.contentView!.bounds)
         window.contentView = content
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
+        let sidebar = WelcomeContent(frame: NSRect(x: 0, y: 0, width: 208, height: 680))
+        sidebar.fill = NSColor(calibratedRed: 0.957, green: 0.945, blue: 0.933, alpha: 1)
+        sidebar.autoresizingMask = [.height]
+        content.addSubview(sidebar)
+        let image = NSImageView(frame: NSRect(x: 18, y: 34, width: 137, height: 48))
+        image.image = brandImage("logo-wordmark-dark.png")
+        image.imageScaling = .scaleProportionallyUpOrDown
+        sidebar.addSubview(image)
+        let nav = button("Your papers", #selector(goHome), primary: false)
+        nav.frame = NSRect(x: 18, y: 120, width: 172, height: 42)
+        sidebar.addSubview(nav)
+        let foot = label("A little less setup.\nA little more writing.", size: 12, muted: true)
+        foot.frame = NSRect(x: 28, y: 564, width: 165, height: 55)
+        foot.autoresizingMask = [.minYMargin]
+        sidebar.addSubview(foot)
+        let workspace = WelcomeContent()
+        workspace.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(workspace)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -24)
+            workspace.widthAnchor.constraint(equalToConstant: 580),
+            workspace.heightAnchor.constraint(equalToConstant: 540),
+            workspace.centerXAnchor.constraint(equalTo: content.centerXAnchor, constant: 104),
+            workspace.centerYAnchor.constraint(equalTo: content.centerYAnchor)
         ])
-        let heading = NSTextField(labelWithString: "Your next paper starts here.")
-        heading.font = .systemFont(ofSize: 25, weight: .semibold)
-        stack.addArrangedSubview(heading)
-        stack.addArrangedSubview(NSTextField(wrappingLabelWithString:
-            "Write locally. texe installs the LaTeX tools and packages your paper needs. The first build needs internet and may take several minutes."))
-        for (label, field) in [("Folder name", name), ("Paper title", title), ("Author", author)] {
-            let caption = NSTextField(labelWithString: label)
-            caption.widthAnchor.constraint(equalToConstant: 100).isActive = true
-            let row = NSStackView(views: [caption, field])
-            field.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
-            field.setAccessibilityLabel(label)
-            stack.addArrangedSubview(row)
+        for page in [home, setup, activity] {
+            page.frame = NSRect(x: 0, y: 0, width: 580, height: 540)
+            workspace.addSubview(page)
         }
+        setup.isHidden = true
+        activity.isHidden = true
+        text(home, "YOUR WORKSPACE", 11, 0, 14, 540, 24, muted: true, bold: true)
+        text(home, "Space for your next idea.", 32, 0, 60, 570, 52, bold: true)
+        text(home, "Start a paper. Make it yours.", 15, 0, 121, 540, 32, muted: true)
+        let card = WelcomeContent(frame: NSRect(x: 0, y: 181, width: 532, height: 156))
+        card.fill = NSColor(calibratedRed: 0.957, green: 0.941, blue: 0.929, alpha: 1)
+        card.wantsLayer = true
+        card.layer?.cornerRadius = 12
+        home.addSubview(card)
+        let paper = NSImageView(frame: NSRect(x: 32, y: 24, width: 94, height: 108))
+        paper.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: "A new paper")
+        paper.contentTintColor = accent
+        paper.imageScaling = .scaleProportionallyUpOrDown
+        card.addSubview(paper)
+        text(card, "Good ideas start here.", 17, 164, 43, 348, 30, bold: true)
+        text(card, "A clean page, ready for your words.\nBeautifully typeset from the first draft.", 13, 164, 77, 348, 64, muted: true)
+        let newPaper = button("+   New paper", #selector(newPaper), primary: true)
+        newPaper.frame = NSRect(x: 0, y: 365, width: 258, height: 50)
+        home.addSubview(newPaper)
+        let openPaper = button("Open a paper…", #selector(open), primary: false)
+        openPaper.frame = NSRect(x: 274, y: 365, width: 258, height: 50)
+        home.addSubview(openPaper)
+        text(home, "Your files stay on your computer.\ntexe takes care of the tools your paper needs.", 13, 0, 443, 530, 58, muted: true)
+
+        let back = button("←  Your papers", #selector(goHome), primary: false)
+        back.frame = NSRect(x: 0, y: 0, width: 160, height: 32)
+        setup.addSubview(back)
+        text(setup, "Make room for a new paper.", 29, 0, 52, 560, 48, bold: true)
+        text(setup, "A title is a good place to start. You can change it later.", 13, 0, 106, 560, 28, muted: true)
+        field(setup, "Paper title", title, y: 156, width: 532)
+        field(setup, "Author", author, y: 241, width: 532)
         editor.addItems(withTitles: ["VS Code", "My own editor + browser preview"])
-        editor.setAccessibilityLabel("Editor")
         engine.addItems(withTitles: ["pdfLaTeX", "LuaLaTeX"])
-        engine.setAccessibilityLabel("LaTeX engine for new or unconfigured projects")
-        stack.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "Editor"), editor,
-            NSTextField(labelWithString: "Engine"), engine]))
-        let buttons = NSStackView()
-        for (label, action) in [("Create a paper…", #selector(create)), ("Open a paper…", #selector(open)),
-                                ("Build again", #selector(build)), ("Show files", #selector(showFiles))] {
-            let button = NSButton(title: label, target: self, action: action)
-            actions.append(button)
-            buttons.addArrangedSubview(button)
-        }
-        stack.addArrangedSubview(buttons)
-        progress.style = .spinning
+        let advanced = button("Writing preferences  ⌄", #selector(togglePreferences), primary: false)
+        advanced.frame = NSRect(x: 0, y: 321, width: 230, height: 32)
+        setup.addSubview(advanced)
+        preferences.frame = NSRect(x: 0, y: 365, width: 532, height: 100)
+        field(preferences, "Editor", editor, y: 0, width: 330)
+        field(preferences, "Typesetting", engine, y: 0, width: 180, x: 352)
+        preferences.isHidden = true
+        setup.addSubview(preferences)
+        let submit = button("Choose location & create", #selector(create), primary: true)
+        submit.frame = NSRect(x: 0, y: 479, width: 280, height: 48)
+        setup.addSubview(submit)
+
+        text(activity, "YOUR PAPER", 11, 0, 14, 530, 24, muted: true, bold: true)
+        text(activity, "A little preparation.\nThen it’s all yours.", 32, 0, 60, 540, 108, bold: true)
+        status.font = .systemFont(ofSize: 15)
+        status.frame = NSRect(x: 0, y: 199, width: 532, height: 62)
+        status.maximumNumberOfLines = 3
+        activity.addSubview(status)
+        progress.style = .bar
+        progress.isIndeterminate = true
         progress.isDisplayedWhenStopped = false
-        stack.addArrangedSubview(NSStackView(views: [progress, status]))
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        log.frame = NSRect(x: 0, y: 0, width: 650, height: 200)
+        progress.frame = NSRect(x: 0, y: 278, width: 532, height: 4)
+        activity.addSubview(progress)
+        text(activity, "The first setup can take a few minutes.\nYou can leave this window open while we get things ready.", 13, 0, 302, 532, 52, muted: true)
+        let rebuild = button("Build again", #selector(build), primary: false)
+        rebuild.frame = NSRect(x: 0, y: 377, width: 150, height: 42)
+        let files = button("Show files", #selector(showFiles), primary: false)
+        files.frame = NSRect(x: 162, y: 377, width: 150, height: 42)
+        activity.addSubview(rebuild)
+        activity.addSubview(files)
+        actions = [submit, openPaper, rebuild, files, newPaper, back, nav, advanced]
+        rebuild.isEnabled = false
+        files.isEnabled = false
+        let details = button("Show details", #selector(showDetails), primary: false)
+        details.frame = NSRect(x: 0, y: 443, width: 140, height: 32)
+        activity.addSubview(details)
+        log.isEditable = false
+        log.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         log.isVerticallyResizable = true
         log.isHorizontallyResizable = false
         log.textContainer?.widthTracksTextView = true
-        log.isEditable = false
-        log.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         log.autoresizingMask = [.width]
         log.setAccessibilityLabel("Setup and build details")
-        scroll.documentView = log
-        stack.addArrangedSubview(scroll)
-        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
-        actions[2].isEnabled = false
-        actions[3].isEnabled = false
+        NSApp.applicationIconImage = brandImage("web-app-manifest-512x512.png")
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -123,6 +174,75 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSApp.terminate(nil)
             }
         }
+    }
+
+    let accent = NSColor(calibratedRed: 0.365, green: 0.275, blue: 0.329, alpha: 1)
+    let home = WelcomeContent()
+    let setup = WelcomeContent()
+    let activity = WelcomeContent()
+    let preferences = WelcomeContent()
+    var detailsWindow: NSWindow?
+
+    func brandImage(_ name: String) -> NSImage? {
+        let bundled = Bundle.main.resourceURL?.appendingPathComponent(name)
+        let development = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("desktop/brand/texe").appendingPathComponent(name)
+        return (bundled.flatMap { NSImage(contentsOf: $0) }) ?? NSImage(contentsOf: development)
+    }
+
+    func label(_ value: String, size: CGFloat, muted: Bool = false, bold: Bool = false) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: value)
+        label.font = .systemFont(ofSize: size, weight: bold ? .semibold : .regular)
+        label.textColor = muted ? NSColor(calibratedWhite: 0.46, alpha: 1) : NSColor(calibratedWhite: 0.19, alpha: 1)
+        return label
+    }
+
+    func text(_ parent: NSView, _ value: String, _ size: CGFloat, _ x: CGFloat, _ y: CGFloat,
+              _ width: CGFloat, _ height: CGFloat, muted: Bool = false, bold: Bool = false) {
+        let view = label(value, size: size, muted: muted, bold: bold)
+        view.frame = NSRect(x: x, y: y, width: width, height: height)
+        parent.addSubview(view)
+    }
+
+    func button(_ title: String, _ action: Selector, primary: Bool) -> NSButton {
+        let button = NSButton(title: title, target: self, action: action)
+        button.bezelStyle = .rounded
+        button.controlSize = .large
+        button.font = .systemFont(ofSize: 14, weight: .medium)
+        if primary { button.bezelColor = accent; button.contentTintColor = .white }
+        return button
+    }
+
+    func field(_ parent: NSView, _ caption: String, _ control: NSControl, y: CGFloat, width: CGFloat, x: CGFloat = 0) {
+        text(parent, caption, 13, x, y, width, 25, muted: true, bold: true)
+        control.frame = NSRect(x: x, y: y + 30, width: width, height: 32)
+        control.font = .systemFont(ofSize: 16)
+        control.controlSize = .large
+        control.setAccessibilityLabel(caption)
+        parent.addSubview(control)
+    }
+
+    func showPage(_ page: NSView) {
+        for view in [home, setup, activity] { view.isHidden = view !== page }
+    }
+    @objc func goHome() { if !busy { showPage(home) } }
+    @objc func newPaper() { showPage(setup); window.makeFirstResponder(title) }
+    @objc func togglePreferences() { preferences.isHidden.toggle() }
+    @objc func showDetails() {
+        if let detailsWindow = detailsWindow { detailsWindow.makeKeyAndOrderFront(nil); return }
+        let details = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 420),
+                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        details.title = "Build details · texe"
+        details.isReleasedWhenClosed = false
+        let scroll = NSScrollView(frame: details.contentView!.bounds.insetBy(dx: 20, dy: 20))
+        scroll.autoresizingMask = [.width, .height]
+        scroll.hasVerticalScroller = true
+        log.frame = scroll.bounds
+        scroll.documentView = log
+        details.contentView?.addSubview(scroll)
+        details.center()
+        details.makeKeyAndOrderFront(nil)
+        detailsWindow = details
     }
 
     func append(_ text: String) {
@@ -185,9 +305,9 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func create() {
         guard let parent = pickFolder("Choose where to create your paper folder.") else { return }
-        let folder = name.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folder = title.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         guard !folder.isEmpty, folder != ".", folder != "..", !folder.contains("/"), !folder.contains(":") else {
-            alert("Choose a simple folder name without slashes or colons."); return
+            alert("Add a title for your paper."); return
         }
         let root = parent.appendingPathComponent(folder, isDirectory: true)
         guard !FileManager.default.fileExists(atPath: root.path) else {
@@ -224,6 +344,7 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func start(_ root: URL, prepare: @escaping () throws -> Void) {
+        showPage(activity)
         let previousWatcher = watcher
         watcher = nil
         project = root
@@ -231,7 +352,7 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for action in actions { action.isEnabled = false }
         editor.isEnabled = false
         engine.isEnabled = false
-        status.stringValue = "Setting up and building your paper…"
+        status.stringValue = "Getting your paper ready…"
         progress.startAnimation(nil)
         log.string = ""
         let useCode = editor.indexOfSelectedItem == 0
@@ -253,12 +374,12 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     try self.run(["editor", "--project", root.path])
                 }
                 DispatchQueue.main.async {
-                    self.finish(useCode ? "PDF ready. Editor setup details are below." : "Paper built. You can start writing.")
+                    self.finish(useCode ? "Your PDF is ready. Open Show details for editor setup." : "Paper built. You can start writing.")
                     if !useCode { self.startWatcher(root); self.showFiles() }
                 }
             } catch {
                 self.append("\n\(error.localizedDescription)\n")
-                DispatchQueue.main.async { self.finish("Needs attention — see the details below.") }
+                DispatchQueue.main.async { self.finish("Something needs your attention. Open Show details for help.") }
             }
         }
     }

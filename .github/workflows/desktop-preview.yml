@@ -51,6 +51,9 @@ jobs:
           $manifest = (Resolve-Path -LiteralPath 'desktop/windows/app.manifest').Path
           & $compiler /nologo /warnaserror /codepage:65001 /target:winexe /platform:x64 "/out:$app" `
             "/win32manifest:$manifest" `
+            "/win32icon:$( (Resolve-Path (Join-Path 'desktop/brand/texe' 'favicon.ico')).Path )" `
+            "/resource:$( (Resolve-Path (Join-Path 'desktop/brand/texe' 'favicon.ico')).Path ),texe.icon" `
+            "/resource:$( (Resolve-Path (Join-Path 'desktop/brand/texe' 'logo-wordmark-dark.png')).Path ),texe.wordmark" `
             /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Core.dll `
             $source
           if ($LASTEXITCODE -ne 0) { throw 'Welcome app compilation failed' }

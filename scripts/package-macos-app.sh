@@ -24,6 +24,14 @@ done
 xcrun swiftc -swift-version 5 -O -target arm64-apple-macos12.0 \
   -framework AppKit "$repo/desktop/macos/main.swift" -o "$app/Contents/MacOS/texe-desktop"
 sed "s/@VERSION@/$version/g" "$repo/packaging/macos/Info.plist.in" > "$app/Contents/Info.plist"
+cp "$repo/desktop/brand/texe/"*.png "$app/Contents/Resources/"
+mkdir -p "$scratch/texe.iconset"
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" "$repo/desktop/brand/texe/web-app-manifest-512x512.png" --out "$scratch/texe.iconset/icon_${size}x${size}.png" >/dev/null
+  double=$((size * 2))
+  sips -z "$double" "$double" "$repo/desktop/brand/texe/web-app-manifest-512x512.png" --out "$scratch/texe.iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$scratch/texe.iconset" -o "$app/Contents/Resources/texe.icns"
 plutil -lint "$app/Contents/Info.plist"
 cp "$repo/LICENSE" "$app/Contents/Resources/LICENSE"
 cp "$repo/assets/pdfjs/LICENSE" "$app/Contents/Resources/PDFJS-LICENSE"

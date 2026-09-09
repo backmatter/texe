@@ -11,7 +11,6 @@ using System.Windows.Forms;
 // installed desktop runtime is needed on the user's computer.
 internal sealed class Welcome : Form
 {
-    readonly TextBox folderName = new TextBox { Text = "my-paper", Width = 350 };
     readonly TextBox paperTitle = new TextBox { Text = "My Paper", Width = 350 };
     readonly TextBox author = new TextBox { Width = 350 };
     readonly ComboBox editor = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
@@ -116,58 +115,198 @@ internal sealed class Welcome : Form
         return 0;
     }
 
+    readonly Color ink = Color.FromArgb(48, 43, 47);
+    readonly Color muted = Color.FromArgb(121, 114, 119);
+    readonly Color accent = Color.FromArgb(93, 70, 84);
+    readonly Panel workspace = new Panel { Width = 580, Height = 540 };
+    readonly Panel home = new Panel { Dock = DockStyle.Fill };
+    readonly Panel setup = new Panel { Dock = DockStyle.Fill, Visible = false };
+    readonly Panel activity = new Panel { Dock = DockStyle.Fill, Visible = false };
+    readonly Panel preferences = new Panel { Width = 532, Height = 102, Visible = false };
+    readonly Button back = new QuietButton { Text = "←  Your papers" };
+    readonly Button details = new QuietButton { Text = "Show details" };
+
     Welcome()
     {
         Text = "texe";
-        ClientSize = new Size(760, 650);
-        MinimumSize = new Size(720, 620);
-        StartPosition = FormStartPosition.CenterScreen;
+        AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new Size(940, 680);
+        MinimumSize = new Size(900, 700);
+        StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 10);
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 9 };
-        for (int i = 0; i < 8; i++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        Controls.Add(layout);
-        layout.Controls.Add(new Label { Text = "Your next paper starts here.", AutoSize = true,
-            Font = new Font("Segoe UI", 22, FontStyle.Bold), Margin = new Padding(0, 0, 0, 12) });
-        layout.Controls.Add(new Label { Text = "Write locally. texe installs the LaTeX tools and packages your paper needs.\nThe first build needs internet and may take several minutes.",
-            AutoSize = true, Margin = new Padding(0, 0, 0, 16) });
-        layout.Controls.Add(Row("Folder name", folderName));
-        layout.Controls.Add(Row("Paper title", paperTitle));
-        layout.Controls.Add(Row("Author", author));
+        BackColor = Color.FromArgb(253, 252, 250);
+        ForeColor = ink;
+        DoubleBuffered = true;
+        var assembly = typeof(Welcome).Assembly;
+        using (var stream = assembly.GetManifestResourceStream("texe.icon"))
+            if (stream != null) Icon = new Icon(stream);
+        var sidebar = new Panel { Dock = DockStyle.Left, Width = 208, BackColor = Color.FromArgb(244, 241, 238) };
+        Controls.Add(sidebar);
+        using (var stream = assembly.GetManifestResourceStream("texe.wordmark"))
+            if (stream != null) sidebar.Controls.Add(new PictureBox { Image = new Bitmap(stream),
+                SizeMode = PictureBoxSizeMode.Zoom, Bounds = new Rectangle(18, 34, 137, 48) });
+        var nav = Button("Your papers", false);
+        nav.Bounds = new Rectangle(18, 120, 172, 42);
+        nav.BackColor = Color.FromArgb(231, 225, 229);
+        nav.Click += (s, e) => { if (!busy) ShowPage(home); };
+        sidebar.Controls.Add(nav);
+        var foot = Label("A little less setup.\nA little more writing.", 10, false, muted);
+        foot.SetBounds(28, 564, 160, 55);
+        foot.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+        sidebar.Controls.Add(foot);
+        var body = new Panel { Dock = DockStyle.Fill };
+        Controls.Add(body);
+        body.BringToFront();
+        body.Controls.Add(workspace);
+        body.Resize += (s, e) => workspace.Location = new Point(Math.Max(24, (body.Width - workspace.Width) / 2), Math.Max(28, (body.Height - workspace.Height) / 2));
+        workspace.Controls.AddRange(new Control[] { home, setup, activity });
+
+        AddText(home, "YOUR WORKSPACE", 10, true, muted, 0, 14, 540, 24);
+        AddText(home, "Space for your next idea.", 29, true, ink, 0, 60, 570, 52);
+        AddText(home, "Start a paper. Make it yours.", 12, false, muted, 0, 121, 540, 32);
+        var illustration = new PaperIllustration { Bounds = new Rectangle(0, 181, 532, 156) };
+        home.Controls.Add(illustration);
+        var create = Button("+    New paper", true);
+        create.Bounds = new Rectangle(0, 365, 258, 50);
+        create.Click += (s, e) => ShowPage(setup);
+        var open = Button("Open a paper…", false);
+        open.Bounds = new Rectangle(274, 365, 258, 50);
+        open.Click += async (s, e) => await OpenPaper();
+        home.Controls.AddRange(new Control[] { create, open });
+        AddText(home, "Your files stay on your computer.\ntexe takes care of the tools your paper needs.", 10, false, muted, 0, 443, 530, 58);
+
+        back.Bounds = new Rectangle(0, 0, 160, 32);
+        back.Click += (s, e) => ShowPage(home);
+        setup.Controls.Add(back);
+        AddText(setup, "Make room for a new paper.", 25, true, ink, 0, 52, 560, 48);
+        AddText(setup, "A title is a good place to start. You can change it later.", 10, false, muted, 0, 106, 560, 28);
+        Field(setup, "Paper title", paperTitle, 156, 532);
+        Field(setup, "Author", author, 241, 532);
+        author.Text = "";
         editor.Items.AddRange(new object[] { "VS Code", "My own editor + browser preview" });
         editor.SelectedIndex = 0;
         engine.Items.AddRange(new object[] { "pdfLaTeX", "LuaLaTeX" });
         engine.SelectedIndex = 0;
-        var choices = Row("Editor", editor);
-        choices.Controls.Add(engine);
-        engine.AccessibleName = "LaTeX engine for new or unconfigured projects";
-        layout.Controls.Add(choices);
-        var create = new Button { Text = "Create a paper…", AutoSize = true };
-        var open = new Button { Text = "Open a paper…", AutoSize = true };
-        create.Click += async (s, e) => await CreatePaper();
-        open.Click += async (s, e) => await OpenPaper();
+        engine.AccessibleName = "LaTeX engine";
+        var advanced = new QuietButton { Text = "Writing preferences  ⌄", Bounds = new Rectangle(0, 321, 230, 32) };
+        advanced.Click += (s, e) => { preferences.Visible = !preferences.Visible; advanced.Text = preferences.Visible ? "Writing preferences  ⌃" : "Writing preferences  ⌄"; };
+        setup.Controls.Add(advanced);
+        preferences.Location = new Point(0, 365);
+        Field(preferences, "Editor", editor, 0, 330);
+        Field(preferences, "Typesetting", engine, 0, 180, 352);
+        setup.Controls.Add(preferences);
+        var submit = Button("Choose location & create", true);
+        submit.Bounds = new Rectangle(0, 479, 280, 48);
+        submit.Click += async (s, e) => await CreatePaper();
+        setup.Controls.Add(submit);
+
+        AddText(activity, "YOUR PAPER", 10, true, muted, 0, 14, 530, 24);
+        AddText(activity, "A little preparation.\nThen it’s all yours.", 28, true, ink, 0, 60, 540, 108);
+        status.AutoSize = false;
+        status.Font = new Font("Segoe UI", 12);
+        status.SetBounds(0, 199, 532, 62);
+        activity.Controls.Add(status);
+        progress.SetBounds(0, 278, 532, 4);
+        activity.Controls.Add(progress);
+        AddText(activity, "The first setup can take a few minutes.\nYou can leave this window open while we get things ready.", 10, false, muted, 0, 302, 532, 52);
+        actions.SetBounds(0, 377, 540, 48);
+        actions.AutoSize = false;
+        foreach (var button in new [] { rebuild, files }) {
+            button.AutoSize = false; button.Size = new Size(150, 42);
+            button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderColor = Color.FromArgb(223, 216, 221);
+            button.BackColor = Color.White; button.Margin = new Padding(0, 0, 12, 0);
+        }
+        actions.Controls.AddRange(new Control[] { rebuild, files });
         rebuild.Click += async (s, e) => { if (project != null) await Start(project, () => Task.FromResult(0)); };
         files.Click += (s, e) => ShowFiles();
-        actions.Controls.AddRange(new Control[] { create, open, rebuild, files });
-        layout.Controls.Add(actions);
-        var state = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 12, 0, 12) };
-        state.Controls.AddRange(new Control[] { progress, status });
-        layout.Controls.Add(state);
-        layout.Controls.Add(log);
+        activity.Controls.Add(actions);
+        details.SetBounds(0, 443, 140, 32);
+        details.Click += (s, e) => {
+            using (var dialog = new Form { Text = "Build details · texe", Size = new Size(780, 460), StartPosition = FormStartPosition.CenterParent }) {
+                log.BorderStyle = BorderStyle.None; dialog.Padding = new Padding(20); dialog.Controls.Add(log);
+                dialog.ShowDialog(this); dialog.Controls.Remove(log);
+            }
+        };
+        activity.Controls.Add(details);
         FormClosing += (s, e) => {
             if (busy) { e.Cancel = true; MessageBox.Show(this, "Please wait for the current setup or build to finish before quitting.", "texe"); }
             else StopWatcher();
         };
     }
 
-    static FlowLayoutPanel Row(string label, Control control)
+    void ShowPage(Panel page)
     {
-        var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
-        row.Controls.Add(new Label { Text = label, Width = 105, Padding = new Padding(0, 5, 0, 0) });
-        control.AccessibleName = label;
-        row.Controls.Add(control);
-        return row;
+        home.Visible = setup.Visible = activity.Visible = false;
+        page.Visible = true;
+        page.BringToFront();
+        if (page == setup) paperTitle.Focus();
+    }
+
+    Label Label(string text, float size, bool bold, Color color)
+    {
+        return new Label { Text = text, Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular), ForeColor = color };
+    }
+
+    void AddText(Control parent, string text, float size, bool bold, Color color, int x, int y, int w, int h)
+    {
+        var label = Label(text, size, bold, color); label.SetBounds(x, y, w, h); parent.Controls.Add(label);
+    }
+
+    Button Button(string text, bool primary)
+    {
+        return new QuietButton { Text = text, BackColor = primary ? accent : Color.White,
+            ForeColor = primary ? Color.White : ink, Font = new Font("Segoe UI", 11, FontStyle.Bold) };
+    }
+
+    void Field(Control parent, string label, Control field, int y, int width, int x = 0)
+    {
+        AddText(parent, label, 10, true, muted, x, y, width, 25);
+        field.SetBounds(x, y + 30, width, 32);
+        field.Font = new Font("Segoe UI", 12);
+        field.AccessibleName = label;
+        var textbox = field as TextBox;
+        if (textbox != null) { textbox.BorderStyle = BorderStyle.FixedSingle; textbox.BackColor = Color.White; }
+        var combo = field as ComboBox;
+        if (combo != null) combo.FlatStyle = FlatStyle.Flat;
+        parent.Controls.Add(field);
+    }
+
+    sealed class QuietButton : Button
+    {
+        public QuietButton() { FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; Cursor = Cursors.Hand; }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var r = new Rectangle(1, 1, Width - 3, Height - 3);
+            using (var path = new System.Drawing.Drawing2D.GraphicsPath()) {
+                const int d = 14;
+                path.AddArc(r.Left, r.Top, d, d, 180, 90); path.AddArc(r.Right - d, r.Top, d, d, 270, 90);
+                path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90); path.AddArc(r.Left, r.Bottom - d, d, d, 90, 90); path.CloseFigure();
+                using (var brush = new SolidBrush(Enabled ? BackColor : SystemColors.Control)) e.Graphics.FillPath(brush, path);
+                using (var pen = new Pen(Focused ? Color.FromArgb(93, 70, 84) : Color.FromArgb(226, 220, 224), Focused ? 2 : 1)) e.Graphics.DrawPath(pen, path);
+            }
+            TextRenderer.DrawText(e.Graphics, Text, Font, r, Enabled ? ForeColor : SystemColors.GrayText, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+    }
+
+    sealed class PaperIllustration : Control
+    {
+        public PaperIllustration() { DoubleBuffered = true; }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics; g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.Clear(Color.FromArgb(244, 240, 237));
+            using (var shadow = new SolidBrush(Color.FromArgb(229, 220, 224))) g.FillRectangle(shadow, 38, 28, 100, 128);
+            g.FillRectangle(Brushes.White, 30, 20, 100, 130);
+            using (var pen = new Pen(Color.FromArgb(93, 70, 84), 3)) g.DrawLine(pen, 47, 45, 94, 45);
+            using (var pen = new Pen(Color.FromArgb(222, 215, 218), 2))
+                for (int i = 0; i < 5; i++) g.DrawLine(pen, 47, 65 + i * 12, i == 4 ? 90 : 111, 65 + i * 12);
+            using (var title = new Font("Segoe UI", 13, FontStyle.Bold))
+                TextRenderer.DrawText(g, "Good ideas start here.", title, new Point(164, 43), Color.FromArgb(65, 52, 61));
+            using (var font = new Font("Segoe UI", 10))
+                TextRenderer.DrawText(g, "A clean page, ready for your words.\nBeautifully typeset from the first draft.", font, new Rectangle(164, 77, 348, 64), Color.FromArgb(121, 114, 119));
+        }
     }
 
     // Windows argv escaping, including embedded quotes and trailing backslashes.
@@ -246,7 +385,10 @@ internal sealed class Welcome : Form
     {
         var parent = PickFolder("Choose where to create your paper folder.");
         if (parent == null) return;
-        var name = folderName.Text.Trim();
+        var name = paperTitle.Text.Trim();
+        foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '-');
+        name = name.TrimEnd('.');
+        if (name.Length == 0) name = "Untitled paper";
         if (name.Length == 0 || name == "." || name == ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.EndsWith("."))
         { MessageBox.Show(this, "Choose a simple, valid folder name.", "texe"); return; }
         var root = Path.Combine(parent, name);
@@ -280,13 +422,14 @@ internal sealed class Welcome : Form
 
     async Task Start(string root, Func<Task> prepare)
     {
+        ShowPage(activity);
         StopWatcher();
         project = root;
         busy = true;
         actions.Enabled = false;
         editor.Enabled = engine.Enabled = false;
         progress.Visible = true;
-        status.Text = "Setting up and building your paper…";
+        status.Text = "Getting your paper ready…";
         log.Clear();
         bool useCode = editor.SelectedIndex == 0;
         try
@@ -299,10 +442,10 @@ internal sealed class Welcome : Form
                     throw new IOException("Your PDF is ready. Install VS Code, or choose My own editor and Build again.");
                 await Run("editor", "--project", root);
             }
-            status.Text = useCode ? "PDF ready. Editor setup details are below." : "Paper built. You can start writing.";
+            status.Text = useCode ? "Your PDF is ready. Open Show details for editor setup." : "Paper built. You can start writing.";
             if (!useCode) { StartWatcher(root); ShowFiles(); }
         }
-        catch (Exception error) { Append(error.Message); status.Text = "Needs attention — see the details below."; }
+        catch (Exception error) { Append(error.Message); status.Text = "Something needs your attention. Open Show details for help."; }
         finally
         {
             busy = false;

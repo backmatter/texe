@@ -23,6 +23,9 @@ try {
     $manifest = (Resolve-Path -LiteralPath (Join-Path $repo 'desktop/windows/app.manifest')).Path
     & $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ "/out:$app" `
         "/win32manifest:$manifest" `
+        "/win32icon:$( (Resolve-Path (Join-Path (Join-Path $repo 'desktop/brand/texe') 'favicon.ico')).Path )" `
+        "/resource:$( (Resolve-Path (Join-Path (Join-Path $repo 'desktop/brand/texe') 'favicon.ico')).Path ),texe.icon" `
+        "/resource:$( (Resolve-Path (Join-Path (Join-Path $repo 'desktop/brand/texe') 'logo-wordmark-dark.png')).Path ),texe.wordmark" `
         /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Core.dll `
         $source
     if ($LASTEXITCODE -ne 0) { throw 'Native welcome app compilation failed' }
