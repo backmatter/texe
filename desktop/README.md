@@ -108,3 +108,22 @@ signed release; the package scripts consume the environment variables above.
 The app is a launcher, not an editor. In the own-editor flow it opens the project
 folder for the user to choose their editor. Windows stops the watch process tree
 when closing; macOS asks watch to stop after any active build finishes.
+
+## Automated macOS workflow check
+
+`.github/workflows/mac-workflow-check.yml` packages the real app on an Apple
+Silicon macOS 15 runner, then compiles the test-only driver in
+`desktop/macos/tests/WorkflowCheck.swift`. The driver uses native button actions
+and the system folder picker with keyboard input. It downloads and verifies
+VS Code through the app, builds two real PDFs, checks completion while VS Code
+is running, starts another paper, rebuilds, and reopens the first project.
+Screenshots, source and build logs are retained as workflow artifacts. The driver
+and its CI-only input permissions are not included in the shipped application.
+
+The [successful full workflow run](https://github.com/backmatter/texe/actions/runs/34395409150)
+covered an accented title as well as paths with spaces and Unicode. It exposed
+macOS argument decomposition breaking pdfLaTeX metadata; starter titles and
+authors now use NFC before LaTeX escaping. It also prompted a fix for wrapping
+long Mac status messages. The native folder picker passed in this run, with no
+fallback used. This check does not automate VS Code's workspace-trust prompt or
+verify its build-on-save interaction; those remain in manual acceptance above.
