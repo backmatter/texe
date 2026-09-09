@@ -63,6 +63,7 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
             sidebar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             sidebar.widthAnchor.constraint(equalToConstant: 208)
         ])
+        content.layoutSubtreeIfNeeded()
         let image = NSImageView(frame: NSRect(x: 18, y: 34, width: 137, height: 48))
         image.image = brandImage("logo-wordmark-dark.png")
         image.imageScaling = .scaleProportionallyUpOrDown
@@ -173,7 +174,7 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let destination = URL(fileURLWithPath: CommandLine.arguments[index + 1])
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 content.layoutSubtreeIfNeeded()
-                print("Native preview layout: content=\(content.frame) sidebar=\(sidebar.frame) workspace=\(workspace.frame)")
+                print("Native preview layout: content=\(content.frame) sidebar=\(sidebar.frame) workspace=\(workspace.frame) children=\(sidebar.subviews.map { $0.frame })")
                 guard let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
                 content.cacheDisplay(in: content.bounds, to: bitmap)
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { exit(1) }

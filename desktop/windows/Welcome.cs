@@ -269,7 +269,18 @@ internal sealed class Welcome : Form
         field.Font = new Font("Segoe UI", 12);
         field.AccessibleName = label;
         var textbox = field as TextBox;
-        if (textbox != null) { textbox.BorderStyle = BorderStyle.FixedSingle; textbox.BackColor = Color.White; }
+        if (textbox != null) {
+            var surround = new Panel { Bounds = new Rectangle(x, y + 30, width, 44), BackColor = Color.White };
+            surround.Paint += (s, e) => { using (var pen = new Pen(textbox.Focused ? accent : Color.FromArgb(222, 215, 220))) e.Graphics.DrawRectangle(pen, 0, 0, surround.Width - 1, surround.Height - 1); };
+            textbox.BorderStyle = BorderStyle.None;
+            textbox.BackColor = Color.White;
+            textbox.SetBounds(12, 10, width - 24, 26);
+            textbox.GotFocus += (s, e) => surround.Invalidate();
+            textbox.LostFocus += (s, e) => surround.Invalidate();
+            surround.Controls.Add(textbox);
+            parent.Controls.Add(surround);
+            return;
+        }
         var combo = field as ComboBox;
         if (combo != null) combo.FlatStyle = FlatStyle.Flat;
         parent.Controls.Add(field);
@@ -289,7 +300,7 @@ internal sealed class Welcome : Form
                 using (var brush = new SolidBrush(Enabled ? BackColor : SystemColors.Control)) e.Graphics.FillPath(brush, path);
                 using (var pen = new Pen(Focused ? Color.FromArgb(93, 70, 84) : Color.FromArgb(226, 220, 224), Focused ? 2 : 1)) e.Graphics.DrawPath(pen, path);
             }
-            TextRenderer.DrawText(e.Graphics, Text, Font, r, Enabled ? ForeColor : SystemColors.GrayText, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            TextRenderer.DrawText(e.Graphics, Text, Font, r, Enabled ? ForeColor : SystemColors.GrayText, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
         }
     }
 
