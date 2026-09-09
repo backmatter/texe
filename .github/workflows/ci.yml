@@ -60,6 +60,26 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --locked
 
+      - name: Compile native macOS welcome app
+        if: runner.os == 'macOS'
+        run: >-
+          xcrun swiftc -swift-version 5 -warnings-as-errors -target arm64-apple-macos12.0
+          -framework AppKit desktop/macos/main.swift -o "${{ runner.temp }}/texe-desktop"
+
+      - name: Compile and check native Windows welcome app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+          $app = Join-Path $env:RUNNER_TEMP 'texe-desktop.exe'
+          & $compiler /nologo /warnaserror /codepage:65001 /target:winexe /platform:x64 "/out:$app" `
+            /win32manifest:desktop/windows/app.manifest `
+            /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Core.dll `
+            desktop/windows/Welcome.cs
+          if ($LASTEXITCODE -ne 0) { throw 'Welcome app compilation failed' }
+          $process = Start-Process -FilePath $app -ArgumentList '--test-quoting' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Welcome app argument tests failed' }
+
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings -D missing-docs

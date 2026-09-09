@@ -1,14 +1,20 @@
 # texe
 
-texe is a command-line app for creating and building LaTeX papers. You write
+texe creates and builds LaTeX papers. It includes native welcome apps for
+Windows and macOS, plus a command-line interface. You write
 the paper in a `.tex` file; texe installs the LaTeX tools and packages it needs
 and produces the PDF. You do not need to install or maintain TeX Live
 separately.
 
 ## Create your first paper
 
-[Install texe](docs/install.md), open Terminal (PowerShell on Windows), and
-move into the folder where you want to create your paper. Run:
+[Install texe](docs/install.md). On Windows or macOS, open the texe app, enter
+your title and author, choose an editor, and click **Create a paper…**. Choose
+**Open a paper…** to work on an existing project. The app handles setup and
+shows build progress without a terminal.
+
+For Linux or command-line use, open Terminal, move into the folder where you
+want to create your paper, and run:
 
 ```sh
 texe

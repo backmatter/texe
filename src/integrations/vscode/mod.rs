@@ -9,6 +9,11 @@ use crate::ux;
 mod bridge;
 mod settings;
 
+// Rust only infers .exe on Windows; VS Code ships a code.cmd launcher.
+fn code_command() -> Command {
+    crate::process::command(if cfg!(windows) { "code.cmd" } else { "code" })
+}
+
 pub(crate) fn setup_vscode(
     root: &Path,
     open: bool,
@@ -53,7 +58,7 @@ pub(crate) fn setup_vscode(
             .to_string(),
     );
 
-    let code_available = match Command::new("code")
+    let code_available = match code_command()
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -98,7 +103,7 @@ fn ensure_latex_workshop(report: &mut IntegrationReport) {
             .push("kept the installed LaTeX Workshop extension unchanged".to_string());
         return;
     }
-    match Command::new("code")
+    match code_command()
         .args(["--install-extension", "James-Yu.latex-workshop"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -145,7 +150,7 @@ fn ensure_layout_companion(report: &mut IntegrationReport) {
             return;
         }
     };
-    match Command::new("code")
+    match code_command()
         .arg("--install-extension")
         .arg(&extension)
         // This is texe's own versioned companion, not the third-party LaTeX
@@ -169,7 +174,7 @@ fn ensure_layout_companion(report: &mut IntegrationReport) {
 }
 
 fn installed_extension_path(identifier: &str) -> Option<PathBuf> {
-    let output = Command::new("code")
+    let output = code_command()
         .args(["--locate-extension", identifier])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -185,7 +190,7 @@ fn installed_extension_path(identifier: &str) -> Option<PathBuf> {
 }
 
 fn installed_extension_version(identifier: &str) -> Option<String> {
-    Command::new("code")
+    code_command()
         .args(["--list-extensions", "--show-versions"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -212,7 +217,7 @@ pub(crate) fn open_vscode(root: &Path) -> Result<IntegrationReport, TexeError> {
     let source = &targets[0];
     let pdf = targets.get(1);
     let mut report = IntegrationReport::default();
-    match Command::new("code")
+    match code_command()
         .arg(root)
         .args(&targets)
         .stdin(Stdio::null())
@@ -295,6 +300,39 @@ mod tests {
 
     use crate::config::ProjectManifest;
     use crate::integrations::vscode::{extension_version_from_list, open_targets};
+
+    #[test]
+    fn launches_vscode_from_a_directory_with_spaces() {
+        let scratch = tempfile::tempdir().expect("temporary directory");
+        let bin = scratch.path().join("VS Code/bin");
+        fs::create_dir_all(&bin).expect("launcher directory");
+        let launcher = bin.join(if cfg!(windows) { "code.cmd" } else { "code" });
+        fs::write(
+            &launcher,
+            if cfg!(windows) {
+                "@echo off\r\necho native-launcher\r\n"
+            } else {
+                "#!/bin/sh\necho native-launcher\n"
+            },
+        )
+        .expect("launcher");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))
+                .expect("executable launcher");
+        }
+        let output = super::code_command()
+            .env("PATH", &bin)
+            .arg("--version")
+            .output()
+            .expect("launch VS Code shim");
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "native-launcher"
+        );
+    }
 
     fn manifest() -> ProjectManifest {
         toml::from_str(

@@ -200,6 +200,22 @@ jobs:
             throw "installer PATH entry was not removed"
           }
 
+      - name: Build native macOS app and disk image
+        if: matrix.platform == 'aarch64-macos'
+        shell: bash
+        run: |
+          ./scripts/package-macos-app.sh \
+            "$RUNNER_TEMP/native-suite/texe-aarch64-macos/bin" \
+            dist/texe-aarch64-macos.dmg "${{ needs.metadata.outputs.version }}"
+
+      - name: Build and test native Windows installer
+        if: matrix.platform == 'x86_64-windows'
+        shell: pwsh
+        run: |
+          ./scripts/package-windows-app.ps1 `
+            -SuiteBin "$env:RUNNER_TEMP/native-suite/texe-x86_64-windows/bin" `
+            -OutputDir dist -Version "${{ needs.metadata.outputs.version }}" -TestInstall
+
       - name: Render Homebrew formula
         if: matrix.platform == 'aarch64-macos'
         shell: bash

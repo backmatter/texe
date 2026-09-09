@@ -21,6 +21,7 @@ mod guard;
 mod integrations;
 mod lockfile;
 mod package;
+mod process;
 mod progress;
 mod state;
 mod toolchain;

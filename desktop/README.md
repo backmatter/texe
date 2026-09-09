@@ -1,0 +1,87 @@
+# Native welcome apps
+
+The AppKit (Swift) and Windows Forms (C# / .NET Framework 4.x) apps are small
+clients of the bundled texe CLI. They never reimplement TeX configuration,
+package resolution, verification, or editor-setting merges. No new Rust or
+JavaScript runtime dependencies are added to the command suite.
+
+Both apps support creating a starter, adopting a selected main source, choosing
+pdfLaTeX or LuaLaTeX for unconfigured projects, building, and opening VS Code or
+a browser preview. Arguments are passed directly to a subprocess with closed
+stdin; no user text is evaluated as shell code. The app prepends its private
+suite and standard VS Code locations to the child PATH without changing the
+user's environment. A bounded transcript remains visible after failures.
+
+The user selects the paper directory explicitly. New-paper setup refuses an
+existing destination. Adoption runs the CLI's compatibility checks and preserves
+sources. Editor conflicts fail visibly; the GUI does not force replacement.
+The first build precedes editor setup, so editor failures retain the PDF.
+
+## Building
+
+First assemble the portable release suite with `cargo xtask package suite`.
+Extract it, then run the matching script on its native platform:
+
+```sh
+# Apple Silicon Mac, Xcode command-line tools installed
+./scripts/package-macos-app.sh /path/to/suite/bin dist/texe-aarch64-macos.dmg 0.1.3
+```
+
+```powershell
+# Windows x64, Inno Setup 6 installed; the .NET Framework compiler ships with Windows
+./scripts/package-windows-app.ps1 -SuiteBin C:\suite\bin -OutputDir dist -Version 0.1.3
+```
+
+Release CI compiles and packages both apps. macOS verifies the bundle signature,
+launches its executable to create and inspect a temporary paper using the bundled
+CLI, and verifies the disk image.
+Windows also checks argv escaping through a real child process and (with
+`-TestInstall` in release CI) silently installs, tests, and uninstalls
+the actual installer in a temporary directory. The existing installed-suite
+journey tests exercise real managed builds on each release platform.
+
+## Signing
+
+Without signing credentials, packaging produces development artifacts with an
+ad-hoc Mac signature or an unsigned Windows installer. This does not provide a
+warning-free public installation. Do not describe such artifacts as signed.
+
+On macOS, provide `TEXE_MACOS_SIGN_IDENTITY` for an installed Developer ID
+Application identity. Provide `TEXE_MACOS_NOTARY_PROFILE` for credentials already
+stored with `xcrun notarytool store-credentials`. Packaging signs each executable
+and the bundle with the hardened runtime, notarizes and staples the app, then
+signs, notarizes and staples the disk image. See Apple's
+[notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
+
+On Windows, put `signtool` on PATH and set `TEXE_WINDOWS_CERT_THUMBPRINT` to a
+certificate in the current user's certificate store, plus
+`TEXE_WINDOWS_TIMESTAMP_URL` to your signing provider's HTTPS timestamp service.
+Packaging signs the app and suite; Inno Setup signs the installer and uninstaller.
+The private key is never copied into the bundle. See
+[Inno Setup signing](https://jrsoftware.org/ishelp/topic_setup_signtool.htm).
+
+Hosted release runners currently have no signing credentials configured. Add the
+certificate/notary provisioning steps to the release job before publishing a
+signed release; the package scripts consume the environment variables above.
+
+## Manual acceptance on each native platform
+
+- Download the packaged app through a browser on a clean user account. Open it
+  through Finder or the Start menu, with no texe or `code` shell PATH setup.
+- Create a paper in a parent path containing spaces and non-ASCII characters.
+  Verify title/author, visible first-download progress, and a successful PDF.
+- With VS Code installed in its normal location, verify source/PDF layout,
+  extension installation, and rebuild on save after trusting the folder.
+- Without VS Code, select your own editor. Verify the project folder opens,
+  browser preview refreshes on save, and closing texe stops its watcher.
+- Open an existing project with a nested entry file; also adopt a project with
+  several `.tex` files by choosing the main source explicitly.
+- Trigger a LaTeX error, verify the previous PDF survives, fix it and rebuild.
+  Check that editor conflicts and download failures stay visible and retryable.
+- Verify a second create cannot overwrite a folder, cancelled pickers do nothing,
+  and closing during setup keeps the app open until its task finishes.
+- Upgrade, launch again, then uninstall. Papers and caches must survive.
+
+The app is a launcher, not an editor. In the own-editor flow it opens the project
+folder for the user to choose their editor. Windows stops the watch process tree
+when closing; macOS asks watch to stop after any active build finishes.

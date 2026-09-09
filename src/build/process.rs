@@ -3,7 +3,7 @@ use std::io::{BufRead as _, Read as _};
 use std::path::Path;
 #[cfg(windows)]
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 use std::thread;
 
 use crate::TexeError;
@@ -42,7 +42,7 @@ fn output_with_removed_environment(
     environment: &[(OsString, OsString)],
     remove: impl Fn(&OsStr) -> bool,
 ) -> Result<Output, TexeError> {
-    let mut command = Command::new(tool);
+    let mut command = crate::process::command(tool);
     command.args(arguments).current_dir(cwd);
     for (name, _) in std::env::vars_os() {
         if remove(&name) {
@@ -65,7 +65,7 @@ pub(crate) fn raw_output_streaming(
     environment: &[(OsString, OsString)],
     mut consume_stderr_line: impl FnMut(&str) -> bool,
 ) -> Result<Output, TexeError> {
-    let mut command = Command::new(tool);
+    let mut command = crate::process::command(tool);
     command
         .args(arguments)
         .current_dir(cwd)

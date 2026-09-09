@@ -1,0 +1,65 @@
+name: Native desktop previews
+
+on:
+  push:
+    branches:
+      - codex/native-welcome
+    paths:
+      - desktop/**
+      - .github/workflows/desktop-preview.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    name: Preview (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            os: macos-15
+          - platform: windows
+            os: windows-2025
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Render real AppKit interface
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p preview
+          xcrun swiftc -swift-version 5 -warnings-as-errors -target arm64-apple-macos12.0 \
+            -framework AppKit desktop/macos/main.swift -o "$RUNNER_TEMP/texe-desktop"
+          "$RUNNER_TEMP/texe-desktop" --screenshot "$GITHUB_WORKSPACE/preview/macos.png"
+          test -s preview/macos.png
+
+      - name: Render real Windows Forms interface
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path preview | Out-Null
+          $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+          $app = Join-Path $env:RUNNER_TEMP 'texe-desktop.exe'
+          & $compiler /nologo /warnaserror /codepage:65001 /target:winexe /platform:x64 "/out:$app" `
+            /win32manifest:desktop/windows/app.manifest `
+            /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Core.dll `
+            desktop/windows/Welcome.cs
+          if ($LASTEXITCODE -ne 0) { throw 'Welcome app compilation failed' }
+          $process = Start-Process -FilePath $app -ArgumentList '--screenshot', "$env:GITHUB_WORKSPACE/preview/windows.png" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Screenshot capture failed' }
+          if (-not (Test-Path preview/windows.png)) { throw 'Screenshot was not written' }
+
+      - name: Upload preview
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: texe-${{ matrix.platform }}-preview
+          path: preview/*.png
+          retention-days: 7
+          if-no-files-found: error

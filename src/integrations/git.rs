@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use crate::TexeError;
 use crate::atomic;
@@ -16,7 +16,7 @@ pub(crate) fn setup_git(
     manifest: &ProjectManifest,
 ) -> Result<IntegrationReport, TexeError> {
     let mut report = IntegrationReport::default();
-    let repository = Command::new("git")
+    let repository = crate::process::command("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(root)
         .stdin(Stdio::null())
@@ -30,7 +30,7 @@ pub(crate) fn setup_git(
                 .push("using the Git repository that already contains this paper".to_string());
         }
         Ok(_) => {
-            let status = Command::new("git")
+            let status = crate::process::command("git")
                 .arg("init")
                 .arg("--quiet")
                 .current_dir(root)
