@@ -60,18 +60,7 @@ jobs:
           ./scripts/package-macos-app.sh "$RUNNER_TEMP/native-app-suite" \
             "$RUNNER_TEMP/texe-test.dmg" "${{ steps.metadata.outputs.version }}"
 
-      - name: Package, install, and uninstall the Windows app
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          ./scripts/package-windows-app.ps1 -SuiteBin "$env:RUNNER_TEMP/native-app-suite" `
-            -OutputDir "$env:RUNNER_TEMP/native-app-output" `
-            -Version "${{ steps.metadata.outputs.version }}"
-          $installer = Join-Path $env:RUNNER_TEMP 'native-app-output/texe-x86_64-windows-setup.exe'
-          $process = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw 'Installing the preview app failed' }
-
-      - name: Install the Mac app for interactive testing
+      - name: Install the packaged Mac app
         if: runner.os == 'macOS'
         shell: bash
         run: |

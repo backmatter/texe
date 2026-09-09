@@ -61,7 +61,16 @@ final class MacWorkflowCheck {
             guard let panel = NSApp.modalWindow as? NSOpenPanel else { return }
             panel.directoryURL = folder
             timer.invalidate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { panel.ok(nil) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                panel.makeKeyAndOrderFront(nil)
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                        context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+                        isARepeat: false, keyCode: 36)!
+                    NSApp.postEvent(event, atStart: false)
+                }
+            }
         }
         RunLoop.main.add(selector, forMode: .modalPanel)
     }
