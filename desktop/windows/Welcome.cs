@@ -3,6 +3,10 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -15,7 +19,7 @@ internal sealed class Welcome : Form
     readonly TextBox author = new TextBox { Width = 350 };
     readonly ComboBox editor = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
     readonly ComboBox engine = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120 };
-    readonly Label status = new Label { AutoSize = true, Text = "Create a paper or choose an existing project." };
+    readonly TextBox status = new TextBox { ReadOnly = true, Multiline = true, BorderStyle = BorderStyle.None, TabStop = false };
     readonly ProgressBar progress = new ProgressBar { Style = ProgressBarStyle.Marquee, Visible = false, Width = 110 };
     readonly TextBox log = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
         Dock = DockStyle.Fill, Font = new Font("Consolas", 9), AccessibleName = "Setup and build details" };
@@ -23,6 +27,9 @@ internal sealed class Welcome : Form
     readonly Button rebuild = new Button { Text = "Build again", AutoSize = true, Enabled = false };
     readonly Button files = new Button { Text = "Show files", AutoSize = true, Enabled = false };
     string project;
+    string parentFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    readonly TextBox destination = new TextBox { ReadOnly = true, BorderStyle = BorderStyle.None, TabStop = false };
+    readonly ToolTip locationTip = new ToolTip();
     Process watcher;
     bool busy;
     static string Cli { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bin", "texe.exe"); } }
@@ -70,6 +77,7 @@ internal sealed class Welcome : Form
             // Exercise Windows' actual argv parser, not just expected string literals.
             if (Environment.OSVersion.Platform == PlatformID.Win32NT)
             {
+                ExplorerFolderPicker.Verify();
                 var output = Path.GetTempFileName();
                 try
                 {
@@ -90,10 +98,11 @@ internal sealed class Welcome : Form
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         var welcome = new Welcome();
-        if (args.Length == 2 && (args[0] == "--screenshot" || args[0] == "--screenshot-setup"))
+        if (args.Length == 2 && (args[0] == "--screenshot" || args[0] == "--screenshot-setup" || args[0] == "--screenshot-code"))
         {
             welcome.Shown += (s, e) => {
                 if (args[0] == "--screenshot-setup") welcome.ShowPage(welcome.setup);
+                if (args[0] == "--screenshot-code") welcome.ShowPage(welcome.codeSetup);
                 var timer = new System.Windows.Forms.Timer { Interval = 1000 };
                 timer.Tick += (sender, tick) => {
                     timer.Stop();
@@ -119,11 +128,15 @@ internal sealed class Welcome : Form
     readonly Color ink = Color.FromArgb(48, 43, 47);
     readonly Color muted = Color.FromArgb(121, 114, 119);
     readonly Color accent = Color.FromArgb(93, 70, 84);
-    readonly Panel workspace = new Panel { Width = 580, Height = 540 };
+    readonly Panel workspace = new Panel { Width = 532, Height = 504 };
+    readonly Panel codeSetup = new Panel { Dock = DockStyle.Fill, Visible = false };
+    readonly TextBox codeStatus = new TextBox { ReadOnly = true, Multiline = true, BorderStyle = BorderStyle.None, TabStop = false };
+    readonly Button installCode = new QuietButton { Text = "Install VS Code" };
+    readonly Button checkCode = new QuietButton { Text = "I’ve installed it" };
+    Func<Task> pendingSetup;
     readonly Panel home = new Panel { Dock = DockStyle.Fill };
     readonly Panel setup = new Panel { Dock = DockStyle.Fill, Visible = false };
     readonly Panel activity = new Panel { Dock = DockStyle.Fill, Visible = false };
-    readonly Panel preferences = new Panel { Width = 532, Height = 102, Visible = false };
     readonly Button back = new QuietButton { Text = "←  Your papers" };
     readonly Button details = new QuietButton { Text = "Show details" };
 
@@ -132,8 +145,9 @@ internal sealed class Welcome : Form
         Text = "texe";
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(940, 680);
-        MinimumSize = new Size(900, 700);
+        ClientSize = new Size(860, 600);
+        FormBorderStyle = FormBorderStyle.FixedSingle;
+        MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 10);
         BackColor = Color.FromArgb(253, 252, 250);
@@ -142,18 +156,19 @@ internal sealed class Welcome : Form
         var assembly = typeof(Welcome).Assembly;
         using (var stream = assembly.GetManifestResourceStream("texe.icon"))
             if (stream != null) Icon = new Icon(stream);
-        var sidebar = new Panel { Dock = DockStyle.Left, Width = 208, BackColor = Color.FromArgb(244, 241, 238) };
+        var sidebar = new Panel { Dock = DockStyle.Left, Width = 184, BackColor = Color.FromArgb(244, 241, 238) };
         Controls.Add(sidebar);
         using (var stream = assembly.GetManifestResourceStream("texe.wordmark"))
             if (stream != null) sidebar.Controls.Add(new PictureBox { Image = new Bitmap(stream),
-                SizeMode = PictureBoxSizeMode.Zoom, Bounds = new Rectangle(18, 34, 137, 48) });
+                SizeMode = PictureBoxSizeMode.Zoom, Bounds = new Rectangle(18, 28, 137, 44) });
         var nav = Button("Your papers", false);
-        nav.Bounds = new Rectangle(18, 120, 172, 42);
+        nav.Bounds = new Rectangle(18, 100, 148, 40);
         nav.BackColor = Color.FromArgb(231, 225, 229);
         nav.Click += (s, e) => { if (!busy) ShowPage(home); };
         sidebar.Controls.Add(nav);
         var foot = Label("A little less setup.\nA little more writing.", 10, false, muted);
-        foot.SetBounds(28, 564, 160, 55);
+        foot.SetBounds(24, 510, 152, 50);
+        foot.BackColor = sidebar.BackColor;
         foot.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
         sidebar.Controls.Add(foot);
         var body = new Panel { Dock = DockStyle.Fill };
@@ -161,52 +176,63 @@ internal sealed class Welcome : Form
         body.BringToFront();
         body.Controls.Add(workspace);
         body.Resize += (s, e) => workspace.Location = new Point(Math.Max(24, (body.Width - workspace.Width) / 2), Math.Max(28, (body.Height - workspace.Height) / 2));
-        workspace.Controls.AddRange(new Control[] { home, setup, activity });
+        workspace.Controls.AddRange(new Control[] { home, setup, activity, codeSetup });
+        CreateCodeSetup();
         Shown += (s, e) => workspace.Location = new Point(Math.Max(24, (body.Width - workspace.Width) / 2), Math.Max(28, (body.Height - workspace.Height) / 2));
 
-        AddText(home, "YOUR WORKSPACE", 10, true, muted, 0, 14, 540, 24);
-        AddText(home, "Space for your next idea.", 29, true, ink, 0, 60, 570, 52);
-        AddText(home, "Start a paper. Make it yours.", 12, false, muted, 0, 121, 540, 32);
-        var illustration = new PaperIllustration { Bounds = new Rectangle(0, 181, 532, 156) };
+        AddText(home, "YOUR WORKSPACE", 10, true, muted, 0, 0, 532, 24);
+        AddText(home, "Space for your next idea.", 26, true, ink, 0, 36, 532, 45);
+        AddText(home, "Start a paper. Make it yours.", 12, false, muted, 0, 92, 532, 26);
+        var illustration = new Panel { Bounds = new Rectangle(0, 148, 532, 144), BackColor = Color.FromArgb(244, 240, 237) };
+        illustration.Controls.Add(new PaperIllustration { Bounds = new Rectangle(0, 0, 144, 144) });
+        AddText(illustration, "Good ideas start here.", 13, true, ink, 164, 36, 348, 28);
+        AddText(illustration, "A clean page, ready for your words.\nBeautifully typeset from the first draft.", 10, false, muted, 164, 74, 348, 48);
         home.Controls.Add(illustration);
         var create = Button("+    New paper", true);
-        create.Bounds = new Rectangle(0, 365, 258, 50);
+        create.Bounds = new Rectangle(0, 316, 258, 44);
         create.Click += (s, e) => ShowPage(setup);
         var open = Button("Open a paper…", false);
-        open.Bounds = new Rectangle(274, 365, 258, 50);
+        open.Bounds = new Rectangle(274, 316, 258, 44);
         open.Click += async (s, e) => await OpenPaper();
         home.Controls.AddRange(new Control[] { create, open });
         Shown += (s, e) => ActiveControl = create;
-        AddText(home, "Your files stay on your computer.\ntexe takes care of the tools your paper needs.", 10, false, muted, 0, 443, 530, 58);
+        AddText(home, "Your files stay on your computer.\ntexe takes care of the tools your paper needs.", 10, false, muted, 0, 392, 532, 48);
 
         back.Bounds = new Rectangle(0, 0, 160, 32);
         back.Click += (s, e) => ShowPage(home);
         setup.Controls.Add(back);
-        AddText(setup, "Make room for a new paper.", 25, true, ink, 0, 52, 560, 48);
-        AddText(setup, "A title is a good place to start. You can change it later.", 10, false, muted, 0, 106, 560, 28);
-        Field(setup, "Paper title", paperTitle, 156, 532);
-        Field(setup, "Author", author, 241, 532);
+        AddText(setup, "Make room for a new paper.", 22, true, ink, 0, 48, 532, 40);
+        AddText(setup, "A title is a good place to start. You can change it later.", 10, false, muted, 0, 94, 532, 26);
+        Field(setup, "Paper title", paperTitle, 140, 532);
+        Field(setup, "Author", author, 224, 532);
         author.Text = "";
         editor.Items.AddRange(new object[] { "VS Code", "My own editor + browser preview" });
         editor.SelectedIndex = 0;
         engine.Items.AddRange(new object[] { "pdfLaTeX", "LuaLaTeX" });
         engine.SelectedIndex = 0;
         engine.AccessibleName = "LaTeX engine";
-        var advanced = new QuietButton { Text = "Writing preferences  ⌄", Bounds = new Rectangle(0, 321, 230, 32) };
-        advanced.Click += (s, e) => { preferences.Visible = !preferences.Visible; advanced.Text = preferences.Visible ? "Writing preferences  ⌃" : "Writing preferences  ⌄"; };
-        setup.Controls.Add(advanced);
-        preferences.Location = new Point(0, 365);
-        Field(preferences, "Editor", editor, 0, 330);
-        Field(preferences, "Typesetting", engine, 0, 180, 352);
-        setup.Controls.Add(preferences);
-        var submit = Button("Choose location & create", true);
-        submit.Bounds = new Rectangle(0, 479, 280, 48);
+        Field(setup, "Editor", editor, 308, 330);
+        Field(setup, "Typesetting", engine, 308, 186, 346);
+        AddText(setup, "Project folder", 10, true, muted, 0, 390, 420, 22);
+        destination.SetBounds(0, 420, 416, 25);
+        destination.BackColor = BackColor;
+        destination.AccessibleName = "Final project folder";
+        setup.Controls.Add(destination);
+        var browse = Button("Change…", false);
+        browse.SetBounds(432, 410, 100, 36);
+        browse.Click += (s, e) => { var folder = PickFolder("Choose a parent folder. Your paper gets its own subfolder."); if (folder != null) { parentFolder = folder; UpdateDestination(); } };
+        setup.Controls.Add(browse);
+        paperTitle.TextChanged += (s, e) => UpdateDestination();
+        UpdateDestination();
+        var submit = Button("Create paper", true);
+        submit.Bounds = new Rectangle(0, 460, 220, 44);
         submit.Click += async (s, e) => await CreatePaper();
         setup.Controls.Add(submit);
 
         AddText(activity, "YOUR PAPER", 10, true, muted, 0, 14, 530, 24);
         AddText(activity, "A little preparation.\nThen it’s all yours.", 28, true, ink, 0, 60, 540, 108);
         status.AutoSize = false;
+        status.BackColor = BackColor;
         status.Font = new Font("Segoe UI", 12);
         status.SetBounds(0, 199, 532, 62);
         activity.Controls.Add(status);
@@ -238,22 +264,110 @@ internal sealed class Welcome : Form
         };
     }
 
+    bool CodeAvailable
+    {
+        get { return Command().EnvironmentVariables["PATH"].Split(';').Any(path => File.Exists(Path.Combine(path.Trim('"'), "code.cmd"))); }
+    }
+
+    void CreateCodeSetup()
+    {
+        AddText(codeSetup, "ONE-TIME SETUP", 10, true, muted, 0, 0, 532, 24);
+        AddText(codeSetup, "Set up your writing app.", 26, true, ink, 0, 42, 532, 48);
+        AddText(codeSetup, "texe opens your paper in Visual Studio Code.\nInstall it once, then get straight to writing.", 12, false, muted, 0, 110, 532, 64);
+        codeStatus.SetBounds(0, 208, 532, 92);
+        codeStatus.BackColor = BackColor;
+        codeStatus.Font = new Font("Segoe UI", 11);
+        codeStatus.Text = "VS Code isn’t installed on this computer.";
+        codeSetup.Controls.Add(codeStatus);
+        installCode.SetBounds(0, 328, 258, 44);
+        installCode.BackColor = accent;
+        installCode.ForeColor = Color.White;
+        installCode.Click += async (s, e) => await InstallCode();
+        checkCode.SetBounds(274, 328, 258, 44);
+        checkCode.BackColor = Color.White;
+        checkCode.Click += async (s, e) => await ContinueFromCode();
+        codeSetup.Controls.AddRange(new Control[] { installCode, checkCode });
+        var backToSetup = Button("Back to paper setup", false);
+        backToSetup.SetBounds(0, 410, 220, 36);
+        backToSetup.Click += (s, e) => { if (!busy) ShowPage(setup); };
+        codeSetup.Controls.Add(backToSetup);
+    }
+
+    async Task ContinueFromCode()
+    {
+        if (!CodeAvailable) {
+            codeStatus.Text = "We couldn’t find VS Code yet. Finish the installer, then try again.";
+            return;
+        }
+        var resume = pendingSetup;
+        pendingSetup = null;
+        if (resume != null) await resume(); else ShowPage(setup);
+    }
+
+    async Task InstallCode()
+    {
+        busy = true;
+        installCode.Enabled = checkCode.Enabled = false;
+        var scratch = Path.Combine(Path.GetTempPath(), "texe-vscode-" + Guid.NewGuid());
+        bool installed = false;
+        try {
+            Directory.CreateDirectory(scratch);
+            var installer = Path.Combine(scratch, "VSCodeUserSetup.exe");
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+            using (var download = new WebClient()) {
+                codeStatus.Text = "Finding the latest VS Code installer…";
+                var metadata = await download.DownloadStringTaskAsync("https://update.code.visualstudio.com/api/update/win32-x64-user/stable/latest");
+                var url = Regex.Match(metadata, "\"url\"\\s*:\\s*\"([^\"]+)\"").Groups[1].Value.Replace("\\/", "/");
+                var hash = Regex.Match(metadata, "\"sha256hash\"\\s*:\\s*\"([a-fA-F0-9]{64})\"").Groups[1].Value;
+                Uri address;
+                if (!Uri.TryCreate(url, UriKind.Absolute, out address) || address.Scheme != "https" || hash.Length != 64)
+                    throw new IOException("The installer download could not be verified. Please try again.");
+                download.DownloadProgressChanged += (s, e) => codeStatus.Text = "Downloading VS Code… " + e.ProgressPercentage + "%";
+                await download.DownloadFileTaskAsync(address, installer);
+                codeStatus.Text = "Checking the VS Code download…";
+                await Task.Run(() => {
+                    using (var file = File.OpenRead(installer))
+                    using (var sha = SHA256.Create()) {
+                        var actual = BitConverter.ToString(sha.ComputeHash(file)).Replace("-", "");
+                        if (!actual.Equals(hash, StringComparison.OrdinalIgnoreCase))
+                            throw new IOException("The installer download could not be verified. Please try again.");
+                    }
+                });
+            }
+            codeStatus.Text = "Follow the VS Code installer. We’ll continue when it finishes.";
+            await Task.Run(() => {
+                using (var process = Process.Start(new ProcessStartInfo(installer, "/NORESTART /MERGETASKS=!runcode") { UseShellExecute = true }))
+                    process.WaitForExit();
+            });
+            installed = CodeAvailable;
+            if (!installed) codeStatus.Text = "Installation wasn’t completed. Choose Install VS Code to try again, or finish installing and choose I’ve installed it.";
+        } catch (Exception error) {
+            codeStatus.Text = "VS Code couldn’t be installed. " + error.Message;
+            Append(error.Message);
+        } finally {
+            busy = false;
+            installCode.Enabled = checkCode.Enabled = true;
+            try { if (Directory.Exists(scratch)) Directory.Delete(scratch, true); } catch (IOException) { }
+        }
+        if (installed) await ContinueFromCode();
+    }
+
     void ShowPage(Panel page)
     {
-        home.Visible = setup.Visible = activity.Visible = false;
+        home.Visible = setup.Visible = activity.Visible = codeSetup.Visible = false;
         page.Visible = true;
         page.BringToFront();
         if (page == setup) paperTitle.Focus();
     }
 
-    Label Label(string text, float size, bool bold, Color color)
+    TextBox Label(string text, float size, bool bold, Color color)
     {
-        return new Label { Text = text, Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular), ForeColor = color };
+        return new TextBox { Text = text.Replace("\n", Environment.NewLine), Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None, TabStop = false, Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular), ForeColor = color };
     }
 
     void AddText(Control parent, string text, float size, bool bold, Color color, int x, int y, int w, int h)
     {
-        var label = Label(text, size, bold, color); label.SetBounds(x, y, w, h); parent.Controls.Add(label);
+        var label = Label(text, size, bold, color); label.BackColor = parent.BackColor; label.SetBounds(x, y, w, h); parent.Controls.Add(label);
     }
 
     Button Button(string text, bool primary)
@@ -312,15 +426,13 @@ internal sealed class Welcome : Form
         {
             var g = e.Graphics; g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             g.Clear(Color.FromArgb(244, 240, 237));
-            using (var shadow = new SolidBrush(Color.FromArgb(229, 220, 224))) g.FillRectangle(shadow, 38, 28, 100, 128);
-            g.FillRectangle(Brushes.White, 30, 20, 100, 130);
-            using (var pen = new Pen(Color.FromArgb(93, 70, 84), 3)) g.DrawLine(pen, 47, 45, 94, 45);
+            g.ScaleTransform(Width / 144f, Height / 144f);
+            using (var shadow = new SolidBrush(Color.FromArgb(229, 220, 224))) g.FillRectangle(shadow, 32, 26, 94, 110);
+            g.FillRectangle(Brushes.White, 24, 20, 94, 110);
+            using (var pen = new Pen(Color.FromArgb(93, 70, 84), 3)) g.DrawLine(pen, 40, 42, 87, 42);
             using (var pen = new Pen(Color.FromArgb(222, 215, 218), 2))
-                for (int i = 0; i < 5; i++) g.DrawLine(pen, 47, 65 + i * 12, i == 4 ? 90 : 111, 65 + i * 12);
-            using (var title = new Font("Segoe UI", 13, FontStyle.Bold))
-                TextRenderer.DrawText(g, "Good ideas start here.", title, new Point(164, 43), Color.FromArgb(65, 52, 61));
-            using (var font = new Font("Segoe UI", 10))
-                TextRenderer.DrawText(g, "A clean page, ready for your words.\nBeautifully typeset from the first draft.", font, new Rectangle(164, 77, 348, 64), Color.FromArgb(121, 114, 119), TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding);
+                for (int i = 0; i < 5; i++) g.DrawLine(pen, 40, 61 + i * 12, i == 4 ? 83 : 104, 61 + i * 12);
+
         }
     }
 
@@ -392,18 +504,28 @@ internal sealed class Welcome : Form
 
     string PickFolder(string description)
     {
-        using (var dialog = new FolderBrowserDialog { Description = description, ShowNewFolderButton = true })
-            return dialog.ShowDialog(this) == DialogResult.OK ? dialog.SelectedPath : null;
+        return ExplorerFolderPicker.Pick(Handle, description);
+    }
+
+    string ProjectFolderName
+    {
+        get {
+            var name = paperTitle.Text.Trim();
+            foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '-');
+            name = name.TrimEnd('.');
+            return name.Length == 0 ? "Untitled paper" : name;
+        }
+    }
+    void UpdateDestination()
+    {
+        destination.Text = Path.Combine(parentFolder, ProjectFolderName);
+        locationTip.SetToolTip(destination, destination.Text);
     }
 
     async Task CreatePaper()
     {
-        var parent = PickFolder("Choose where to create your paper folder.");
-        if (parent == null) return;
-        var name = paperTitle.Text.Trim();
-        foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '-');
-        name = name.TrimEnd('.');
-        if (name.Length == 0) name = "Untitled paper";
+        var parent = parentFolder;
+        var name = ProjectFolderName;
         if (name.Length == 0 || name == "." || name == ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.EndsWith("."))
         { MessageBox.Show(this, "Choose a simple, valid folder name.", "texe"); return; }
         var root = Path.Combine(parent, name);
@@ -437,6 +559,12 @@ internal sealed class Welcome : Form
 
     async Task Start(string root, Func<Task> prepare)
     {
+        if (editor.SelectedIndex == 0 && !CodeAvailable) {
+            pendingSetup = () => Start(root, prepare);
+            codeStatus.Text = "VS Code isn’t installed on this computer.";
+            ShowPage(codeSetup);
+            return;
+        }
         ShowPage(activity);
         StopWatcher();
         project = root;
@@ -453,14 +581,12 @@ internal sealed class Welcome : Form
             await Run("build", "--project", root, "--yes");
             if (useCode)
             {
-                if (!Command().EnvironmentVariables["PATH"].Split(';').Any(path => File.Exists(Path.Combine(path.Trim('"'), "code.cmd"))))
-                    throw new IOException("Your PDF is ready. Install VS Code, or choose My own editor and Build again.");
                 await Run("editor", "--project", root);
             }
-            status.Text = useCode ? "Your PDF is ready. Open Show details for editor setup." : "Paper built. You can start writing.";
+            status.Text = useCode ? "Your paper is ready in VS Code. If asked, choose Trust to enable live preview." : "Paper built. You can start writing.";
             if (!useCode) { StartWatcher(root); ShowFiles(); }
         }
-        catch (Exception error) { Append(error.Message); status.Text = "Something needs your attention. Open Show details for help."; }
+        catch (Exception error) { Append(error.Message); status.Text = error.Message; }
         finally
         {
             busy = false;
@@ -512,5 +638,77 @@ internal sealed class Welcome : Form
     void ShowFiles()
     {
         if (project != null) Process.Start(new ProcessStartInfo(project) { UseShellExecute = true });
+    }
+}
+
+// Windows' Common Item Dialog in folder mode: Explorer navigation, address bar,
+// search and New folder. The COM declarations follow shobjidl_core.h vtable order.
+internal static class ExplorerFolderPicker
+{
+    const uint FolderOptions = 0x20 | 0x40 | 0x800 | 0x8;
+    static IFileDialog NewDialog()
+    {
+        return (IFileDialog)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")));
+    }
+    public static void Verify()
+    {
+        var dialog = NewDialog();
+        try {
+            uint options; dialog.GetOptions(out options);
+            dialog.SetOptions(options | FolderOptions);
+            dialog.GetOptions(out options);
+            if ((options & FolderOptions) != FolderOptions) throw new InvalidOperationException("Explorer folder options were not applied.");
+        } finally { Marshal.FinalReleaseComObject(dialog); }
+    }
+    public static string Pick(IntPtr owner, string title)
+    {
+        var dialog = NewDialog();
+        IShellItem item = null;
+        IntPtr path = IntPtr.Zero;
+        try {
+            uint options; dialog.GetOptions(out options);
+            dialog.SetOptions(options | FolderOptions);
+            dialog.SetTitle(title);
+            dialog.SetOkButtonLabel("Select folder");
+            int result = dialog.Show(owner);
+            if (result == unchecked((int)0x800704C7)) return null;
+            Marshal.ThrowExceptionForHR(result);
+            dialog.GetResult(out item);
+            item.GetDisplayName(0x80058000, out path);
+            return Marshal.PtrToStringUni(path);
+        } finally {
+            if (path != IntPtr.Zero) Marshal.FreeCoTaskMem(path);
+            if (item != null) Marshal.FinalReleaseComObject(item);
+            Marshal.FinalReleaseComObject(dialog);
+        }
+    }
+    [ComImport, Guid("42F85136-DB7E-439C-85F1-E4075D135FC8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IFileDialog
+    {
+        [PreserveSig] int Show(IntPtr owner);
+        void SetFileTypes(uint count, IntPtr types);
+        void SetFileTypeIndex(uint index);
+        void GetFileTypeIndex(out uint index);
+        void Advise(IntPtr events, out uint cookie);
+        void Unadvise(uint cookie);
+        void SetOptions(uint options);
+        void GetOptions(out uint options);
+        void SetDefaultFolder(IShellItem folder);
+        void SetFolder(IShellItem folder);
+        void GetFolder(out IShellItem folder);
+        void GetCurrentSelection(out IShellItem item);
+        void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string name);
+        void GetFileName(out IntPtr name);
+        void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);
+        void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string label);
+        void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string label);
+        void GetResult(out IShellItem item);
+    }
+    [ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IShellItem
+    {
+        void BindToHandler(IntPtr context, ref Guid handler, ref Guid id, out IntPtr result);
+        void GetParent(out IShellItem parent);
+        void GetDisplayName(uint kind, out IntPtr name);
     }
 }

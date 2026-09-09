@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import UniformTypeIdentifiers
 
 final class WelcomeContent: NSView {
@@ -13,9 +14,9 @@ final class WelcomeContent: NSView {
 
 // The app is a thin native client of the bundled, versioned CLI. All project
 // validation, downloads, editor integration and builds remain in texe.
-final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 680),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
+final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate {
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 600),
+                          styleMask: [.titled, .closable, .miniaturizable],
                           backing: .buffered, defer: false)
     let title = NSTextField(string: "My Paper")
     let author = NSTextField(string: "")
@@ -26,6 +27,8 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let log = NSTextView()
     var actions: [NSButton] = []
     var project: URL?
+    var parentFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    let destination = NSTextField(labelWithString: "")
     var watcher: Process?
     var busy = false
     var cli: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/texe") }
@@ -47,13 +50,16 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         editItem.submenu = editMenu
         NSApp.mainMenu = menu
-        window.minSize = NSSize(width: 900, height: 700)
+        window.contentMinSize = NSSize(width: 860, height: 600)
+        window.contentMaxSize = NSSize(width: 860, height: 600)
+        window.collectionBehavior = [.fullScreenNone]
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
         window.titlebarAppearsTransparent = true
         window.backgroundColor = NSColor(calibratedRed: 0.992, green: 0.988, blue: 0.980, alpha: 1)
         window.appearance = NSAppearance(named: .aqua)
         let content = WelcomeContent(frame: window.contentView!.bounds)
         window.contentView = content
-        let sidebar = WelcomeContent(frame: NSRect(x: 0, y: 0, width: 208, height: 680))
+        let sidebar = WelcomeContent(frame: NSRect(x: 0, y: 0, width: 184, height: 600))
         sidebar.fill = NSColor(calibratedRed: 0.957, green: 0.945, blue: 0.933, alpha: 1)
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(sidebar)
@@ -61,81 +67,91 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
             sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             sidebar.topAnchor.constraint(equalTo: content.topAnchor),
             sidebar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 208)
+            sidebar.widthAnchor.constraint(equalToConstant: 184)
         ])
         content.layoutSubtreeIfNeeded()
-        let image = NSImageView(frame: NSRect(x: 18, y: 34, width: 137, height: 48))
+        let image = NSImageView(frame: NSRect(x: 18, y: 28, width: 137, height: 44))
         image.image = brandImage("logo-wordmark-dark.png")
         image.imageScaling = .scaleProportionallyUpOrDown
         sidebar.addSubview(image)
         let nav = button("Your papers", #selector(goHome), primary: false)
-        nav.frame = NSRect(x: 18, y: 120, width: 172, height: 42)
+        nav.frame = NSRect(x: 18, y: 100, width: 148, height: 40)
         sidebar.addSubview(nav)
         let foot = label("A little less setup.\nA little more writing.", size: 12, muted: true)
-        foot.frame = NSRect(x: 28, y: 564, width: 165, height: 55)
+        foot.frame = NSRect(x: 24, y: 510, width: 152, height: 50)
 
         sidebar.addSubview(foot)
         let workspace = WelcomeContent()
         workspace.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(workspace)
         NSLayoutConstraint.activate([
-            workspace.widthAnchor.constraint(equalToConstant: 580),
-            workspace.heightAnchor.constraint(equalToConstant: 540),
-            workspace.centerXAnchor.constraint(equalTo: content.centerXAnchor, constant: 104),
+            workspace.widthAnchor.constraint(equalToConstant: 532),
+            workspace.heightAnchor.constraint(equalToConstant: 504),
+            workspace.centerXAnchor.constraint(equalTo: content.centerXAnchor, constant: 92),
             workspace.centerYAnchor.constraint(equalTo: content.centerYAnchor)
         ])
-        for page in [home, setup, activity] {
-            page.frame = NSRect(x: 0, y: 0, width: 580, height: 540)
+        for page in [home, setup, activity, codeSetup] {
+            page.frame = NSRect(x: 0, y: 0, width: 532, height: 504)
             workspace.addSubview(page)
         }
+        createCodeSetup()
+        codeSetup.isHidden = true
         setup.isHidden = true
         activity.isHidden = true
-        text(home, "YOUR WORKSPACE", 11, 0, 14, 540, 24, muted: true, bold: true)
-        text(home, "Space for your next idea.", 32, 0, 60, 570, 52, bold: true)
-        text(home, "Start a paper. Make it yours.", 15, 0, 121, 540, 32, muted: true)
-        let card = WelcomeContent(frame: NSRect(x: 0, y: 181, width: 532, height: 156))
+        text(home, "YOUR WORKSPACE", 11, 0, 0, 532, 24, muted: true, bold: true)
+        text(home, "Space for your next idea.", 29, 0, 36, 532, 45, bold: true)
+        text(home, "Start a paper. Make it yours.", 15, 0, 92, 532, 26, muted: true)
+        let card = WelcomeContent(frame: NSRect(x: 0, y: 148, width: 532, height: 144))
         card.fill = NSColor(calibratedRed: 0.957, green: 0.941, blue: 0.929, alpha: 1)
         card.wantsLayer = true
         card.layer?.cornerRadius = 12
         home.addSubview(card)
-        let paper = NSImageView(frame: NSRect(x: 32, y: 24, width: 94, height: 108))
+        let paper = NSImageView(frame: NSRect(x: 28, y: 24, width: 88, height: 96))
         paper.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: "A new paper")
         paper.contentTintColor = accent
         paper.imageScaling = .scaleProportionallyUpOrDown
         card.addSubview(paper)
-        text(card, "Good ideas start here.", 17, 164, 43, 348, 30, bold: true)
-        text(card, "A clean page, ready for your words.\nBeautifully typeset from the first draft.", 13, 164, 77, 348, 64, muted: true)
+        text(card, "Good ideas start here.", 17, 164, 36, 348, 28, bold: true)
+        text(card, "A clean page, ready for your words.\nBeautifully typeset from the first draft.", 13, 164, 74, 348, 48, muted: true)
         let newPaper = button("+   New paper", #selector(newPaper), primary: true)
-        newPaper.frame = NSRect(x: 0, y: 365, width: 258, height: 50)
+        newPaper.frame = NSRect(x: 0, y: 316, width: 258, height: 44)
         home.addSubview(newPaper)
         let openPaper = button("Open a paper…", #selector(open), primary: false)
-        openPaper.frame = NSRect(x: 274, y: 365, width: 258, height: 50)
+        openPaper.frame = NSRect(x: 274, y: 316, width: 258, height: 44)
         home.addSubview(openPaper)
-        text(home, "Your files stay on your computer.\ntexe takes care of the tools your paper needs.", 13, 0, 443, 530, 58, muted: true)
+        text(home, "Your files stay on your computer.\ntexe takes care of the tools your paper needs.", 13, 0, 392, 532, 48, muted: true)
 
         let back = button("←  Your papers", #selector(goHome), primary: false)
         back.frame = NSRect(x: 0, y: 0, width: 160, height: 32)
         setup.addSubview(back)
-        text(setup, "Make room for a new paper.", 29, 0, 52, 560, 48, bold: true)
-        text(setup, "A title is a good place to start. You can change it later.", 13, 0, 106, 560, 28, muted: true)
-        field(setup, "Paper title", title, y: 156, width: 532)
-        field(setup, "Author", author, y: 241, width: 532)
+        text(setup, "Make room for a new paper.", 26, 0, 48, 532, 40, bold: true)
+        text(setup, "A title is a good place to start. You can change it later.", 13, 0, 94, 532, 26, muted: true)
+        field(setup, "Paper title", title, y: 140, width: 532)
+        field(setup, "Author", author, y: 224, width: 532)
         editor.addItems(withTitles: ["VS Code", "My own editor + browser preview"])
         engine.addItems(withTitles: ["pdfLaTeX", "LuaLaTeX"])
-        let advanced = button("Writing preferences  ⌄", #selector(togglePreferences), primary: false)
-        advanced.frame = NSRect(x: 0, y: 321, width: 230, height: 32)
-        setup.addSubview(advanced)
-        preferences.frame = NSRect(x: 0, y: 365, width: 532, height: 100)
-        field(preferences, "Editor", editor, y: 0, width: 330)
-        field(preferences, "Typesetting", engine, y: 0, width: 180, x: 352)
-        preferences.isHidden = true
-        setup.addSubview(preferences)
-        let submit = button("Choose location & create", #selector(create), primary: true)
-        submit.frame = NSRect(x: 0, y: 479, width: 280, height: 48)
+        editor.selectItem(at: 0)
+        engine.selectItem(at: 0)
+        field(setup, "Editor", editor, y: 308, width: 330)
+        field(setup, "Typesetting", engine, y: 308, width: 186, x: 346)
+        text(setup, "Project folder", 13, 0, 390, 420, 22, muted: true, bold: true)
+        destination.frame = NSRect(x: 0, y: 420, width: 416, height: 25)
+        destination.isSelectable = true
+        destination.lineBreakMode = .byTruncatingMiddle
+        destination.setAccessibilityLabel("Final project folder")
+        setup.addSubview(destination)
+        let browse = button("Change…", #selector(chooseLocation), primary: false)
+        browse.frame = NSRect(x: 432, y: 410, width: 100, height: 36)
+        setup.addSubview(browse)
+        title.delegate = self
+        updateDestination()
+        let submit = button("Create paper", #selector(create), primary: true)
+        submit.frame = NSRect(x: 0, y: 460, width: 220, height: 44)
         setup.addSubview(submit)
 
         text(activity, "YOUR PAPER", 11, 0, 14, 530, 24, muted: true, bold: true)
         text(activity, "A little preparation.\nThen it’s all yours.", 32, 0, 60, 540, 108, bold: true)
+        status.isSelectable = true
         status.font = .systemFont(ofSize: 15)
         status.frame = NSRect(x: 0, y: 199, width: 532, height: 62)
         status.maximumNumberOfLines = 3
@@ -152,7 +168,7 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         files.frame = NSRect(x: 162, y: 377, width: 150, height: 42)
         activity.addSubview(rebuild)
         activity.addSubview(files)
-        actions = [submit, openPaper, rebuild, files, newPaper, back, nav, advanced]
+        actions = [submit, openPaper, rebuild, files, newPaper, back, nav]
         rebuild.isEnabled = false
         files.isEnabled = false
         let details = button("Show details", #selector(showDetails), primary: false)
@@ -169,8 +185,9 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if let index = CommandLine.arguments.firstIndex(where: { $0 == "--screenshot" || $0 == "--screenshot-setup" }), index + 1 < CommandLine.arguments.count {
+        if let index = CommandLine.arguments.firstIndex(where: { $0 == "--screenshot" || $0 == "--screenshot-setup" || $0 == "--screenshot-code" }), index + 1 < CommandLine.arguments.count {
             if CommandLine.arguments[index] == "--screenshot-setup" { showPage(setup) }
+            if CommandLine.arguments[index] == "--screenshot-code" { showPage(codeSetup) }
             let destination = URL(fileURLWithPath: CommandLine.arguments[index + 1])
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 content.layoutSubtreeIfNeeded()
@@ -186,11 +203,161 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     let accent = NSColor(calibratedRed: 0.365, green: 0.275, blue: 0.329, alpha: 1)
+    let codeSetup = WelcomeContent()
+    let codeStatus = NSTextField(wrappingLabelWithString: "VS Code isn’t installed on this computer.")
+    let installCode = NSButton(title: "Install VS Code", target: nil, action: nil)
+    let checkCode = NSButton(title: "I’ve installed it", target: nil, action: nil)
+    var pendingRoot: URL?
+    var pendingPrepare: (() throws -> Void)?
     let home = WelcomeContent()
     let setup = WelcomeContent()
     let activity = WelcomeContent()
-    let preferences = WelcomeContent()
     var detailsWindow: NSWindow?
+
+    var codeAvailable: Bool {
+        environment()["PATH"]!.split(separator: ":").contains {
+            FileManager.default.isExecutableFile(atPath: String($0) + "/code")
+        }
+    }
+
+    func createCodeSetup() {
+        text(codeSetup, "ONE-TIME SETUP", 11, 0, 0, 532, 24, muted: true, bold: true)
+        text(codeSetup, "Set up your writing app.", 29, 0, 42, 532, 48, bold: true)
+        text(codeSetup, "texe opens your paper in Visual Studio Code.\nInstall it once, then get straight to writing.", 15, 0, 110, 532, 64, muted: true)
+        codeStatus.frame = NSRect(x: 0, y: 208, width: 532, height: 92)
+        codeStatus.font = .systemFont(ofSize: 14)
+        codeStatus.isSelectable = true
+        codeSetup.addSubview(codeStatus)
+        for (control, x, selector) in [(installCode, CGFloat(0), #selector(installVSCode)),
+                                      (checkCode, CGFloat(274), #selector(continueFromCode))] {
+            control.target = self
+            control.action = selector
+            control.bezelStyle = .rounded
+            control.controlSize = .large
+            control.font = .systemFont(ofSize: 14, weight: .medium)
+            control.frame = NSRect(x: x, y: 328, width: 258, height: 44)
+            codeSetup.addSubview(control)
+        }
+        installCode.bezelColor = accent
+        installCode.contentTintColor = .white
+        let back = button("Back to paper setup", #selector(backFromCode), primary: false)
+        back.frame = NSRect(x: 0, y: 410, width: 220, height: 36)
+        codeSetup.addSubview(back)
+    }
+    @objc func backFromCode() { if !busy { showPage(setup) } }
+    @objc func continueFromCode() {
+        guard codeAvailable else {
+            codeStatus.stringValue = "We couldn’t find VS Code yet. Finish installing, then try again."
+            return
+        }
+        let root = pendingRoot
+        let prepare = pendingPrepare
+        pendingRoot = nil
+        pendingPrepare = nil
+        if let root = root, let prepare = prepare { start(root, prepare: prepare) }
+        else { showPage(setup) }
+    }
+
+    func installError(_ message: String) -> NSError {
+        NSError(domain: "texe-install", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+    func codeMessage(_ message: String) {
+        DispatchQueue.main.async { self.codeStatus.stringValue = message }
+    }
+    // All network/file work runs off the app's main thread. The semaphore only
+    // joins URLSession's background completion with that worker.
+    func download(_ url: URL, to destination: URL) throws {
+        final class Result: @unchecked Sendable { var error: Error? }
+        let result = Result()
+        let done = DispatchSemaphore(value: 0)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 600
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        session.downloadTask(with: url) { file, response, error in
+            defer { done.signal() }
+            do {
+                if let error = error { throw error }
+                guard let file = file, (response as? HTTPURLResponse)?.statusCode == 200 else {
+                    throw self.installError("The download did not finish. Check your connection and try again.")
+                }
+                try FileManager.default.moveItem(at: file, to: destination)
+            } catch { result.error = error }
+        }.resume()
+        done.wait()
+        if let error = result.error { throw error }
+    }
+    func installTool(_ path: String, _ args: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = args
+        process.standardInput = FileHandle.nullDevice
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            throw installError("VS Code could not be installed. " + String(decoding: data, as: UTF8.self))
+        }
+    }
+    @objc func installVSCode() {
+        busy = true
+        installCode.isEnabled = false
+        checkCode.isEnabled = false
+        codeStatus.stringValue = "Finding the latest VS Code download…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let files = FileManager.default
+            let scratch = files.temporaryDirectory.appendingPathComponent("texe-vscode-" + UUID().uuidString)
+            defer { try? files.removeItem(at: scratch) }
+            do {
+                try files.createDirectory(at: scratch, withIntermediateDirectories: true)
+                let metadata = scratch.appendingPathComponent("release.json")
+                try self.download(URL(string: "https://update.code.visualstudio.com/api/update/darwin-arm64/stable/latest")!, to: metadata)
+                guard let info = try JSONSerialization.jsonObject(with: Data(contentsOf: metadata)) as? [String: Any],
+                      let address = info["url"] as? String, let url = URL(string: address), url.scheme == "https",
+                      let expected = info["sha256hash"] as? String, expected.count == 64, expected.allSatisfy({ $0.isHexDigit }) else {
+                    throw self.installError("The download could not be verified. Please try again.")
+                }
+                let archive = scratch.appendingPathComponent("VSCode.zip")
+                self.codeMessage("Downloading VS Code…")
+                try self.download(url, to: archive)
+                self.codeMessage("Checking the VS Code download…")
+                let handle = try FileHandle(forReadingFrom: archive)
+                defer { try? handle.close() }
+                var hash = SHA256()
+                while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty { hash.update(data: data) }
+                let actual = hash.finalize().map { String(format: "%02x", $0) }.joined()
+                guard actual == expected.lowercased() else { throw self.installError("The download could not be verified. Please try again.") }
+                self.codeMessage("Installing VS Code in your Applications folder…")
+                try self.installTool("/usr/bin/ditto", ["-x", "-k", archive.path, scratch.path])
+                let app = scratch.appendingPathComponent("Visual Studio Code.app")
+                try self.installTool("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
+                let applications = files.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
+                try files.createDirectory(at: applications, withIntermediateDirectories: true)
+                let installed = applications.appendingPathComponent("Visual Studio Code.app")
+                guard !files.fileExists(atPath: installed.path) else {
+                    throw self.installError("VS Code already exists in your Applications folder. Open it to finish setup, then choose I’ve installed it.")
+                }
+                try files.moveItem(at: app, to: installed)
+                DispatchQueue.main.async {
+                    self.busy = false
+                    self.installCode.isEnabled = true
+                    self.checkCode.isEnabled = true
+                    self.continueFromCode()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.busy = false
+                    self.installCode.isEnabled = true
+                    self.checkCode.isEnabled = true
+                    self.codeStatus.stringValue = "VS Code couldn’t be installed. " + error.localizedDescription
+                }
+            }
+        }
+    }
 
     func brandImage(_ name: String) -> NSImage? {
         let bundled = Bundle.main.resourceURL?.appendingPathComponent(name)
@@ -201,6 +368,8 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func label(_ value: String, size: CGFloat, muted: Bool = false, bold: Bool = false) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: value)
+        label.isSelectable = true
+        label.isEditable = false
         label.font = .systemFont(ofSize: size, weight: bold ? .semibold : .regular)
         label.textColor = muted ? NSColor(calibratedWhite: 0.46, alpha: 1) : NSColor(calibratedWhite: 0.19, alpha: 1)
         return label
@@ -209,7 +378,7 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func text(_ parent: NSView, _ value: String, _ size: CGFloat, _ x: CGFloat, _ y: CGFloat,
               _ width: CGFloat, _ height: CGFloat, muted: Bool = false, bold: Bool = false) {
         let view = label(value, size: size, muted: muted, bold: bold)
-        view.frame = NSRect(x: x, y: y, width: width, height: height)
+        view.frame = NSRect(x: x - 2, y: y, width: width + 2, height: height)
         parent.addSubview(view)
     }
 
@@ -232,11 +401,10 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func showPage(_ page: NSView) {
-        for view in [home, setup, activity] { view.isHidden = view !== page }
+        for view in [home, setup, activity, codeSetup] { view.isHidden = view !== page }
     }
     @objc func goHome() { if !busy { showPage(home) } }
     @objc func newPaper() { showPage(setup); window.makeFirstResponder(title) }
-    @objc func togglePreferences() { preferences.isHidden.toggle() }
     @objc func showDetails() {
         if let detailsWindow = detailsWindow { detailsWindow.makeKeyAndOrderFront(nil); return }
         let details = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 420),
@@ -312,9 +480,26 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return panel.runModal() == .OK ? panel.url : nil
     }
 
+    var projectFolderName: String {
+        let name = title.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        return name.isEmpty ? "Untitled paper" : name
+    }
+    func updateDestination() {
+        destination.stringValue = parentFolder.appendingPathComponent(projectFolderName).path
+        destination.toolTip = destination.stringValue
+    }
+    func controlTextDidChange(_ notification: Notification) { updateDestination() }
+    @objc func chooseLocation() {
+        if let folder = pickFolder("Choose a parent folder. Your paper gets its own subfolder.") {
+            parentFolder = folder
+            updateDestination()
+        }
+    }
+
     @objc func create() {
-        guard let parent = pickFolder("Choose where to create your paper folder.") else { return }
-        let folder = title.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let parent = parentFolder
+        let folder = projectFolderName
         guard !folder.isEmpty, folder != ".", folder != "..", !folder.contains("/"), !folder.contains(":") else {
             alert("Add a title for your paper."); return
         }
@@ -353,6 +538,13 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func start(_ root: URL, prepare: @escaping () throws -> Void) {
+        if editor.indexOfSelectedItem == 0 && !codeAvailable {
+            pendingRoot = root
+            pendingPrepare = prepare
+            codeStatus.stringValue = "VS Code isn’t installed on this computer."
+            showPage(codeSetup)
+            return
+        }
         showPage(activity)
         let previousWatcher = watcher
         watcher = nil
@@ -374,21 +566,15 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 try prepare()
                 try self.run(["build", "--project", root.path, "--yes"])
                 if useCode {
-                    guard self.environment()["PATH"]!.split(separator: ":").contains(where: {
-                        FileManager.default.isExecutableFile(atPath: String($0) + "/code")
-                    }) else {
-                        throw NSError(domain: "texe", code: 1, userInfo: [NSLocalizedDescriptionKey:
-                            "Your PDF is ready. Install VS Code in Applications, or choose My own editor and Build again."])
-                    }
                     try self.run(["editor", "--project", root.path])
                 }
                 DispatchQueue.main.async {
-                    self.finish(useCode ? "Your PDF is ready. Open Show details for editor setup." : "Paper built. You can start writing.")
+                    self.finish(useCode ? "Your paper is ready in VS Code. If asked, choose Trust to enable live preview." : "Paper built. You can start writing.")
                     if !useCode { self.startWatcher(root); self.showFiles() }
                 }
             } catch {
                 self.append("\n\(error.localizedDescription)\n")
-                DispatchQueue.main.async { self.finish("Something needs your attention. Open Show details for help.") }
+                DispatchQueue.main.async { self.finish(error.localizedDescription) }
             }
         }
     }
