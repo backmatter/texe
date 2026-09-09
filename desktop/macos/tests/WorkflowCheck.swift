@@ -47,7 +47,7 @@ final class MacWorkflowCheck {
         choosePanel(parent)
         app.chooseLocation()
         if panelAccepted {
-            require(app.parentFolder.path == parent.path, "System folder picker returns the chosen parent")
+            require(app.parentFolder.path == parent.path, "System folder picker returned \(app.parentFolder.path); expected \(parent.path)")
         } else {
             app.parentFolder = parent
             app.updateDestination()
@@ -62,6 +62,13 @@ final class MacWorkflowCheck {
         app.installCode.performClick(nil)
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in self.tick() }
     }
+    func key(_ code: CGKeyCode, flags: CGEventFlags = []) {
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)!
+            event.flags = flags
+            event.post(tap: .cghidEventTap)
+        }
+    }
     func choosePanel(_ folder: URL) {
         let selector = Timer(timeInterval: 0.5, repeats: true) { timer in
             guard let panel = NSApp.modalWindow as? NSOpenPanel else { return }
@@ -74,12 +81,16 @@ final class MacWorkflowCheck {
                     panel.cancel(nil)
                 }
             }
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            self.key(5, flags: [.maskCommand, .maskShift]) // Finder's Go to Folder
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                panel.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
-                CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true)?.post(tap: .cghidEventTap)
-                CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: false)?.post(tap: .cghidEventTap)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(folder.path, forType: .string)
+                self.key(9, flags: .maskCommand)
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.key(36) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { self.key(36) }
         }
         RunLoop.main.add(selector, forMode: .modalPanel)
     }
