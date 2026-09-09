@@ -81,6 +81,7 @@ jobs:
             -target arm64-apple-macos12.0 -framework AppKit desktop/macos/main.swift \
             desktop/macos/tests/WorkflowCheck.swift -o /Applications/texe.app/Contents/MacOS/texe-desktop
           codesign --force --sign - /Applications/texe.app
+          sudo python3 desktop/macos/tests/permissions.py
           TEXE_WORKFLOW_EVIDENCE="$RUNNER_TEMP/mac-workflow-evidence" \
             /Applications/texe.app/Contents/MacOS/texe-desktop
 
