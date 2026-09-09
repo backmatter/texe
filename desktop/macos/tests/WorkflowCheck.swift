@@ -61,6 +61,11 @@ final class MacWorkflowCheck {
             guard let panel = NSApp.modalWindow as? NSOpenPanel else { return }
             panel.directoryURL = folder
             timer.invalidate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                if NSApp.modalWindow === panel {
+                    self.finish(false, "The native folder dialog did not accept its Return-key action")
+                }
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 panel.makeKeyAndOrderFront(nil)
                 for type in [NSEvent.EventType.keyDown, .keyUp] {
