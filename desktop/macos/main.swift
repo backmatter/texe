@@ -55,8 +55,14 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.contentView = content
         let sidebar = WelcomeContent(frame: NSRect(x: 0, y: 0, width: 208, height: 680))
         sidebar.fill = NSColor(calibratedRed: 0.957, green: 0.945, blue: 0.933, alpha: 1)
-        sidebar.autoresizingMask = [.height]
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(sidebar)
+        NSLayoutConstraint.activate([
+            sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            sidebar.topAnchor.constraint(equalTo: content.topAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 208)
+        ])
         let image = NSImageView(frame: NSRect(x: 18, y: 34, width: 137, height: 48))
         image.image = brandImage("logo-wordmark-dark.png")
         image.imageScaling = .scaleProportionallyUpOrDown
@@ -66,7 +72,7 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sidebar.addSubview(nav)
         let foot = label("A little less setup.\nA little more writing.", size: 12, muted: true)
         foot.frame = NSRect(x: 28, y: 564, width: 165, height: 55)
-        foot.autoresizingMask = [.minYMargin]
+
         sidebar.addSubview(foot)
         let workspace = WelcomeContent()
         workspace.translatesAutoresizingMaskIntoConstraints = false
@@ -162,10 +168,12 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if let index = CommandLine.arguments.firstIndex(of: "--screenshot"), index + 1 < CommandLine.arguments.count {
+        if let index = CommandLine.arguments.firstIndex(where: { $0 == "--screenshot" || $0 == "--screenshot-setup" }), index + 1 < CommandLine.arguments.count {
+            if CommandLine.arguments[index] == "--screenshot-setup" { showPage(setup) }
             let destination = URL(fileURLWithPath: CommandLine.arguments[index + 1])
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 content.layoutSubtreeIfNeeded()
+                print("Native preview layout: content=\(content.frame) sidebar=\(sidebar.frame) workspace=\(workspace.frame)")
                 guard let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
                 content.cacheDisplay(in: content.bounds, to: bitmap)
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { exit(1) }

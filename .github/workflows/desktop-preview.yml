@@ -38,6 +38,7 @@ jobs:
           xcrun swiftc -swift-version 5 -warnings-as-errors -target arm64-apple-macos12.0 \
             -framework AppKit desktop/macos/main.swift -o "$RUNNER_TEMP/texe-desktop"
           "$RUNNER_TEMP/texe-desktop" --screenshot "$GITHUB_WORKSPACE/preview/macos.png"
+          "$RUNNER_TEMP/texe-desktop" --screenshot-setup "$GITHUB_WORKSPACE/preview/macos-setup.png"
           test -s preview/macos.png
 
       - name: Render real Windows Forms interface
@@ -59,6 +60,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Welcome app compilation failed' }
           $process = Start-Process -FilePath $app -ArgumentList '--screenshot', "$env:GITHUB_WORKSPACE/preview/windows.png" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Screenshot capture failed' }
+          $process = Start-Process -FilePath $app -ArgumentList '--screenshot-setup', "$env:GITHUB_WORKSPACE/preview/windows-setup.png" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Setup screenshot capture failed' }
           if (-not (Test-Path preview/windows.png)) { throw 'Screenshot was not written' }
 
       - name: Upload preview

@@ -90,9 +90,10 @@ internal sealed class Welcome : Form
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         var welcome = new Welcome();
-        if (args.Length == 2 && args[0] == "--screenshot")
+        if (args.Length == 2 && (args[0] == "--screenshot" || args[0] == "--screenshot-setup"))
         {
             welcome.Shown += (s, e) => {
+                if (args[0] == "--screenshot-setup") welcome.ShowPage(welcome.setup);
                 var timer = new System.Windows.Forms.Timer { Interval = 1000 };
                 timer.Tick += (sender, tick) => {
                     timer.Stop();
@@ -161,6 +162,7 @@ internal sealed class Welcome : Form
         body.Controls.Add(workspace);
         body.Resize += (s, e) => workspace.Location = new Point(Math.Max(24, (body.Width - workspace.Width) / 2), Math.Max(28, (body.Height - workspace.Height) / 2));
         workspace.Controls.AddRange(new Control[] { home, setup, activity });
+        Shown += (s, e) => workspace.Location = new Point(Math.Max(24, (body.Width - workspace.Width) / 2), Math.Max(28, (body.Height - workspace.Height) / 2));
 
         AddText(home, "YOUR WORKSPACE", 10, true, muted, 0, 14, 540, 24);
         AddText(home, "Space for your next idea.", 29, true, ink, 0, 60, 570, 52);
@@ -174,6 +176,7 @@ internal sealed class Welcome : Form
         open.Bounds = new Rectangle(274, 365, 258, 50);
         open.Click += async (s, e) => await OpenPaper();
         home.Controls.AddRange(new Control[] { create, open });
+        Shown += (s, e) => ActiveControl = create;
         AddText(home, "Your files stay on your computer.\ntexe takes care of the tools your paper needs.", 10, false, muted, 0, 443, 530, 58);
 
         back.Bounds = new Rectangle(0, 0, 160, 32);
@@ -305,7 +308,7 @@ internal sealed class Welcome : Form
             using (var title = new Font("Segoe UI", 13, FontStyle.Bold))
                 TextRenderer.DrawText(g, "Good ideas start here.", title, new Point(164, 43), Color.FromArgb(65, 52, 61));
             using (var font = new Font("Segoe UI", 10))
-                TextRenderer.DrawText(g, "A clean page, ready for your words.\nBeautifully typeset from the first draft.", font, new Rectangle(164, 77, 348, 64), Color.FromArgb(121, 114, 119));
+                TextRenderer.DrawText(g, "A clean page, ready for your words.\nBeautifully typeset from the first draft.", font, new Rectangle(164, 77, 348, 64), Color.FromArgb(121, 114, 119), TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding);
         }
     }
 

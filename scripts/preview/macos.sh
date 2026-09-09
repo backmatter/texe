@@ -5,6 +5,8 @@ set -euo pipefail
 # Grant only Apple's remote-management agents the required capture/input access.
 # Do not disable SIP or weaken the system-wide privacy policy.
 sudo python3 scripts/preview/mac_permissions.py
+# A temporary password lets the single tester unlock the runner's existing desktop.
+sudo dscl . -passwd "/Users/$(whoami)" "$TEXE_PREVIEW_PASSWORD"
 sudo pmset displaysleep 0
 caffeinate -u -t 6000 &
 agent=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
