@@ -5,8 +5,21 @@ set -euo pipefail
 # Grant only Apple's remote-management agents the required capture/input access.
 # Do not disable SIP or weaken the system-wide privacy policy.
 sudo python3 scripts/preview/mac_permissions.py
-# A temporary password lets the single tester unlock the runner's existing desktop.
-sudo dscl . -passwd "/Users/$(whoami)" "$TEXE_PREVIEW_PASSWORD"
+# Create a dedicated GUI test account; the runner's own login is not changed.
+sudo sysadminctl -addUser texepreview -fullName "texe Preview" -password "$TEXE_PREVIEW_PASSWORD"
+sudo mkdir -p /Users/texepreview/Library/LaunchAgents
+sudo tee /Users/texepreview/Library/LaunchAgents/org.backmatter.texe-preview.plist >/dev/null <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>org.backmatter.texe-preview</string>
+<key>ProgramArguments</key><array><string>/usr/bin/open</string><string>/Applications/texe.app</string></array>
+<key>RunAtLoad</key><true/>
+</dict></plist>
+PLIST
+sudo chown -R texepreview:staff /Users/texepreview/Library/LaunchAgents
+# Display the account chooser without terminating the runner's automation session.
+/System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession -suspend
 sudo pmset displaysleep 0
 caffeinate -u -t 6000 &
 agent=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
