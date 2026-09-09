@@ -645,8 +645,8 @@ internal sealed class Welcome : Form
         actions.Enabled = false;
         editor.Enabled = engine.Enabled = false;
         progress.Visible = true;
-        activityTitle.Text = "A little preparation.\nThen it’s all yours.";
-        activityHint.Text = "The first setup can take a few minutes.\nYou can leave this window open while we get things ready.";
+        activityTitle.Text = "A little preparation.\r\nThen it’s all yours.";
+        activityHint.Text = "The first setup can take a few minutes.\r\nYou can leave this window open while we get things ready.";
         rebuild.Enabled = false;
         status.Text = "Getting your paper ready…";
         log.Clear();
