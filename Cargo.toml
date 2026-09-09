@@ -52,6 +52,7 @@ ureq = "3"
 xz2 = "0.1"
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
 jsonc-parser = { version = "0.33.1", features = ["cst", "serde", "serde_json"] }
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 jsonschema = { version = "0.49", default-features = false }

@@ -22,7 +22,7 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
     let author = NSTextField(string: "")
     let editor = NSPopUpButton()
     let engine = NSPopUpButton()
-    let status = NSTextField(labelWithString: "Create a paper or choose an existing project.")
+    let status = NSTextField(wrappingLabelWithString: "Create a paper or choose an existing project.")
     let progress = NSProgressIndicator()
     let log = NSTextView()
     var actions: [NSButton] = []

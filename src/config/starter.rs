@@ -4,6 +4,8 @@ use crate::config::{
     InitOutcome, MANAGED_ENGINES, MANIFEST_NAME, PROJECT_SCHEMA, StarterDocument, StarterTemplate,
 };
 
+use unicode_normalization::UnicodeNormalization as _;
+
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -196,7 +198,9 @@ fn render_starter(entry: &Path, starter: &StarterDocument) -> Vec<(PathBuf, Stri
 fn latex_text(value: &str) -> String {
     let mut escaped = String::new();
     let mut previous_was_space = true;
-    for character in value.chars() {
+    // macOS Process converts arguments to decomposed filesystem Unicode.
+    // Compose metadata before writing LaTeX so accented letters work in pdfLaTeX.
+    for character in value.nfc() {
         if character.is_whitespace() {
             if !previous_was_space {
                 escaped.push(' ');
@@ -296,3 +300,15 @@ const BASIC_BIBLIOGRAPHY: &str = r"@article{example,
   year    = {2026},
 }
 ";
+
+#[cfg(test)]
+mod unicode_tests {
+    #[test]
+    fn composes_decomposed_metadata_before_latex_escaping() {
+        assert_eq!(
+            super::latex_text("A\u{030a} paper & Jose\u{0301}"),
+            "Å paper \\& José"
+        );
+        assert_eq!(super::latex_text("Å paper & José"), "Å paper \\& José");
+    }
+}

@@ -31,6 +31,12 @@ final class MacWorkflowCheck {
         timer?.invalidate()
         note(message)
         capture(success ? "finished" : "failure")
+        if let root = app.project {
+            for name in ["main.tex", ".texe/build/discovery/main.log"] {
+                try? FileManager.default.copyItem(at: root.appendingPathComponent(name),
+                    to: evidence.appendingPathComponent(URL(fileURLWithPath: name).lastPathComponent))
+            }
+        }
         try? app.log.string.write(to: evidence.appendingPathComponent("build-details.txt"), atomically: true, encoding: .utf8)
         try? notes.joined(separator: "\n").write(to: evidence.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
         exit(success ? 0 : 1)
