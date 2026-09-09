@@ -1,6 +1,14 @@
 import AppKit
 import UniformTypeIdentifiers
 
+final class WelcomeContent: NSView {
+    override var isOpaque: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+}
+
 // The app is a thin native client of the bundled, versioned CLI. All project
 // validation, downloads, editor integration and builds remain in texe.
 final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -39,7 +47,8 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate {
         editItem.submenu = editMenu
         NSApp.mainMenu = menu
         window.minSize = NSSize(width: 700, height: 700)
-        let content = window.contentView!
+        let content = WelcomeContent(frame: window.contentView!.bounds)
+        window.contentView = content
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
