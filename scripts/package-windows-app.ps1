@@ -19,10 +19,12 @@ try {
     Copy-Item -LiteralPath (Join-Path $repo 'assets/pdfjs/LICENSE') -Destination (Join-Path $stage 'PDFJS-LICENSE')
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     $app = Join-Path $stage 'texe-desktop.exe'
+    $source = (Resolve-Path -LiteralPath (Join-Path $repo 'desktop/windows/Welcome.cs')).Path
+    $manifest = (Resolve-Path -LiteralPath (Join-Path $repo 'desktop/windows/app.manifest')).Path
     & $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ "/out:$app" `
-        "/win32manifest:$(Join-Path $repo 'desktop/windows/app.manifest')" `
+        "/win32manifest:$manifest" `
         /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Core.dll `
-        (Join-Path $repo 'desktop/windows/Welcome.cs')
+        $source
     if ($LASTEXITCODE -ne 0) { throw 'Native welcome app compilation failed' }
     foreach ($check in '--test-quoting', '--smoke-test') {
         $process = Start-Process -FilePath $app -ArgumentList $check -Wait -PassThru

@@ -47,10 +47,12 @@ jobs:
           New-Item -ItemType Directory -Path preview | Out-Null
           $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
           $app = Join-Path $env:RUNNER_TEMP 'texe-desktop.exe'
+          $source = (Resolve-Path -LiteralPath 'desktop/windows/Welcome.cs').Path
+          $manifest = (Resolve-Path -LiteralPath 'desktop/windows/app.manifest').Path
           & $compiler /nologo /warnaserror /codepage:65001 /target:winexe /platform:x64 "/out:$app" `
-            /win32manifest:desktop/windows/app.manifest `
+            "/win32manifest:$manifest" `
             /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Core.dll `
-            desktop/windows/Welcome.cs
+            $source
           if ($LASTEXITCODE -ne 0) { throw 'Welcome app compilation failed' }
           $process = Start-Process -FilePath $app -ArgumentList '--screenshot', "$env:GITHUB_WORKSPACE/preview/windows.png" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Screenshot capture failed' }
