@@ -150,7 +150,9 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
         setup.addSubview(submit)
 
         text(activity, "YOUR PAPER", 11, 0, 14, 530, 24, muted: true, bold: true)
-        text(activity, "A little preparation.\nThen it’s all yours.", 32, 0, 60, 540, 108, bold: true)
+        activityTitle = label("", size: 32, bold: true)
+        activityTitle.frame = NSRect(x: 0, y: 60, width: 532, height: 108)
+        activity.addSubview(activityTitle)
         status.isSelectable = true
         status.font = .systemFont(ofSize: 15)
         status.frame = NSRect(x: 0, y: 199, width: 532, height: 62)
@@ -161,14 +163,22 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
         progress.isDisplayedWhenStopped = false
         progress.frame = NSRect(x: 0, y: 278, width: 532, height: 4)
         activity.addSubview(progress)
-        text(activity, "The first setup can take a few minutes.\nYou can leave this window open while we get things ready.", 13, 0, 302, 532, 52, muted: true)
+        activityHint = label("", size: 13, muted: true)
+        activityHint.frame = NSRect(x: 0, y: 302, width: 532, height: 52)
+        activity.addSubview(activityHint)
         let rebuild = button("Build again", #selector(build), primary: false)
-        rebuild.frame = NSRect(x: 0, y: 377, width: 150, height: 42)
+        rebuild.frame = NSRect(x: 152, y: 443, width: 140, height: 32)
         let files = button("Show files", #selector(showFiles), primary: false)
-        files.frame = NSRect(x: 162, y: 377, width: 150, height: 42)
+        files.frame = NSRect(x: 324, y: 377, width: 150, height: 42)
+        let nextPaper = button("New paper", #selector(startAnotherPaper), primary: true)
+        nextPaper.frame = NSRect(x: 0, y: 377, width: 150, height: 42)
+        openCodeButton = button("Open in VS Code", #selector(openInCode), primary: false)
+        openCodeButton.frame = NSRect(x: 162, y: 377, width: 150, height: 42)
+        activity.addSubview(nextPaper)
+        activity.addSubview(openCodeButton)
         activity.addSubview(rebuild)
         activity.addSubview(files)
-        actions = [submit, openPaper, rebuild, files, newPaper, back, nav]
+        actions = [submit, openPaper, rebuild, files, newPaper, back, nav, nextPaper, openCodeButton]
         rebuild.isEnabled = false
         files.isEnabled = false
         let details = button("Show details", #selector(showDetails), primary: false)
@@ -212,6 +222,9 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
     let home = WelcomeContent()
     let setup = WelcomeContent()
     let activity = WelcomeContent()
+    var activityTitle = NSTextField(labelWithString: "")
+    var activityHint = NSTextField(labelWithString: "")
+    var openCodeButton = NSButton()
     var detailsWindow: NSWindow?
 
     var codeAvailable: Bool {
@@ -404,6 +417,24 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
         for view in [home, setup, activity, codeSetup] { view.isHidden = view !== page }
     }
     @objc func goHome() { if !busy { showPage(home) } }
+    @objc func startAnotherPaper() {
+        guard !busy else { return }
+        title.stringValue = "Untitled paper"
+        updateDestination()
+        newPaper()
+    }
+    @objc func openInCode() {
+        guard !busy, let root = project else { return }
+        openCodeButton.isEnabled = false
+        DispatchQueue.global(qos: .userInitiated).async {
+            do { try self.run(["editor", "--project", root.path]) }
+            catch {
+                let message = error.localizedDescription
+                DispatchQueue.main.async { self.status.stringValue = message }
+            }
+            DispatchQueue.main.async { self.openCodeButton.isEnabled = true }
+        }
+    }
     @objc func newPaper() { showPage(setup); window.makeFirstResponder(title) }
     @objc func showDetails() {
         if let detailsWindow = detailsWindow { detailsWindow.makeKeyAndOrderFront(nil); return }
@@ -553,6 +584,8 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
         for action in actions { action.isEnabled = false }
         editor.isEnabled = false
         engine.isEnabled = false
+        activityTitle.stringValue = "A little preparation.\nThen it’s all yours."
+        activityHint.stringValue = "The first setup can take a few minutes.\nYou can leave this window open while we get things ready."
         status.stringValue = "Getting your paper ready…"
         progress.startAnimation(nil)
         log.string = ""
@@ -574,17 +607,20 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
                 }
             } catch {
                 self.append("\n\(error.localizedDescription)\n")
-                DispatchQueue.main.async { self.finish(error.localizedDescription) }
+                DispatchQueue.main.async { self.finish(error.localizedDescription, succeeded: false) }
             }
         }
     }
 
-    func finish(_ message: String) {
+    func finish(_ message: String, succeeded: Bool = true) {
+        activityTitle.stringValue = succeeded ? "Your paper is ready." : "Let’s finish setting up."
+        activityHint.stringValue = succeeded ? "Keep writing, or start something new." : "Your source files are kept. You can retry or start another paper."
         busy = false
         status.stringValue = message
         progress.stopAnimation(nil)
         for action in actions { action.isEnabled = true }
         actions[2].isEnabled = project.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("texe.toml").path) } ?? false
+        openCodeButton.isEnabled = codeAvailable && actions[2].isEnabled
         actions[3].isEnabled = project.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
         editor.isEnabled = true
         engine.isEnabled = true

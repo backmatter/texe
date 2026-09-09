@@ -1,4 +1,4 @@
-param([string]$Revision = 'codex/native-welcome')
+param([string]$Revision = 'codex/native-welcome', [switch]$RecoverCompletedSetup)
 # Refresh only the welcome executable on a disposable interactive test VM.
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path 'D:\a\_temp\texe-browser-preview') -and -not (Test-Path 'C:\a\_temp\texe-browser-preview')) {
@@ -26,7 +26,13 @@ try {
     if ($check.ExitCode -ne 0) { throw 'Native dialog or argument check failed' }
     foreach ($process in @(Get-Process texe-desktop -ErrorAction SilentlyContinue)) {
         if (-not $process.CloseMainWindow() -or -not $process.WaitForExit(3000)) {
-            throw 'The app is busy. Finish its current setup before refreshing.'
+            # Recover only the known stale UI wait after every texe command has exited.
+            # Do not terminate an active build or the user's editor.
+            if (-not $RecoverCompletedSetup -or (Get-Process texe -ErrorAction SilentlyContinue)) {
+                throw 'The app is busy. Finish its current setup before refreshing.'
+            }
+            $process.Kill()
+            $process.WaitForExit()
         }
     }
     $installed = Join-Path $env:LOCALAPPDATA 'Programs/texe-desktop/texe-desktop.exe'

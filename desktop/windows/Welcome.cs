@@ -25,6 +25,10 @@ internal sealed class Welcome : Form
         Dock = DockStyle.Fill, Font = new Font("Consolas", 9), AccessibleName = "Setup and build details" };
     readonly FlowLayoutPanel actions = new FlowLayoutPanel { AutoSize = true };
     readonly Button rebuild = new Button { Text = "Build again", AutoSize = true, Enabled = false };
+    readonly Button openCode = new QuietButton { Text = "Open in VS Code", Enabled = false };
+    readonly Button nextPaper = new QuietButton { Text = "New paper" };
+    readonly TextBox activityTitle = Label("", 28, true, Color.FromArgb(48, 43, 47));
+    readonly TextBox activityHint = Label("", 10, false, Color.FromArgb(121, 114, 119));
     readonly Button files = new Button { Text = "Show files", AutoSize = true, Enabled = false };
     string project;
     string parentFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
@@ -37,6 +41,21 @@ internal sealed class Welcome : Form
     [STAThread]
     static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--hold-output")
+        {
+            File.WriteAllText(args[1], Process.GetCurrentProcess().Id.ToString());
+            System.Threading.Thread.Sleep(20000);
+            return 0;
+        }
+        if (args.Length == 2 && args[0] == "--spawn-output-holder")
+        {
+            using (var child = Process.Start(new ProcessStartInfo(Application.ExecutablePath,
+                "--hold-output " + Quote(args[1])) { UseShellExecute = false,
+                    CreateNoWindow = true, RedirectStandardInput = true }))
+            { child.StandardInput.Close(); }
+            Console.WriteLine("setup completed");
+            return 7;
+        }
         if (args.Contains("--smoke-test"))
         {
             var scratch = Path.Combine(Path.GetTempPath(), "texe-smoke-" + Guid.NewGuid());
@@ -78,6 +97,7 @@ internal sealed class Welcome : Form
             if (Environment.OSVersion.Platform == PlatformID.Win32NT)
             {
                 ExplorerFolderPicker.Verify();
+                VerifyProcessCompletion();
                 var output = Path.GetTempFileName();
                 try
                 {
@@ -230,7 +250,10 @@ internal sealed class Welcome : Form
         setup.Controls.Add(submit);
 
         AddText(activity, "YOUR PAPER", 10, true, muted, 0, 14, 530, 24);
-        AddText(activity, "A little preparation.\nThen it’s all yours.", 28, true, ink, 0, 60, 540, 108);
+        activityTitle.BackColor = BackColor;
+        activityHint.BackColor = BackColor;
+        activityTitle.SetBounds(0, 60, 532, 108);
+        activity.Controls.Add(activityTitle);
         status.AutoSize = false;
         status.BackColor = BackColor;
         status.Font = new Font("Segoe UI", 12);
@@ -238,15 +261,26 @@ internal sealed class Welcome : Form
         activity.Controls.Add(status);
         progress.SetBounds(0, 278, 532, 4);
         activity.Controls.Add(progress);
-        AddText(activity, "The first setup can take a few minutes.\nYou can leave this window open while we get things ready.", 10, false, muted, 0, 302, 532, 52);
+        activityHint.SetBounds(0, 302, 532, 52);
+        activity.Controls.Add(activityHint);
         actions.SetBounds(0, 377, 540, 48);
         actions.AutoSize = false;
-        foreach (var button in new [] { rebuild, files }) {
+        foreach (var button in new [] { nextPaper, openCode, files }) {
             button.AutoSize = false; button.Size = new Size(150, 42);
             button.FlatStyle = FlatStyle.Flat; button.FlatAppearance.BorderColor = Color.FromArgb(223, 216, 221);
             button.BackColor = Color.White; button.Margin = new Padding(0, 0, 12, 0);
         }
-        actions.Controls.AddRange(new Control[] { rebuild, files });
+        actions.Controls.AddRange(new Control[] { nextPaper, openCode, files });
+        nextPaper.Click += (s, e) => { paperTitle.Text = "Untitled paper"; ShowPage(setup); paperTitle.Focus(); paperTitle.SelectAll(); };
+        openCode.Click += async (s, e) => {
+            if (project == null || busy) return;
+            openCode.Enabled = false;
+            try { await Run("editor", "--project", project); }
+            catch (Exception error) { status.Text = error.Message; }
+            finally { openCode.Enabled = true; }
+        };
+        rebuild.SetBounds(152, 443, 140, 32);
+        activity.Controls.Add(rebuild);
         rebuild.Click += async (s, e) => { if (project != null) await Start(project, () => Task.FromResult(0)); };
         files.Click += (s, e) => ShowFiles();
         activity.Controls.Add(actions);
@@ -360,7 +394,7 @@ internal sealed class Welcome : Form
         if (page == setup) paperTitle.Focus();
     }
 
-    TextBox Label(string text, float size, bool bold, Color color)
+    static TextBox Label(string text, float size, bool bold, Color color)
     {
         return new TextBox { Text = text.Replace("\n", Environment.NewLine), Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None, TabStop = false, Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular), ForeColor = color };
     }
@@ -485,20 +519,59 @@ internal sealed class Welcome : Form
         catch (InvalidOperationException) { /* Window closed before delivery. */ }
     }
 
+    // The CLI can exit while an editor descendant still owns an inherited pipe.
+    // Parameterless WaitForExit waits for pipe EOF too, leaving setup stuck until
+    // the editor closes. Wait for the CLI, then allow a bounded output drain.
+    static int RunCommand(ProcessStartInfo start, Action<string> append)
+    {
+        using (var process = new Process { StartInfo = start })
+        {
+            var stdout = new TaskCompletionSource<bool>();
+            var stderr = new TaskCompletionSource<bool>();
+            process.OutputDataReceived += (s, e) => { if (e.Data == null) stdout.TrySetResult(true); else append(e.Data); };
+            process.ErrorDataReceived += (s, e) => { if (e.Data == null) stderr.TrySetResult(true); else append(e.Data); };
+            process.Start();
+            process.StandardInput.Close();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            while (!process.WaitForExit(1000)) { }
+            Task.WaitAll(new Task[] { stdout.Task, stderr.Task }, 1000);
+            process.CancelOutputRead();
+            process.CancelErrorRead();
+            return process.ExitCode;
+        }
+    }
+
+    static void VerifyProcessCompletion()
+    {
+        var marker = Path.GetTempFileName();
+        try
+        {
+            var start = new ProcessStartInfo(Application.ExecutablePath,
+                "--spawn-output-holder " + Quote(marker)) { UseShellExecute = false,
+                    CreateNoWindow = true, RedirectStandardInput = true,
+                    RedirectStandardOutput = true, RedirectStandardError = true };
+            var output = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            var timer = Stopwatch.StartNew();
+            var code = RunCommand(start, output.Enqueue);
+            if (code != 7 || timer.ElapsedMilliseconds > 5000 || !output.Contains("setup completed"))
+                throw new InvalidOperationException("Setup must finish when the CLI exits, preserving output and exit status.");
+        }
+        finally
+        {
+            int pid;
+            if (int.TryParse(File.ReadAllText(marker), out pid))
+                try { using (var holder = Process.GetProcessById(pid)) holder.Kill(); }
+                catch (ArgumentException) { }
+            File.Delete(marker);
+        }
+    }
+
     Task Run(params string[] args)
     {
         return Task.Run(() => {
-            using (var process = new Process { StartInfo = Command(args) })
-            {
-                process.OutputDataReceived += (s, e) => { if (e.Data != null) Append(e.Data); };
-                process.ErrorDataReceived += (s, e) => { if (e.Data != null) Append(e.Data); };
-                process.Start();
-                process.StandardInput.Close();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-                process.WaitForExit();
-                if (process.ExitCode != 0) throw new IOException("This step could not finish. See the details, fix the issue, then try again. Your source files are kept.");
-            }
+            if (RunCommand(Command(args), Append) != 0)
+                throw new IOException("This step could not finish. See the details, fix the issue, then try again. Your source files are kept.");
         });
     }
 
@@ -572,6 +645,9 @@ internal sealed class Welcome : Form
         actions.Enabled = false;
         editor.Enabled = engine.Enabled = false;
         progress.Visible = true;
+        activityTitle.Text = "A little preparation.\nThen it’s all yours.";
+        activityHint.Text = "The first setup can take a few minutes.\nYou can leave this window open while we get things ready.";
+        rebuild.Enabled = false;
         status.Text = "Getting your paper ready…";
         log.Clear();
         bool useCode = editor.SelectedIndex == 0;
@@ -583,16 +659,19 @@ internal sealed class Welcome : Form
             {
                 await Run("editor", "--project", root);
             }
+            activityTitle.Text = "Your paper is ready.";
+            activityHint.Text = "Keep writing, or start something new.";
             status.Text = useCode ? "Your paper is ready in VS Code. If asked, choose Trust to enable live preview." : "Paper built. You can start writing.";
             if (!useCode) { StartWatcher(root); ShowFiles(); }
         }
-        catch (Exception error) { Append(error.Message); status.Text = error.Message; }
+        catch (Exception error) { activityTitle.Text = "Let’s finish setting up."; activityHint.Text = "Your source files are kept. You can retry or start another paper."; Append(error.Message); status.Text = error.Message; }
         finally
         {
             busy = false;
             actions.Enabled = true;
             rebuild.Enabled = File.Exists(Path.Combine(root, "texe.toml"));
             files.Enabled = Directory.Exists(root);
+            openCode.Enabled = CodeAvailable && File.Exists(Path.Combine(root, "texe.toml"));
             editor.Enabled = engine.Enabled = true;
             progress.Visible = false;
         }
