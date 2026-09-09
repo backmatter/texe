@@ -1,0 +1,116 @@
+name: Interactive native app testing
+
+on:
+  push:
+    branches:
+      - codex/native-welcome
+    paths:
+      - .github/workflows/interactive-preview.yml
+      - scripts/preview/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: texe-interactive-preview
+  cancel-in-progress: true
+
+jobs:
+  session:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read pinned suite metadata
+        id: metadata
+        shell: bash
+        run: |
+          echo "revision=$(cargo xtask pqty revision)" >> "$GITHUB_OUTPUT"
+          version="$(cargo pkgid --package texe | sed -E 's/.*[@#]([^@#]+)$/\1/')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: backmatter/pqty
+          ref: ${{ steps.metadata.outputs.revision }}
+          path: pqty
+          persist-credentials: false
+
+      - name: Build and assemble the current command suite
+        shell: bash
+        run: |
+          cargo build --locked --package texe
+          cargo build --locked --workspace --manifest-path pqty/Cargo.toml
+          mkdir -p "$RUNNER_TEMP/native-app-suite"
+          suffix=""
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix=".exe"; fi
+          cp "target/debug/texe$suffix" "$RUNNER_TEMP/native-app-suite/"
+          cp "pqty/target/debug/pqty$suffix" "$RUNNER_TEMP/native-app-suite/"
+          cp "pqty/target/debug/pqty-fls$suffix" "$RUNNER_TEMP/native-app-suite/"
+
+      - name: Package and test the Mac app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ./scripts/package-macos-app.sh "$RUNNER_TEMP/native-app-suite" \
+            "$RUNNER_TEMP/texe-test.dmg" "${{ steps.metadata.outputs.version }}"
+
+      - name: Package, install, and uninstall the Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/package-windows-app.ps1 -SuiteBin "$env:RUNNER_TEMP/native-app-suite" `
+            -OutputDir "$env:RUNNER_TEMP/native-app-output" `
+            -Version "${{ steps.metadata.outputs.version }}"
+          $installer = Join-Path $env:RUNNER_TEMP 'native-app-output/texe-x86_64-windows-setup.exe'
+          $process = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Installing the preview app failed' }
+
+      - name: Install the Mac app for interactive testing
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/texe-mounted"
+          hdiutil attach "$RUNNER_TEMP/texe-test.dmg" -nobrowse -mountpoint "$RUNNER_TEMP/texe-mounted"
+          cp -R "$RUNNER_TEMP/texe-mounted/texe.app" /Applications/
+          hdiutil detach "$RUNNER_TEMP/texe-mounted"
+
+      - name: Open a protected Mac test session for 90 minutes
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          TEXE_PREVIEW_PASSWORD: ${{ secrets.TEXE_PREVIEW_PASSWORD }}
+          TEXE_PREVIEW_VNC_PASSWORD: ${{ secrets.TEXE_PREVIEW_VNC_PASSWORD }}
+        run: ./scripts/preview/macos.sh
+
+      - name: Open a protected Windows test session for 90 minutes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TEXE_PREVIEW_PASSWORD: ${{ secrets.TEXE_PREVIEW_PASSWORD }}
+          TEXE_PREVIEW_VNC_PASSWORD: ${{ secrets.TEXE_PREVIEW_VNC_PASSWORD }}
+        run: ./scripts/preview/windows.ps1
+
+      - name: Wait for the authenticated browser link
+        shell: bash
+        run: python scripts/preview/session.py ready
+
+      - name: Publish the session link without credentials
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: texe-live-${{ matrix.os }}
+          path: ${{ runner.temp }}/texe-browser-preview/session.json
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Keep the single-user app test session available until expiry
+        shell: bash
+        run: python scripts/preview/session.py hold
