@@ -32,6 +32,13 @@ urllib.request.urlretrieve('https://github.com/novnc/noVNC/archive/refs/tags/v1.
 with zipfile.ZipFile(archive) as source:
     source.extractall(root)
 web = root / 'noVNC-1.6.0'
+# Use the dedicated preview VNC password, not the Mac's account authentication.
+rfb = web / 'core/rfb.js'
+source = rfb.read_text()
+needle = '_isSupportedSecurityType(type) {'
+if source.count(needle) != 1:
+    raise SystemExit('Unexpected noVNC authentication implementation')
+rfb.write_text(source.replace(needle, needle + '\n        if (type !== 2) return false;'))
 if platform.system() == 'Windows':
     tunnel = root / 'cloudflared.exe'
     urllib.request.urlretrieve('https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe', tunnel)

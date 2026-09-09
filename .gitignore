@@ -5,3 +5,6 @@ pqty.lock
 
 tests/vscode/node_modules/
 tests/vscode/.vscode-test/
+
+# Python development helpers
+__pycache__/

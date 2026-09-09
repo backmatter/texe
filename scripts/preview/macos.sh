@@ -2,6 +2,11 @@
 set -euo pipefail
 : "${TEXE_PREVIEW_VNC_PASSWORD:?missing VNC password}"
 # These changes apply only to the disposable native testing VM.
+# Grant only Apple's remote-management agents the required capture/input access.
+# Do not disable SIP or weaken the system-wide privacy policy.
+sudo python3 scripts/preview/mac_permissions.py
+sudo pmset displaysleep 0
+caffeinate -u -t 6000 &
 agent=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
 sudo "$agent" -activate -configure -access -on -users "$(whoami)" -privs -all
 sudo "$agent" -configure -clientopts -setvnclegacy -vnclegacy yes

@@ -1,13 +1,16 @@
-name: Interactive native app testing
+name: Interactive Mac app testing
 
 on:
+  push:
+    branches: [codex/native-welcome]
+    paths: [.github/workflows/mac-interactive-preview.yml]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: texe-interactive-preview
+  group: texe-mac-interactive-preview
   cancel-in-progress: true
 
 jobs:
@@ -15,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, windows-2025]
+        os: [macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 110
     steps:
