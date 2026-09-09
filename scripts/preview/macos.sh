@@ -18,8 +18,9 @@ sudo tee /Users/texepreview/Library/LaunchAgents/org.backmatter.texe-preview.pli
 </dict></plist>
 PLIST
 sudo chown -R texepreview:staff /Users/texepreview/Library/LaunchAgents
-# Display the account chooser without terminating the runner's automation session.
-/System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession -suspend
+# Allow choosing the dedicated test account from the native login screen.
+sudo defaults write /Library/Preferences/.GlobalPreferences MultipleSessionEnabled -bool true
+sudo defaults write /Library/Preferences/com.apple.loginwindow SHOWFULLNAME -bool true
 sudo pmset displaysleep 0
 caffeinate -u -t 6000 &
 agent=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart

@@ -288,9 +288,10 @@ internal sealed class Welcome : Form
 
     sealed class QuietButton : Button
     {
-        public QuietButton() { FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; Cursor = Cursors.Hand; }
+        public QuietButton() { DoubleBuffered = true; FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; Cursor = Cursors.Hand; }
         protected override void OnPaint(PaintEventArgs e)
         {
+            e.Graphics.Clear(Parent == null ? SystemColors.Control : Parent.BackColor);
             e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             var r = new Rectangle(1, 1, Width - 3, Height - 3);
             using (var path = new System.Drawing.Drawing2D.GraphicsPath()) {
