@@ -37,4 +37,9 @@ sudo pfctl -E
 open /Applications/texe.app
 python3 -m venv "$RUNNER_TEMP/texe-preview-venv"
 "$RUNNER_TEMP/texe-preview-venv/bin/python" -m pip install --disable-pip-version-check websockify==0.13.0
-"$RUNNER_TEMP/texe-preview-venv/bin/python" scripts/preview/serve.py --background
+# A system launchd job survives switching to the GUI tester's account. It still
+# runs as the unprivileged runner user and exits after the same 90-minute limit.
+TEXE_PREVIEW_USER="$(whoami)" python3 scripts/preview/mac_gateway.py
+sudo install -o root -g wheel -m 600 "$RUNNER_TEMP/org.backmatter.texe-preview.plist" \
+  /Library/LaunchDaemons/org.backmatter.texe-preview.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/org.backmatter.texe-preview.plist
