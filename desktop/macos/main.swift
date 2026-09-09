@@ -195,6 +195,9 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        #if WORKFLOW_TEST
+        MacWorkflowCheck(self).start()
+        #endif
         if let index = CommandLine.arguments.firstIndex(where: { $0 == "--screenshot" || $0 == "--screenshot-setup" || $0 == "--screenshot-code" }), index + 1 < CommandLine.arguments.count {
             if CommandLine.arguments[index] == "--screenshot-setup" { showPage(setup) }
             if CommandLine.arguments[index] == "--screenshot-code" { showPage(codeSetup) }
