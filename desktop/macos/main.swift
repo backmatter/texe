@@ -7,7 +7,7 @@ final class WelcomeContent: NSView {
     override var isOpaque: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
         fill.setFill()
-        dirtyRect.fill()
+        dirtyRect.intersection(bounds).fill()
     }
 }
 
