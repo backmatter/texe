@@ -16,22 +16,18 @@ engine = "pdflatex"
 ```
 
 Paths use forward slashes, are relative to the project, and cannot escape it.
-Unknown fields are rejected so misspelled settings do not silently change a
-build.
+Unknown fields are rejected, so a misspelled setting fails instead of silently
+changing the build.
 
-The [project schema](../schemas/texe.project.schema.json) is the complete field
-reference. This guide explains the settings that most projects are likely to
-change.
+This guide covers the settings projects actually tend to change. The
+[project schema](../schemas/texe.project.schema.json) is the complete
+reference.
 
 ## Toolchain
 
-The toolchain is the LaTeX engine and runtime used to build the paper. The
-default managed provider lets texe download and isolate a verified toolchain
-instead of relying on a system TeX installation.
-
-Guided setup uses pdfLaTeX. To use LuaLaTeX instead, run
-`texe init --engine lualatex` when creating the project or change the engine
-before the first build:
+By default texe downloads and isolates a verified toolchain instead of using a
+system TeX installation. Guided setup picks pdfLaTeX; for LuaLaTeX, run
+`texe init --engine lualatex`, or change the engine before the first build:
 
 ```toml
 [toolchain]
@@ -39,13 +35,12 @@ engine = "lualatex"
 channel = "stable"
 ```
 
-The default managed provider selects the current embedded `stable` recipe.
-`stable` may select a newer reviewed recipe in a later texe release. The
-[latest release notes](https://github.com/backmatter/texe/releases/latest)
-name the exact recipe ID behind that alias. Use that ID as `channel` when a
-project must keep the same runtime independently of future texe upgrades.
+`stable` may point at a newer reviewed recipe in a later texe release. The
+[latest release notes](https://github.com/backmatter/texe/releases/latest) name
+the exact recipe ID behind the alias; use that ID as `channel` to keep one
+runtime across texe upgrades.
 
-Use an existing TeX installation explicitly:
+To use an existing TeX installation instead:
 
 ```toml
 [toolchain]
@@ -53,8 +48,8 @@ provider = "system"
 engine = "xelatex"
 ```
 
-The system provider is outside texe's managed reproducibility boundary. Host
-executables, formats, packages, and fonts may affect its output.
+The system provider is outside texe's reproducibility guarantee: host
+executables, formats, packages, and fonts can all affect the output.
 
 ## Project inputs
 
@@ -66,11 +61,9 @@ nested input files:
 roots = ["styles", "figures/shared"]
 ```
 
-texe adds these folders to LaTeX's input search, keeps them below the project
-directory, asks pqty to scan them, and includes them in the lock and build
-fingerprint.
+texe searches these folders for source files and package dependencies.
 
-A project can also declare a small generated input by exact content:
+A project can also declare a small generated input by its exact content:
 
 ```toml
 [[project.generated]]
@@ -78,48 +71,37 @@ path = "BuildInfo.tex"
 content = "\\newcommand{\\BuildLabel}{review-copy}\n"
 ```
 
-texe materializes generated inputs only in its private build directories. It
-does not execute a generator or overwrite a source-tree file.
+Generated inputs are written only inside texe's private build directories. texe
+never runs a generator or overwrites a file in your source tree.
 
 ## Package storage
 
-Copy mode is the supported package-tree mode and the default:
+Packages are copied into the project's package tree. This is the default and the
+supported mode; `experimental-symlink` and `experimental-hardlink` trade
+isolation for links into the shared store.
 
-```toml
-[packages]
-link = "copy"
-```
-
-`experimental-symlink` and `experimental-hardlink` trade isolation for links
-into pqty's shared store.
-
-By default, texe keeps pqty's registry data, package downloads, and shared
-store below `TEXE_HOME/pqty` together with its other managed data. This makes
-`texe storage` and `texe clean --all` report or remove the
-same owned storage on every platform.
-
-Set a project-local store when package bytes must live with the project:
+Registry data, downloads, and the shared store live below `TEXE_HOME/pqty`, so
+`texe storage` and `texe clean --all` cover the same storage on every platform.
+Set a project-local store when the package bytes must live with the project:
 
 ```toml
 [packages]
 store = ".texe/package-store"
 ```
 
-The path contains generated, replaceable data and should not be committed.
+That path holds generated, replaceable data; do not commit it.
 
 ## Bibliography and indexes
 
 BibTeX, Biber, MakeIndex, and MakeIndex-backed glossaries are detected
-automatically. Additional bibliography search roots can be declared without
-overriding a command:
+automatically. Extra bibliography search roots need no command override:
 
 ```toml
 [bibliography]
 roots = ["bibliography/styles"]
 ```
 
-Command overrides are available for projects that deliberately use their own
-tools:
+Projects that deliberately use their own tools can override the commands:
 
 ```toml
 [toolchain]
@@ -133,14 +115,14 @@ biber = "tools/biber"
 makeindex = "tools/makeindex"
 ```
 
-Managed mode rejects command overrides unless
-`allow_unmanaged_commands = true` is set. Opted-out builds warn on every run,
-can execute project or host software, and do not use the no-op build cache.
+Managed mode rejects overrides unless `allow_unmanaged_commands = true` is set.
+Opted-out builds warn on every run, can execute project or host software, and
+skip the no-op build cache.
 
 ## Shell escape
 
-Shell escape is disabled by default. Enable it only for a document that
-intentionally runs external commands, such as one using `minted`:
+Shell escape is off by default. Enable it only for a document that intentionally
+runs external commands, such as one using `minted`:
 
 ```toml
 [toolchain]
@@ -148,24 +130,9 @@ engine = "pdflatex"
 shell_escape = true
 ```
 
-Enabling shell escape exposes the host `PATH`, permits arbitrary command
-execution selected by the document, disables the no-op build cache, and ends
-the full reproducibility guarantee.
+Shell escape exposes the host `PATH`, lets the document run arbitrary commands,
+disables the no-op build cache, and ends the reproducibility guarantee.
 
-## Private build paths
+## What to commit
 
-`project.build_dir`, `packages.lock`, and `packages.texmf` can be relocated only
-below `.texe/`. The defaults are suitable for normal projects:
-
-```toml
-[project]
-entry = "main.tex"
-build_dir = ".texe/build"
-
-[packages]
-lock = ".texe/state/pqty.lock"
-texmf = ".texe/texmf"
-```
-
-Everything below `.texe/` is generated and can be recreated. Commit
-`texe.toml` and `texe.lock`, but do not commit `.texe/`.
+Commit `texe.toml` and `texe.lock`. Everything below `.texe/` is generated.

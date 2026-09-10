@@ -1,49 +1,20 @@
-# Privacy and network behavior
+# Privacy and network access
 
-texe has no telemetry, account, analytics, advertising, crash upload, or
-remote paper service. Source files, bibliography databases, titles, authors,
-logs, and generated PDFs stay on the computer.
+texe has no telemetry or accounts. Paper sources, bibliography data, logs, and
+PDFs stay on your computer.
 
-## Connections texe may make
+Managed builds download tools and packages from TeX Live mirrors and verify
+their sizes and cryptographic digests. `texe build --offline` disables these
+downloads and requires all dependencies to be cached.
 
-- The first managed build downloads the selected LaTeX engine and required
-  package archives from TeX Live mirrors. Later builds download newly required
-  packages as needed. Every accepted download is checked
-  against its recorded size and cryptographic digest.
-- Choosing VS Code setup asks the local `code` command to install LaTeX
-  Workshop when it is missing and to install texe's bundled layout companion.
-  texe does not force-update an existing LaTeX Workshop installation; its own
-  companion follows the installed texe version. Any extension-marketplace
-  connection is made by VS Code. The bundled companion automatically downloads
-  missing TeX tools and packages during builds. Set `texe.allowDownloads` to
-  false for offline texe builds. Check Setup does not initiate downloads.
-- `texe watch --view` binds a random port on `127.0.0.1`. It serves only the
-  pinned PDF.js viewer resources, its local reload/state bridge, the current
-  PDF, a generation counter, and build state. It has no CDN or analytics dependency and
-  never serves project source or a directory listing. PDF.js help links or
-  links in the paper can leave the local viewer only when the user clicks
-  them.
+VS Code setup can download VS Code and install LaTeX Workshop. The companion
+extension downloads missing TeX dependencies during builds unless
+`texe.allowDownloads` is false.
 
-- The VS Code companion also opens an authenticated loopback build bridge.
-  LaTeX Workshop uses its project-local random token to request builds through
-  the companion’s queue. The endpoint and token live in `.texe/editor` and are
-  removed when the companion closes. This bridge has no external service.
+The browser preview and VS Code build connection listen only on your computer.
+The preview serves the PDF and bundled viewer assets, not your project sources
+or a directory listing. Clicking links in a PDF can open external sites.
 
-`texe build --offline` forbids managed runtime, component, registry, and
-package network access. It succeeds only when every required verified cache
-entry is already present.
-
-## Technical trust boundaries
-
-Mirror transport is not trusted to choose build bytes: size and cryptographic
-digest checks happen before an archive becomes a cache entry. Archive paths
-are confined during extraction. Managed engine runs clear inherited TeX, Lua,
-and font search variables and receive a `PATH` containing only managed
-commands.
-
-The explicit exceptions are the `system` provider,
-`toolchain.shell_escape = true`, and command overrides paired with
-`toolchain.allow_unmanaged_commands = true`. Managed mode rejects those
-overrides without the explicit opt-out. Opted-out builds warn and do not use
-the no-op build cache. The default managed command suite must be installed
-beside texe, and its executable bytes participate in the cache identity.
+The system provider, shell escape, and unmanaged command overrides allow host
+software to affect builds. See [configuration](configuration.md) before enabling
+them.

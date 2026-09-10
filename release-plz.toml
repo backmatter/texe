@@ -24,3 +24,38 @@ git_tag_enable = true
 [[package]]
 name = "xtask"
 release = false
+
+# Release entries are generated from Conventional Commit subjects and reused as
+# the GitHub release body. Internal commit types are skipped so the changelog
+# stays user-facing.
+[changelog]
+protect_breaking_commits = true
+header = """# Changelog
+
+All notable changes to this project are documented in this file. Release entries
+are generated from Conventional Commit subjects; do not edit them by hand.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+"""
+commit_parsers = [
+    { footer = "^changelog: ?ignore", skip = true },
+    { message = "^(chore|ci|build|refactor|style|test)", skip = true },
+    { message = "^feat", group = "Added" },
+    { message = "^fix", group = "Fixed" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^(perf|revert)", group = "Changed" },
+    { message = "^.*", group = "Changed" },
+]
+body = """## [{{ version }}]{%- if release_link -%}({{ release_link }}){% endif %} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+{%- if commit.scope -%}
+- *({{ commit.scope }})* {% if commit.breaking %}[**breaking**] {% endif %}{{ commit.message | upper_first }}{%- if commit.links %} ({% for link in commit.links %}[{{ link.text }}]({{ link.href }}) {% endfor -%}){% endif %}
+{% else -%}
+- {% if commit.breaking %}[**breaking**] {% endif %}{{ commit.message | upper_first }}
+{% endif -%}
+{% endfor -%}
+{% endfor %}"""

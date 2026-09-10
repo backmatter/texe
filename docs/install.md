@@ -1,12 +1,10 @@
 # Install texe
 
 texe installs as one small command suite: the `texe` command you use and the
-`pqty` and `pqty-fls` helper commands it calls. You do not need a separate TeX
-Live installation, Rust, Git, Python, or Node.js.
+`pqty` and `pqty-fls` helpers it calls. You do not need TeX Live, Rust, Git,
+Python, or Node.js.
 
 ## Check that your computer is supported
-
-texe supports:
 
 | Computer | How to recognize it |
 | --- | --- |
@@ -14,236 +12,147 @@ texe supports:
 | Windows x86-64 | Settings → System → About shows an x64-based processor, not ARM. |
 | macOS Apple Silicon | About This Mac shows an Apple chip such as M1, M2, M3, or M4, not Intel. |
 
-If your computer is not in this table, read the
-[support matrix](support.md) before installing.
+Intel Macs, ARM Linux, and Windows on ARM are not supported.
 
-## Linux x86-64
+## Install
 
-### Debian or Ubuntu
+On macOS and Linux, run this in Terminal:
 
-Run in Terminal:
+```sh
+curl -LsSf https://github.com/backmatter/texe/releases/latest/download/install.sh | bash
+```
+
+On Windows, run this in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/backmatter/texe/releases/latest/download/install.ps1 | iex"
+```
+
+The installer picks the build for your computer, verifies its checksum, and
+installs below `~/.local/bin` on macOS and Linux or into
+`%LOCALAPPDATA%\Programs\texe` on Windows. It never needs `sudo` or an
+administrator prompt, does not install Homebrew, and does not ask you to disable
+Gatekeeper. It adds its directory to your command path only when that directory
+is not already there.
+
+Open a new terminal window afterward, then check the installation:
+
+```sh
+texe --version
+```
+
+Once installed, run `texe` to [create a paper](../README.md#get-started).
+
+## Other ways to install
+
+The installer is a plain script, so you can read it before running it:
+
+```sh
+curl -LsSf https://github.com/backmatter/texe/releases/latest/download/install.sh | less
+```
+
+On Debian or Ubuntu, the `.deb` package installs the commands into `/usr/bin`
+instead:
 
 ```sh
 release_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' \
   https://github.com/backmatter/texe/releases/latest)"
 tag="${release_url##*/}"
-version="${tag#v}"
-package="texe_${version}_amd64.deb"
-curl -fLO "https://github.com/backmatter/texe/releases/download/${tag}/${package}"
-sudo apt install "./${package}"
-texe --version
+curl -fLO "https://github.com/backmatter/texe/releases/download/${tag}/texe_${tag#v}_amd64.deb"
+sudo apt install "./texe_${tag#v}_amd64.deb"
 ```
 
-The Debian package includes the version in its filename.
-
-### Other Linux distributions or no administrator access
-
-Use the portable installer:
+To install on a computer without network access, download the archive for that
+computer from the
+[latest release](https://github.com/backmatter/texe/releases/latest) and point
+the installer at it:
 
 ```sh
-curl -fLO https://github.com/backmatter/texe/releases/latest/download/texe-x86_64-linux.tar.gz
-curl -fLO https://github.com/backmatter/texe/releases/latest/download/SHA256SUMS
-curl -fLo install-texe.sh https://github.com/backmatter/texe/releases/latest/download/install-linux.sh
-grep '  texe-x86_64-linux.tar.gz$' SHA256SUMS | sha256sum -c -
-sh install-texe.sh --from texe-x86_64-linux.tar.gz
+bash install.sh --from texe-aarch64-macos.tar.gz
 ```
-
-This installs below `~/.local/bin` without `sudo`. Open a new Terminal window
-afterward so the updated command path is loaded. The installer changes
-`~/.profile` only when `~/.local/bin` is not already available.
-
-## Windows x86-64
-
-The GitHub release works immediately through the direct PowerShell method
-below. After the generated manifest has been accepted into the public WinGet
-repository, you can instead run:
 
 ```powershell
-winget install --exact --id Backmatter.Texe
-texe --version
+.\install.ps1 -From .\texe-x86_64-windows.zip
 ```
 
-WinGet checks the release archive and installs the three commands for the
-current user.
-
-### Direct PowerShell installation
-
-Copy this complete block into PowerShell:
-
-```powershell
-Invoke-WebRequest https://github.com/backmatter/texe/releases/latest/download/texe-x86_64-windows.zip -OutFile texe.zip
-Invoke-WebRequest https://github.com/backmatter/texe/releases/latest/download/SHA256SUMS -OutFile SHA256SUMS
-Invoke-WebRequest https://github.com/backmatter/texe/releases/latest/download/install-windows.ps1 -OutFile install-texe.ps1
-$line = Get-Content SHA256SUMS | Where-Object { $_ -match '  texe-x86_64-windows\.zip$' }
-$expected = $line.Split()[0]
-if ((Get-FileHash texe.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw "Checksum mismatch" }
-.\install-texe.ps1 -From .\texe.zip
-```
-
-Open a new PowerShell window afterward, then run `texe --version`. The direct
-installer uses `%LOCALAPPDATA%\Programs\texe` and changes only the current
-user's command path.
-
-## macOS on Apple Silicon
-
-The one-off installer below works immediately from the GitHub release:
-
-```sh
-curl -fLo install-texe.sh https://github.com/backmatter/texe/releases/latest/download/install-macos.sh
-bash install-texe.sh
-```
-
-After the generated formula has been published to the backmatter tap, Homebrew
-users can instead run:
-
-```sh
-brew install backmatter/tap/texe
-texe --version
-```
-
-The one-off script downloads and verifies the archive and each command, then installs
-below `~/.local/bin`. It does not use `sudo`, install Homebrew, or ask you to
-disable Gatekeeper. Open a new Terminal window afterward.
-
-For a previously downloaded or offline archive, use:
-
-```sh
-bash install-texe.sh --from texe-aarch64-macos.tar.gz
-```
-
-## Create your first paper
-
-1. Open a new Terminal window, or PowerShell on Windows.
-2. Run `texe --version` to confirm the command is available.
-3. Move into the folder that should contain the new paper.
-4. Run `texe`.
-5. Follow the guided setup to create and build the first PDF.
-
-The first build needs an internet connection and takes longer because it
-downloads the required LaTeX runtime and packages. texe explains the download
-before it begins. When the build finishes, it prints the paths to `main.tex`
-and `main.pdf` and suggests the next command.
-
-Return to the [first-paper guide](../README.md#create-your-first-paper) for the
-writing workflow.
+Both scripts accept `--prefix`, or `-Prefix` on Windows, to install somewhere
+other than the default location.
 
 ## Optional desktop apps
 
-The Windows and macOS apps provide graphical setup and bundle a private command
-suite. They do not add `texe` to your shell PATH. Use the CLI instructions above
-for terminal use.
+The Windows and macOS apps give you graphical setup and bundle their own private
+command suite. They do not add `texe` to your shell PATH, so use the
+instructions above as well if you want the terminal command.
 
-Desktop installers are available in releases that list these assets:
+Releases that ship desktop installers list these assets:
 
 - Windows: `texe-x86_64-windows-setup.exe`. Run it, then open texe from Start.
 - macOS: `texe-aarch64-macos.dmg`. Open it and drag texe into Applications.
 
-In the app:
+In the app, click **New paper**, enter the title and author, and confirm the
+editor, engine, and location. **Change…** picks the parent folder; texe creates
+a subfolder named after the paper. **Create paper** offers to install VS Code if
+it is missing and reports **Your paper is ready** when the first build finishes;
+trust the folder in VS Code when asked.
 
-1. Click **New paper** and enter the title and author.
-2. Keep **VS Code** and **pdfLaTeX**, or choose another editor or engine.
-3. Check the project path. **Change…** selects the parent folder; texe creates
-   a separate folder named after the paper.
-4. Click **Create paper**. If VS Code is missing, click **Install VS Code**.
-5. Wait for **Your paper is ready**. Trust the folder in VS Code when asked.
-
-**New paper** starts another project. **Open a paper…** opens an existing one.
-**Build again** rebuilds it; **Show files** opens its folder.
-
-Check the release notes for signing status. Development builds are unsigned on
-Windows and ad-hoc signed on macOS; they are not notarized releases.
+Afterwards, **Open a paper…** reopens an existing project, **Build again**
+rebuilds it, and **Show files** opens its folder.
 
 ## Verify a release
 
-Every release includes `SHA256SUMS` and GitHub build provenance. These verify
-file integrity and build origin; they are not Apple or Windows code signatures.
-Platform signing is not currently configured. See [signing status](signing.md).
-
-Advanced users can independently verify a downloaded archive with:
-
-```sh
-gh attestation verify <archive> -R backmatter/texe
-```
-
-After installing, this command rechecks the complete managed runtime and
-command-suite compatibility:
+Every release includes `SHA256SUMS` and GitHub build provenance, which verify
+file integrity and build origin. They are not Apple or Windows code signatures:
+the Windows installer is unsigned, and the Mac app is ad-hoc signed but not
+notarized.
 
 ```sh
-texe doctor --verify-toolchain
+gh attestation verify <archive> -R backmatter/texe   # check a downloaded archive
+texe doctor --verify-toolchain                       # recheck an installation
 ```
 
 ## Upgrade and uninstall
 
-Upgrade texe through the same package manager or installer used for the
-original installation. texe does not check for or install application updates
-itself.
+texe never updates itself. To upgrade, run the install command again; it
+replaces the commands in place. With the Debian package or a desktop app,
+upgrade the same way you installed it.
 
-To remove downloaded managed runtimes and caches too, run this before
-uninstalling the command suite:
+Uninstalling keeps your papers and PDFs. It also keeps the downloaded TeX
+runtimes and caches, so a reinstall does not download them again. Run
+`texe clean --all` first if you want those removed too.
 
-```sh
-texe clean --all
-```
+- Windows app: **Settings → Apps → Installed apps → texe → Uninstall**.
+- macOS app: quit texe and move **texe.app** to the Trash.
+- Debian or Ubuntu: `sudo apt remove texe`.
 
-Graphical uninstall:
-
-- Windows: open **Settings → Apps → Installed apps**, find **texe**, and choose
-  **Uninstall**.
-- macOS: quit texe and move **texe.app** from Applications to the Trash.
-
-These actions keep your papers, PDFs, and downloaded TeX caches.
-
-Command-line package uninstall:
-
-- Debian or Ubuntu: `sudo apt remove texe`
-- Windows WinGet: `winget uninstall --exact --id Backmatter.Texe`
-- macOS Homebrew: `brew uninstall texe`
-
-Portable uninstall on Linux or macOS:
+If you used the install command, run the matching uninstall script. It removes
+only the application files and their path entries:
 
 ```sh
-curl -fLo uninstall-texe.sh https://github.com/backmatter/texe/releases/latest/download/uninstall-unix.sh
-sh uninstall-texe.sh
+curl -LsSf https://github.com/backmatter/texe/releases/latest/download/uninstall-unix.sh | bash
 ```
-
-Portable uninstall on Windows:
 
 ```powershell
-Invoke-WebRequest https://github.com/backmatter/texe/releases/latest/download/uninstall-windows.ps1 -OutFile uninstall-texe.ps1
-.\uninstall-texe.ps1
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/backmatter/texe/releases/latest/download/uninstall-windows.ps1 | iex"
 ```
-
-The uninstall scripts remove only application files and their PATH entries.
-Managed runtimes and caches remain so a reinstall does not need to download
-them again. Projects and their PDFs are never removed.
 
 ## Troubleshooting
 
-- **“Command not found” immediately after a portable install:** open a new
-  Terminal or PowerShell window so the updated command path is loaded.
-- **`apt` is unavailable:** use the portable Linux installation; the Debian
-  package is only for Debian-based systems such as Ubuntu.
-- **WinGet cannot find texe:** use the direct PowerShell installation.
-- **The installer reports an unsupported computer:** compare the computer with
-  the [support matrix](support.md). ARM Windows and Linux, and Intel Macs, are
-  not currently supported.
-- **The first build cannot download:** check the internet connection and retry.
-  After the caches are populated, `texe build --offline` forbids network use.
+- **“Command not found” right after installing:** open a new Terminal or
+  PowerShell window so the updated path is loaded.
+- **`apt` is unavailable:** use the install command at the top of this page. The
+  Debian package is only for Debian-based systems such as Ubuntu.
+- **The installer reports an unsupported computer:** check the table at the top
+  of this page.
+- **The install command cannot reach GitHub:** download the archive on another
+  computer and install it with `--from`, as described above.
+- **The first build cannot download:** check your internet connection and retry.
 - **A managed component fails verification:** run
-  `texe doctor --verify-toolchain`; the error names the damaged cache and the
-  next action.
-- **VS Code does not open:** start it normally and open the project folder. Run
-  `texe editor` again after the `code` command becomes available.
-- **VS Code opens in Restricted Mode:** trust the project folder to enable its
-  texe and LaTeX Workshop integration.
+  `texe doctor --verify-toolchain`. It names the damaged cache and what to do.
+- **VS Code does not open:** start it normally and open the project folder, then
+  run `texe editor` again once the `code` command works.
+- **VS Code opens in Restricted Mode:** trust the project folder.
 
-If the problem remains, run:
-
-```sh
-texe doctor --verbose
-```
-
-Then open a
+If the problem remains, run `texe doctor --verbose` and open a
 [bug report](https://github.com/backmatter/texe/issues/new?template=bug_report.yml).
-Remove confidential paper content, credentials, and private filesystem paths
-before posting.
+Remove confidential paper content, credentials, and private paths before
+posting.
