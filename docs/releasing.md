@@ -81,11 +81,12 @@ release. The tag workflow:
 ## Native desktop releases
 
 The native welcome apps are built from `desktop/` and bundled with the same
-pinned command suite that passed the installed-suite tests. Portable archives
-remain available for CLI users. Follow the [desktop acceptance checklist](../desktop/README.md)
+pinned command suite that passed the installed-suite tests. CLI archives are
+the default distribution; desktop installers are optional. Follow the [desktop acceptance checklist](../desktop/README.md)
 on a clean Windows and macOS account before releasing the graphical downloads.
 
-Configure signing credentials on the release hosts as described in the
+See [signing status and no-cost options](signing.md). Configure credentials on
+the release hosts as described in the
 [desktop signing guide](../desktop/README.md#signing). The package scripts support
 Developer ID signing and notarization on macOS, and timestamped Authenticode
 signatures on Windows. Hosted CI currently produces unsigned Windows and ad-hoc

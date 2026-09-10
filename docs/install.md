@@ -21,16 +21,7 @@ If your computer is not in this table, read the
 
 ### Debian or Ubuntu
 
-Open the [latest texe release](https://github.com/backmatter/texe/releases/latest),
-expand **Assets**, and download the versioned package named
-`texe_VERSION_amd64.deb`. Open the downloaded package with the system software
-installer and choose **Install**. When it finishes, open Terminal and run:
-
-```sh
-texe --version
-```
-
-For a terminal-only installation that automatically finds the current version:
+Run in Terminal:
 
 ```sh
 release_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' \
@@ -43,8 +34,7 @@ sudo apt install "./${package}"
 texe --version
 ```
 
-Every release keeps its version in the Debian filename; no unversioned Debian
-asset is published.
+The Debian package includes the version in its filename.
 
 ### Other Linux distributions or no administrator access
 
@@ -64,57 +54,6 @@ afterward so the updated command path is loaded. The installer changes
 
 ## Windows x86-64
 
-Download [texe for Windows](https://github.com/backmatter/texe/releases/latest/download/texe-x86_64-windows-setup.exe),
-open the installer, and choose **Install**. Leave **Open texe** selected when it
-finishes, or launch **texe** from the Start menu. Installation is for your user
-account and does not require administrator access.
-
-## macOS on Apple Silicon
-
-Download [texe for Mac](https://github.com/backmatter/texe/releases/latest/download/texe-aarch64-macos.dmg),
-open the disk image, and drag **texe** into **Applications**. Eject the disk
-image, then open **texe** from Applications.
-
-These graphical downloads are produced starting with the next release containing
-the native apps. Older releases have only the command-line installers below.
-Signing depends on the release's configured credentials; unsigned downloads may
-show operating-system security prompts. Release notes should state whether a
-build is signed and, on macOS, notarized.
-
-## Create your first paper in the app
-
-1. Enter a folder name, paper title, and author.
-2. Choose **VS Code** or **My own editor + browser preview**. VS Code must
-   already be installed; the app finds its usual installation location.
-3. Choose **Create a paper…** and pick the folder that should contain it.
-4. Watch setup and build progress in the window. The first build downloads the
-   required LaTeX tools and packages automatically.
-
-With VS Code, texe configures the project, installs missing extensions, and opens
-its source and PDF. Trust your project folder when VS Code asks. If editor setup
-needs attention, the details remain in the welcome window and your PDF is kept.
-
-With your own editor, texe opens the project folder and a live PDF preview in your
-browser. Open the `.tex` source in your preferred editor and keep texe running;
-saving the source rebuilds the preview. Closing texe stops its live preview.
-
-Use **Open a paper…** for an existing project. Select its folder, then its main
-`.tex` file if the project does not yet have `texe.toml`. Existing projects keep
-their configured engine. New projects default to pdfLaTeX; LuaLaTeX is also
-available. **Build again** retries a failed build or applies a changed editor
-choice. **Show files** returns to the project folder.
-
-No Terminal or PowerShell steps are required for this workflow. The graphical
-apps bundle their own command suite; they do not change your shell PATH. The
-CLI installers below remain available for shell use.
-
-## Advanced: command-line installation
-
-<details>
-<summary>Windows and macOS command-line installers</summary>
-
-### Windows command-line installation
-
 The GitHub release works immediately through the direct PowerShell method
 below. After the generated manifest has been accepted into the public WinGet
 repository, you can instead run:
@@ -127,7 +66,7 @@ texe --version
 WinGet checks the release archive and installs the three commands for the
 current user.
 
-#### Direct PowerShell installation
+### Direct PowerShell installation
 
 Copy this complete block into PowerShell:
 
@@ -145,7 +84,7 @@ Open a new PowerShell window afterward, then run `texe --version`. The direct
 installer uses `%LOCALAPPDATA%\Programs\texe` and changes only the current
 user's command path.
 
-### macOS command-line installation
+## macOS on Apple Silicon
 
 The one-off installer below works immediately from the GitHub release:
 
@@ -172,11 +111,7 @@ For a previously downloaded or offline archive, use:
 bash install-texe.sh --from texe-aarch64-macos.tar.gz
 ```
 
-</details>
-
-## Create your first paper from the command line
-
-After a command-line installation:
+## Create your first paper
 
 1. Open a new Terminal window, or PowerShell on Windows.
 2. Run `texe --version` to confirm the command is available.
@@ -192,12 +127,37 @@ and `main.pdf` and suggests the next command.
 Return to the [first-paper guide](../README.md#create-your-first-paper) for the
 writing workflow.
 
+## Optional desktop apps
+
+The Windows and macOS apps provide graphical setup and bundle a private command
+suite. They do not add `texe` to your shell PATH. Use the CLI instructions above
+for terminal use.
+
+Desktop installers are available in releases that list these assets:
+
+- Windows: `texe-x86_64-windows-setup.exe`. Run it, then open texe from Start.
+- macOS: `texe-aarch64-macos.dmg`. Open it and drag texe into Applications.
+
+In the app:
+
+1. Click **New paper** and enter the title and author.
+2. Keep **VS Code** and **pdfLaTeX**, or choose another editor or engine.
+3. Check the project path. **Change…** selects the parent folder; texe creates
+   a separate folder named after the paper.
+4. Click **Create paper**. If VS Code is missing, click **Install VS Code**.
+5. Wait for **Your paper is ready**. Trust the folder in VS Code when asked.
+
+**New paper** starts another project. **Open a paper…** opens an existing one.
+**Build again** rebuilds it; **Show files** opens its folder.
+
+Check the release notes for signing status. Development builds are unsigned on
+Windows and ad-hoc signed on macOS; they are not notarized releases.
+
 ## Verify a release
 
-This section is optional. Every release includes one aggregate `SHA256SUMS`
-file and GitHub build provenance for all release assets. Portable Windows and macOS
-archives are not platform-signed. Native app signatures depend on the release
-configuration; see that release’s notes.
+Every release includes `SHA256SUMS` and GitHub build provenance. These verify
+file integrity and build origin; they are not Apple or Windows code signatures.
+Platform signing is not currently configured. See [signing status](signing.md).
 
 Advanced users can independently verify a downloaded archive with:
 

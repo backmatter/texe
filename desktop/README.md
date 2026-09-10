@@ -65,6 +65,8 @@ journey tests exercise real managed builds on each release platform.
 
 ## Signing
 
+See [signing status and no-cost options](../docs/signing.md).
+
 Without signing credentials, packaging produces development artifacts with an
 ad-hoc Mac signature or an unsigned Windows installer. This does not provide a
 warning-free public installation. Do not describe such artifacts as signed.
