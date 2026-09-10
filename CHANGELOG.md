@@ -1,11 +1,10 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+All notable changes to this project are documented in this file. Release entries
+are generated from Conventional Commit subjects; do not edit them by hand.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
 
 ## [0.1.4](https://github.com/backmatter/texe/compare/v0.1.3...v0.1.4) - 2026-09-10
 
@@ -27,10 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unsigned; the Mac app is ad-hoc signed and is not notarized.
 
 ## [0.1.3](https://github.com/backmatter/texe/compare/v0.1.2...v0.1.3) - 2026-09-08
-
-### Added
-
-- prepare adoption and editor workflows for user trials ([#17](https://github.com/backmatter/texe/pull/17))
 
 ### Added
 

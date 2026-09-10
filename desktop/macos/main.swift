@@ -12,8 +12,6 @@ final class WelcomeContent: NSView {
     }
 }
 
-// The app is a thin native client of the bundled, versioned CLI. All project
-// validation, downloads, editor integration and builds remain in texe.
 final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 600),
                           styleMask: [.titled, .closable, .miniaturizable],
@@ -195,24 +193,6 @@ final class Welcome: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFi
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        #if WORKFLOW_TEST
-        MacWorkflowCheck(self).start()
-        #endif
-        if let index = CommandLine.arguments.firstIndex(where: { $0 == "--screenshot" || $0 == "--screenshot-setup" || $0 == "--screenshot-code" }), index + 1 < CommandLine.arguments.count {
-            if CommandLine.arguments[index] == "--screenshot-setup" { showPage(setup) }
-            if CommandLine.arguments[index] == "--screenshot-code" { showPage(codeSetup) }
-            let destination = URL(fileURLWithPath: CommandLine.arguments[index + 1])
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                content.layoutSubtreeIfNeeded()
-                print("Native preview layout: content=\(content.frame) sidebar=\(sidebar.frame) workspace=\(workspace.frame) children=\(sidebar.subviews.map { $0.frame })")
-                guard let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { exit(1) }
-                content.cacheDisplay(in: content.bounds, to: bitmap)
-                guard let png = bitmap.representation(using: .png, properties: [:]) else { exit(1) }
-                do { try png.write(to: destination, options: .atomic) }
-                catch { fputs("Screenshot failed: \(error)\n", stderr); exit(1) }
-                NSApp.terminate(nil)
-            }
-        }
     }
 
     let accent = NSColor(calibratedRed: 0.365, green: 0.275, blue: 0.329, alpha: 1)

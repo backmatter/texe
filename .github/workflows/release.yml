@@ -148,8 +148,8 @@ jobs:
             "/usr/bin/$command" --version
           done
 
-      - name: Test macOS downloaded installer
-        if: matrix.platform == 'aarch64-macos'
+      - name: Test downloaded installer
+        if: matrix.platform == 'aarch64-macos' || matrix.platform == 'x86_64-linux'
         shell: bash
         run: |
           (cd dist && shasum -a 256 "${{ matrix.archive }}" > SHA256SUMS)
@@ -166,7 +166,7 @@ jobs:
           done
           TEXE_RELEASE_BASE_URL=http://127.0.0.1:38479 \
           TEXE_INSTALL_TEST_ALLOW_HTTP=1 \
-            ./scripts/install-macos.sh --prefix "$prefix"
+            ./scripts/install.sh --prefix "$prefix"
           for command in texe pqty pqty-fls; do
             "$prefix/bin/$command" --version
           done
@@ -178,7 +178,7 @@ jobs:
 
       - name: Test Windows user-local installer
         if: matrix.platform == 'x86_64-windows'
-        shell: pwsh
+        shell: powershell
         run: |
           $prefix = Join-Path $env:RUNNER_TEMP "texe-installed"
           ./scripts/install.ps1 `
@@ -198,6 +198,70 @@ jobs:
           $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
           if (@($userPath -split ';' | Where-Object { $_ }) -contains $bin) {
             throw "installer PATH entry was not removed"
+          }
+
+      - name: Test Windows downloaded installer
+        if: matrix.platform == 'x86_64-windows'
+        shell: powershell
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP "texe-downloaded"
+          $archive = "${{ matrix.archive }}"
+          $checksums = Join-Path "dist" "SHA256SUMS"
+          $hash = (Get-FileHash -Algorithm SHA256 (Join-Path "dist" $archive)).Hash.ToLowerInvariant()
+          "$hash  $archive" | Set-Content -Encoding ASCII $checksums
+          $env:TEXE_RELEASE_BASE_URL = "http://127.0.0.1:38479"
+          $env:TEXE_INSTALL_TEST_ALLOW_HTTP = "1"
+          $server = $null
+          try {
+            $server = Start-Process python -ArgumentList @(
+              "-m", "http.server", "38479", "--bind", "127.0.0.1", "--directory", "dist"
+            ) -PassThru -NoNewWindow
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 20; $attempt++) {
+              try {
+                Invoke-WebRequest "$env:TEXE_RELEASE_BASE_URL/SHA256SUMS" -UseBasicParsing -TimeoutSec 1 | Out-Null
+                $ready = $true
+                break
+              }
+              catch { Start-Sleep -Milliseconds 250 }
+            }
+            if (-not $ready) { throw "installer test server did not start" }
+            ./scripts/install.ps1 -Prefix $prefix
+            foreach ($command in "texe", "pqty", "pqty-fls") {
+              & (Join-Path $prefix "bin/$command.exe") --version
+              if ($LASTEXITCODE -ne 0) { throw "$command smoke test failed" }
+            }
+            ./scripts/uninstall.ps1 -Prefix $prefix
+            foreach ($command in "texe", "pqty", "pqty-fls") {
+              if (Test-Path -LiteralPath (Join-Path $prefix "bin/$command.exe")) {
+                throw "$command was not removed"
+              }
+            }
+            $bin = Join-Path $prefix "bin"
+            $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+            if (@($userPath -split ';' | Where-Object { $_ }) -contains $bin) {
+              throw "installer PATH entry was not removed"
+            }
+
+            # A corrupt release must fail before installing any commands.
+            (("0" * 64) + "  $archive") | Set-Content -Encoding ASCII $checksums
+            $rejected = $false
+            try { ./scripts/install.ps1 -Prefix $prefix }
+            catch {
+              if ($_.Exception.Message -notlike "*failed checksum verification*") { throw }
+              $rejected = $true
+            }
+            if (-not $rejected) { throw "installer accepted an invalid checksum" }
+            foreach ($command in "texe", "pqty", "pqty-fls") {
+              if (Test-Path -LiteralPath (Join-Path $prefix "bin/$command.exe")) {
+                throw "$command was installed despite an invalid checksum"
+              }
+            }
+          }
+          finally {
+            if ($server) { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $checksums -ErrorAction SilentlyContinue
+            Remove-Item Env:TEXE_RELEASE_BASE_URL, Env:TEXE_INSTALL_TEST_ALLOW_HTTP -ErrorAction SilentlyContinue
           }
 
       - name: Build native macOS app and disk image
@@ -336,9 +400,8 @@ jobs:
       - name: Add installers and aggregate checksum
         shell: bash
         run: |
-          cp scripts/install.sh dist/install-linux.sh
-          cp scripts/install-macos.sh dist/install-macos.sh
-          cp scripts/install.ps1 dist/install-windows.ps1
+          cp scripts/install.sh dist/install.sh
+          cp scripts/install.ps1 dist/install.ps1
           cp scripts/uninstall.sh dist/uninstall-unix.sh
           cp scripts/uninstall.ps1 dist/uninstall-windows.ps1
           (

@@ -11,8 +11,6 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-// Uses the .NET Framework supplied with Windows. No PowerShell or separately
-// installed desktop runtime is needed on the user's computer.
 internal sealed class Welcome : Form
 {
     readonly TextBox paperTitle = new TextBox { Text = "My Paper", Width = 350 };
@@ -118,29 +116,6 @@ internal sealed class Welcome : Form
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         var welcome = new Welcome();
-        if (args.Length == 2 && (args[0] == "--screenshot" || args[0] == "--screenshot-setup" || args[0] == "--screenshot-code"))
-        {
-            welcome.Shown += (s, e) => {
-                if (args[0] == "--screenshot-setup") welcome.ShowPage(welcome.setup);
-                if (args[0] == "--screenshot-code") welcome.ShowPage(welcome.codeSetup);
-                var timer = new System.Windows.Forms.Timer { Interval = 1000 };
-                timer.Tick += (sender, tick) => {
-                    timer.Stop();
-                    timer.Dispose();
-                    try
-                    {
-                        using (var bitmap = new Bitmap(welcome.Width, welcome.Height))
-                        {
-                            welcome.DrawToBitmap(bitmap, new Rectangle(Point.Empty, welcome.Size));
-                            bitmap.Save(args[1], System.Drawing.Imaging.ImageFormat.Png);
-                        }
-                        welcome.Close();
-                    }
-                    catch { Environment.Exit(1); }
-                };
-                timer.Start();
-            };
-        }
         Application.Run(welcome);
         return 0;
     }

@@ -1,12 +1,14 @@
-# Machine-readable output
+# JSON output
 
-Pass `--json` to one-shot commands. texe writes one closed JSON object to
-standard output and progress to standard error. `texe watch --json` writes one
-`texe.watch-event/v1` object per line.
+Pass `--json` to any one-shot command. texe writes one closed JSON object to
+standard output and progress to standard error. `texe watch --json` instead
+writes one `texe.watch-event/v1` object per line.
 
-Every texe-owned protocol starts at v1. A schema version changes only when a
-consumer must handle an incompatible shape; it is independent of the texe
-crate version and of third-party tool versions.
+Select behavior from the `schema` field, reject versions you do not support, and
+ignore anything on standard error. A schema version changes only when consumers
+must handle an incompatible shape; it is independent of the texe version and of
+third-party tool versions. Golden v1 artifacts in `tests/golden/v1` are
+validated against these schemas in CI.
 
 | Result | Schema identifier | JSON Schema |
 | --- | --- | --- |
@@ -27,20 +29,21 @@ crate version and of third-party tool versions.
 | Watch event | `texe.watch-event/v1` | [`texe.watch-event.schema.json`](../schemas/texe.watch-event.schema.json) |
 | Local viewer status | `texe.viewer-status/v1` | [`texe.viewer-status.schema.json`](../schemas/texe.viewer-status.schema.json) |
 
-Consumers should select behavior from the `schema` field, reject unsupported
-versions, and ignore presentation written to standard error. Golden v1
-artifacts in `tests/golden/v1` are validated against these schemas in CI.
+## Build progress
 
-During JSON builds, stderr also carries newline-delimited `texe.build-progress/v1`
-objects with `phase` and `elapsed_millis`. Consumers may use these for live UI;
-ignore other stderr lines and unknown progress schemas. `--quiet` suppresses
-progress events. Stdout remains a single final result or error object.
+During a JSON build, standard error carries newline-delimited
+`texe.build-progress/v1` objects with `phase` and `elapsed_millis`, which you
+can drive a live UI from; ignore other stderr lines and unknown progress
+schemas. `--quiet` suppresses them. Standard output stays a single final result
+or error.
 
-The build report's `duration_millis` measures the full build operation, including
-project loading, toolchain/package preparation, and publication. Cached builds
-report the time spent validating reuse rather than always reporting zero.
+The build report's `duration_millis` covers the whole operation, including
+project loading, toolchain and package preparation, and publication. A cached
+build reports the time spent validating reuse rather than zero.
 
-The local viewer status includes `state` (`waiting`, `building`, `failed`, or
-`ready`) alongside the successful-PDF generation. Failure does not advance the
-generation. Clients should treat a failed status request as disconnected and
-keep the displayed PDF marked as potentially stale.
+## Viewer status
+
+`texe.viewer-status/v1` reports `state` (`waiting`, `building`, `failed`, or
+`ready`) alongside the generation counter of the last successful PDF. Failures
+do not advance the generation. Treat a failed status request as disconnected and
+mark the displayed PDF as possibly stale.

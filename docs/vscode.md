@@ -1,142 +1,145 @@
-# Move an existing paper to texe + VS Code
+# VS Code
 
 texe manages the build. VS Code and LaTeX Workshop supply editing, completion,
-outline navigation, PDF viewing and SyncTeX. Your `.tex`, `.bib`, custom classes,
-images and TeXstudio files stay where they are.
+outline navigation, PDF viewing, and SyncTeX. Your `.tex`, `.bib`, custom
+classes, images, and TeXstudio files stay where they are.
 
-## Start with the compatibility check
+## Set up an existing paper
 
 ```sh
 texe adopt /path/to/paper --check
 texe adopt /path/to/paper
 ```
 
-The check writes nothing and downloads nothing. It reports the entry, engine,
-local classes, editor conflicts and signs of external processing. Multiple root
-files require `--entry thesis.tex`; texe does not guess even with `--yes`.
-`% !TeX program = ...` supplies the engine hint. Without a hint, literal
-`fontspec` or `unicode-math` declarations select managed LuaLaTeX. An explicit
-incompatible pdfLaTeX choice is reported before setup writes anything. XeLaTeX uses an installed system
-TeX distribution; managed pdfLaTeX and LuaLaTeX can download their runtimes.
+The check writes nothing and downloads nothing. It reports the entry file,
+engine, local classes, editor setting conflicts, and signs of external
+processing. Add `--json` for the machine-readable report.
 
-The static scan is a preflight, not proof that arbitrary TeX will compile. It
-follows literal local includes and class/package declarations (up to 256 files
-and 8 MiB), ignoring comments and common verbatim forms. Dynamic TeX, fonts and
-custom build scripts still need the first build. `--check` prints readable
-guidance; add `--json` for the machine-readable report. Existing
-`.latexmkrc` and Makefile commands are not executed or imported. External
-processing must be configured in `texe.toml` before adopting that workflow.
+Useful flags:
 
-Use `--no-build` to defer the first build, or `--no-editor` to create only the
-manifest. `texe init --entry thesis.tex --yes` can create a manifest around an
-existing source for advanced configuration; it preserves the source. An existing
-`texe.toml` remains authoritative and is never overwritten by adoption.
+- `--entry thesis.tex` — required when the paper has several root files. texe
+  does not guess, even with `--yes`.
+- `--no-build` — defer the first build.
+- `--no-editor` — write only `texe.toml` and keep your editor configuration.
+- `--replace-conflicts` — accept the editor changes the check listed.
 
-## Review editor settings
+An existing `texe.toml` is authoritative and is never overwritten.
 
-texe preserves JSONC comments and unrelated settings, including nested file
-associations and exclusions. When existing build settings conflict, review them:
+The scan is a preflight, not proof that the paper compiles: dynamic TeX, fonts,
+and custom build scripts are only settled by the first build. Existing
+`.latexmkrc` and Makefile commands are neither run nor imported, so configure
+external processing in `texe.toml` before adopting that workflow.
+
+If the first build fails, adoption still opens the editor and hands the failure
+to it. Fix the source and save to retry.
+
+### Engine detection
+
+- `% !TeX program = ...` in the source selects the engine.
+- Without that hint, a literal `fontspec` or `unicode-math` declaration selects
+  managed LuaLaTeX.
+- An explicit pdfLaTeX choice that cannot work is reported before anything is
+  written.
+- Managed pdfLaTeX and LuaLaTeX download their own runtimes. XeLaTeX needs an
+  installed system TeX distribution.
+
+## Editor settings
+
+texe writes only its own keys, preserving JSONC comments and unrelated settings.
 
 ```sh
-texe editor --preview
-texe editor --replace-conflicts
+texe editor --preview             # show the merged settings and any conflicts
+texe editor --replace-conflicts   # accept texe's integration values
+texe editor --configure-only      # write settings only, no extensions, no launch
+texe editor --remove              # undo texe's settings
 ```
 
-For an unadopted folder, interactive `texe adopt` shows the proposed settings
-and asks whether to apply them. After reviewing `texe adopt --check`, use
-`texe adopt --replace-conflicts` to accept those integration changes directly.
-`--no-editor` keeps your editor configuration.
-`--replace-conflicts` accepts only texe's integration changes. It does not replace
-the entire file. `texe editor --configure-only` updates settings without opening
-VS Code or installing extensions.
+Interactive `texe adopt` shows the proposed settings and asks before applying
+them. `--replace-conflicts` replaces only the conflicting texe keys, never the
+whole file, and settings you later change by hand count as conflicts rather than
+being overwritten. `--remove` restores texe-owned values that still match what
+texe wrote, so your edits survive; keep `.vscode/texe-integration.json` until
+then, since it holds the values needed to undo.
 
-`texe editor --remove` restores texe-owned values that still match what texe
-installed, preserving later edits. Keep `.vscode/texe-integration.json` until you
-remove the integration: it contains the original values required for undo. If
-nothing was edited after setup, removal restores the original settings bytes.
-Old settings created before ownership tracking cannot be automatically undone.
-
-If the first build fails, adoption still installs and opens the editor. Its
-failure is handed to the first editor session so Problems and the retained-PDF
-badge show what needs fixing. Fix the source and save to retry.
-
-## Work in VS Code
+## Everyday commands
 
 Trust the paper folder, then use the Command Palette:
 
 | Action | Command |
 | --- | --- |
 | First-use checklist | **texe: Writing Guide** |
-| Wrap source, hide generated files and make room for the PDF | **texe: Use Writing Layout** |
-| Restore settings changed by Writing Layout | **texe: Restore Previous Writing Settings** |
-| Locate the cursor in the PDF | **texe: Source to PDF** |
-| Save, build and open source/PDF | **texe: Build and View** |
-| Build without changing layout | **texe: Build Paper**, or **Tasks: Run Build Task → texe** |
+| Save, build, and open source and PDF | **texe: Build and View** |
+| Build without changing the layout | **texe: Build Paper** |
 | Restore the side-by-side view | **texe: Open Paper Side by Side** |
+| Locate the cursor in the PDF | **texe: Source to PDF** |
 | Find a source error | **texe: Show Problems**, then click the error |
 | Inspect engine output | **texe: Open Build Log** or **texe: Show Output** |
-| Check installed tools and caches | **texe: Check Setup** (offline) |
+| Wrap source and make room for the PDF | **texe: Use Writing Layout** |
+| Undo Writing Layout | **texe: Restore Previous Writing Settings** |
+| Check installed tools and caches, offline | **texe: Check Setup** |
 | Use a different texe installation | **texe: Choose Executable** |
-| Re-enable downloads after choosing offline builds | **texe: Allow Build Downloads** |
-| Use F5 for Build and View, F6 for Build | **texe: Enable Familiar Shortcuts** |
+| Re-enable downloads after offline builds | **texe: Allow Build Downloads** |
+| Use F5 to build and view, F6 to build | **texe: Enable Familiar Shortcuts** |
 
-Builds on save, tasks, and LaTeX Workshop’s Build button share the companion’s
-save/build queue and download policy. LaTeX Workshop uses a project-local,
-authenticated loopback bridge to reach that queue; open the trusted project
-in VS Code before using its build command. LaTeX Workshop's own
-auto-build is disabled to avoid duplicate builds. Set `texe.buildOnSave` to false
-for manual builds. Build commands save dirty documents in the selected paper
-folder first. In a multi-root workspace, commands select the active file's folder.
-The status bar shows the current build phase and elapsed time; click it during
-a build to cancel. Cancellation has a neutral status and does not create a new
-error toast or PDF error badge. Saving during a build queues the latest changes;
-success and recovery notices appear only after that queued build completes.
+Writing Layout is opt-in and saves the previous folder settings in VS Code
+workspace state. Restoring applies values that still match what it wrote. Use it
+before removing the companion if you also want the layout settings back.
 
-Editor context is reused between builds and refreshed when the manifest,
-executable, or workspace changes.
+## Builds
 
-Replacing or deleting an external figure or data file also triggers a rebuild.
-Published PDFs, SyncTeX, locks and private state are excluded to avoid loops.
+Builds on save, the build task, and LaTeX Workshop's Build button share one
+build queue and one download policy. LaTeX Workshop's own auto-build is disabled
+so nothing builds twice.
 
-Problems is replaced by each completed build, so an error fixed in one chapter
-does not linger when another chapter fails. Warnings link to the matching build
-log line; clicking the warning status opens Problems.
+- Set `texe.buildOnSave` to false for manual builds only.
+- Build commands first save unsaved files in the selected paper folder. In a
+  multi-root workspace, the active file selects the folder.
+- The status bar shows the build phase and elapsed time. Click it during a build
+  to cancel; cancelling is neutral and creates no error toast or PDF badge.
+- Saving during a build queues the newest changes. Success and recovery notices
+  appear once that queued build finishes.
+- Replacing or deleting an external figure or data file also triggers a rebuild.
+  Published PDFs, SyncTeX files, locks, and private state are excluded so builds
+  do not loop.
+- Saving `texe.toml` refreshes the source and PDF paths.
 
-The status bar reports failures; a failed build keeps the previous
-PDF, marks its tab with an error badge, and shows an error toast that explicitly
-says it is the previous successful build. **Show Error** jumps to the source;
-**Open Build Log** opens the log from the failed pass. Identical consecutive
-failures are not repeated as new toasts, and notifications never block the next
-build. A successful repair clears texe's diagnostics and the PDF badge.
+Open the trusted project in VS Code before using LaTeX Workshop's build command.
 
-Builds automatically download missing TeX tools and packages. You do not need
-an existing TeX installation for managed builds. Set `texe.allowDownloads` to
-false to explicitly use offline texe builds; those require cached dependencies.
-To resume automatic downloads, use **texe: Allow Build Downloads** and rebuild.
-Check Setup remains an offline diagnostic and does not initiate downloads.
+## Errors and warnings
 
-The generated executable path works when VS Code is launched from the desktop.
-If that absolute path belongs to another machine, the companion tries `texe` on
-PATH. Choose Executable updates the folder setting; rerun `texe editor` after
-moving an installation to refresh the LaTeX Workshop external-build command.
-For Remote SSH, WSL or containers, install texe where the extension host runs.
+A failed build keeps the previous PDF, marks its tab with an error badge, and
+shows a toast saying the PDF is from the last successful build. **Show Error**
+jumps to the source; **Open Build Log** opens the log from the failed pass. A
+successful repair clears the diagnostics and the badge.
 
-Saving `texe.toml` refreshes source and PDF paths through texe's manifest parser.
-Settings that you changed manually are treated as conflicts, not overwritten.
+Each completed build replaces Problems, so an error fixed in one chapter does
+not linger while another fails. Warnings link to the matching build log line,
+and clicking the warning status opens Problems. Repeated identical failures do
+not produce new toasts, and notifications never block the next build.
 
-## TeXstudio habits
+## Downloads
 
-Use LaTeX Workshop's **SyncTeX from cursor** for source → PDF. Ctrl+click in its
-PDF viewer performs inverse search (Cmd+click on macOS). The optional F5/F6
-bindings apply only to LaTeX editors in configured texe folders; they do not
-change your global VS Code keybindings.
+Builds download missing TeX tools and packages automatically; managed builds
+need no existing TeX installation. Set `texe.allowDownloads` to false for
+offline builds, which then require cached dependencies — **texe: Allow Build
+Downloads** and a rebuild resume downloading. Check Setup stays offline and
+never downloads.
 
-TeXstudio macros, custom menus, dictionaries and user commands are not imported.
-Keep using the original folder while you reproduce those personal conveniences
-with VS Code snippets, shortcuts and extensions. Before switching your daily
-workflow, build your paper once and check its references, figures and fonts.
+## Finding the texe executable
 
-Writing Layout is opt-in and saves previous folder settings in VS Code workspace
-state. Restore Previous Writing Settings restores values that still match what
-it applied, preserving later manual edits. Use it before removing the companion
-if you also want to undo the optional layout settings.
+The generated path works when VS Code is launched from the desktop; if it
+belongs to another machine, the companion falls back to `texe` on `PATH`.
+**Choose Executable** updates the folder setting, and rerunning `texe editor`
+after moving an installation refreshes LaTeX Workshop's external build command.
+For Remote SSH, WSL, and containers, install texe where the extension host runs.
+
+## Coming from TeXstudio
+
+Use LaTeX Workshop's **SyncTeX from cursor** for source → PDF, and Ctrl+click in
+its PDF viewer for inverse search (Cmd+click on macOS). The optional F5 and F6
+bindings apply only to LaTeX editors in configured texe folders.
+
+TeXstudio macros, custom menus, dictionaries, and user commands are not
+imported. Keep using the original folder while you rebuild those conveniences
+from VS Code snippets, shortcuts, and extensions. Before switching your daily
+workflow, build the paper once and check its references, figures, and fonts.

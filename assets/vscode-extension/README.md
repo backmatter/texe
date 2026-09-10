@@ -20,4 +20,4 @@ this companion and configures the folder. **texe: Choose Executable** repairs a
 missing CLI path. The companion runs only in trusted workspaces and collects no
 telemetry.
 
-[Migration and settings removal](https://github.com/backmatter/texe/blob/main/docs/vscode.md)
+[VS Code setup and settings removal](https://github.com/backmatter/texe/blob/main/docs/vscode.md)

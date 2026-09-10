@@ -1,10 +1,7 @@
 //! Human build progress and local timing history.
 //!
-//! Timing observations are deliberately derived, local-only state, keyed by a
-//! hash of the project root below `TEXE_HOME`. They do not enter `texe.lock`,
-//! the build fingerprint, or any engine environment. The estimates can
-//! therefore improve the interactive experience without changing what a build
-//! resolves or the bytes it produces.
+//! Timing estimates are stored below `TEXE_HOME`, keyed by the project root.
+//! They do not affect package resolution, build fingerprints, or output bytes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal as _;

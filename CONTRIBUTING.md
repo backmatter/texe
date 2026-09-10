@@ -1,30 +1,20 @@
-# Contributing to texe
+# Contributing
 
-Thank you for helping improve texe. Start with an issue before making a change
-that alters the manifest, lock or JSON schema contracts, supported platforms,
-managed trust boundary, release artifacts, or pqty integration. Small fixes and
-documentation improvements can go directly to a pull request.
+Discuss changes to public formats, supported platforms, or build security in an
+issue first; small fixes can go straight to a pull request. Report
+vulnerabilities through [SECURITY.md](SECURITY.md).
 
-Use the [issue tracker](https://github.com/backmatter/texe/issues) for public
-design discussion. Vulnerabilities follow the private process in
-[SECURITY.md](SECURITY.md).
+## Set up a checkout
 
-## Fresh-clone setup
-
-Install Git and [rustup](https://rustup.rs/), then clone texe:
+Install Git and [rustup](https://rustup.rs/). `rust-toolchain.toml` selects the
+Rust version.
 
 ```sh
 git clone https://github.com/backmatter/texe.git
 cd texe
-rustup show active-toolchain
 ```
 
-`rust-toolchain.toml` selects the supported Rust toolchain and installs
-Rustfmt and Clippy. The ordinary Rust checks do not require TeX Live or a pqty
-checkout.
-
-The complete command-suite and managed-toolchain tests use pqty at the exact
-revision in `suite.lock.toml`. Clone it beside texe:
+Integration tests also need the pinned pqty checkout:
 
 ```sh
 git clone https://github.com/backmatter/pqty.git ../pqty
@@ -33,114 +23,88 @@ git -C ../pqty switch --detach "$pqty_revision"
 cargo xtask pqty check ../pqty
 ```
 
-Set `PQTY_REPO=/another/path/pqty` when the repositories are not siblings.
+Set `PQTY_REPO` if pqty lives elsewhere.
 
-## Fast checks
-
-Run these while iterating and before every pull request:
+## Run the checks
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 RUSTDOCFLAGS="-D warnings -D missing-docs" cargo doc --workspace --no-deps --locked
+node --test tests/*.test.js
 ```
 
-The dependency policy check requires
-[`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny):
+Dependency policy needs `cargo-deny`. Install it with
+`cargo install cargo-deny --locked`, then run `cargo deny check`.
+
+## Verify builds end to end
 
 ```sh
-cargo install cargo-deny --locked
-cargo deny check
+cargo xtask verify contracts   # the three commands against a local registry
+cargo xtask verify local       # build papers with a system TeX Live
+cargo xtask verify platform    # managed install and build checks per platform
+cargo xtask verify             # Rust checks, contracts, and managed build cases
 ```
 
-CI repeats these checks on Linux x86-64, Windows x86-64, and macOS Apple
-Silicon.
+- `verify contracts` builds the pinned pqty checkout and tests texe, pqty, and
+  pqty-fls against an isolated local package registry. It needs no TeX
+  installation and no downloads.
+- `verify local` needs system `pdflatex`, `kpsewhich`, and a local
+  `texlive.tlpdb`. It covers PDF production, package discovery, frozen
+  rebuilds, repeatable output, and recovery from publication failures.
+- Plain `cargo xtask verify` reruns the Rust checks, then downloads the pinned
+  tools and packages to check pdfLaTeX, LuaLaTeX, bibliographies, indexes, and
+  glossaries with empty caches. Install Poppler's `pdffonts` for the font
+  checks. It does not include the `local` or `platform` cases.
 
-## Local command-suite contracts
-
-Run the actual texe, pqty, and pqty-fls binaries against a tiny synthetic local
-registry, with isolated caches and no TeX engine or downloads:
+Add `--suite-bin /path/to/suite/bin` to any single case to reuse existing
+binaries; the directory must hold all three executables. On Linux you can also
+run a case with networking disabled, which needs permission to create user and
+network namespaces:
 
 ```sh
-cargo xtask verify contracts
+unshare --user --map-root-user --net \
+  target/debug/xtask verify contracts --suite-bin /path/to/suite/bin
 ```
 
-The default verifies and builds the pinned pqty checkout. To test development
-binaries already assembled in one directory, use
-`cargo xtask verify contracts --suite-bin /path/to/bin`. This explicit option
-checks behavior; it does not certify the binaries against the release pin.
-
-See [verification coverage](docs/verification.md) for the promises covered by
-each test tier and how to enforce network isolation on Linux.
-
-## Build performance
-
-Measure optimized binaries (`cargo build --release --locked` in texe and
-`cargo build --release --workspace --locked` in pqty), assembled in a suite
-directory containing `texe`, `pqty`, and `pqty-fls`. Debug-build timings include
-substantial unoptimized hashing and package-processing overhead.
-
-With system TeX Live installed, run:
+## Test the VS Code integration
 
 ```sh
-python3 scripts/benchmark-build.py /path/to/suite --runs 5 --output timings.json
+npm ci --prefix tests/vscode --ignore-scripts
+TEXE_TEST_MANAGED=1 TEXE_TEST_SUITE=/absolute/path/to/suite npm test --prefix tests/vscode
 ```
 
-Add `--baseline /path/to/previous-suite` to interleave before/after measurements.
-Use `--fixture references` to exercise a longer document with maths, hyperlinks,
-a table of contents, and cross-references.
-The benchmark builds a small paper offline in temporary projects with isolated
-texe caches. It reports full process wall time, the first build separately, and
-the median of subsequent prose edits, plus engine and convergence counts.
-It invokes the actual suite binaries directly. This measures orchestration
-overhead; it does not predict large-document, bibliography, or download times.
-Avoid concurrent compilation when collecting timings.
+Omit `TEXE_TEST_MANAGED=1` to use system `pdflatex` and `kpsewhich`. The tests
+run against a temporary VS Code profile, extension directory, and paper,
+covering PDF refresh, diagnostics, failure recovery, SyncTeX, build commands,
+and manifest changes. Linux needs a display server or Xvfb. Screenshots and
+`results.json` land in the temporary directory the run prints.
 
-`cargo xtask verify local --suite-bin /path/to/suite` also checks that warm edits
-do not repeat runtime convergence or discovery, and verifies failure recovery.
+The harness downloads the VS Code and LaTeX Workshop versions pinned in
+[`tests/vscode/run.js`](tests/vscode/run.js). To use local copies, set
+`VSCODE_EXECUTABLE` to an Electron executable and `LATEX_WORKSHOP_PATH` to an
+installed extension directory.
 
-## Networked acceptance tests
+## Pull requests
 
-Changes to the build pipeline, managed toolchains, release packaging, or pqty
-boundary also need:
+Explain the behavior change and how you tested it. Include regression tests for
+bugs and new behavior, and update affected schemas and user documentation. Use a
+Conventional Commit title, such as `fix(cli): explain a missing lock`.
 
-```sh
-cargo xtask verify
-```
+The title becomes the changelog entry, so write it for a reader of the release
+notes. `feat`, `fix`, and `docs` titles are published; `chore`, `ci`, `build`,
+`refactor`, `style`, and `test` are omitted. Add a `changelog: ignore` footer to
+leave out a commit that would otherwise appear.
 
-This Linux-oriented gate builds the pinned sibling pqty checkout and exercises
-pdfLaTeX, LuaLaTeX, BibTeX, Biber, indexes, glossaries, offline operation, and
-empty-cache frozen reproduction. It downloads the pinned TeX runtime and
-package containers. Install Poppler's `pdffonts` command for the font checks.
+The CLI and versioned data formats are public contracts. The Rust library is an
+internal API and may change between releases.
 
-Use `cargo xtask verify local` to check the system provider explicitly when a
-host `pdflatex` and `kpsewhich` are installed. Hosted CI runs the clean managed
-user journey separately on every supported target. Describe any environment
-limitation in the pull request when a relevant networked test cannot be run
-locally.
+## Releases
 
-## Making changes
+release-plz opens a release PR that bumps the version, rewrites `CHANGELOG.md`
+from the commit titles, and tags and drafts the GitHub release once merged. The
+release body repeats the changelog entry. Do not edit `CHANGELOG.md` by hand;
+correct a wrong entry by amending the commit title before it is released.
 
-Add regression tests for behavior changes. Keep JSON and TOML schemas,
-documentation, fixtures, and human error text aligned with the implementation.
-Do not weaken path, digest, size, redirect, or command-execution checks to make
-a fixture pass.
-
-Public contracts are the CLI, project and lock formats, versioned JSON results,
-watch events, and documented trust boundary. The Rust library is an
-implementation API and may change between releases.
-
-Pull requests should:
-
-- stay focused and leave unrelated working-tree changes untouched;
-- explain user-visible behavior and trust-boundary changes;
-- include tests for defects or new behavior;
-- use a Conventional Commit title such as `fix(cli): explain a missing lock`;
-- update documentation when users need to act differently.
-
-By contributing, you agree that your contribution is licensed under this
-repository's MIT License.
-
-Security reports follow [SECURITY.md](SECURITY.md), not the public issue
-tracker.
+Contributions are licensed under the [MIT License](LICENSE).
