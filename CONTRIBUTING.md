@@ -38,6 +38,11 @@ node --test tests/*.test.js
 Dependency policy needs `cargo-deny`. Install it with
 `cargo install cargo-deny --locked`, then run `cargo deny check`.
 
+CI caches Cargo dependencies and their compiled artifacts for each job and
+runner image. Successful `main` runs save caches; pull requests restore them.
+Managed TeX runtimes, package stores, and test projects remain uncached, so
+the managed journeys still exercise clean installations.
+
 ## Verify builds end to end
 
 ```sh

@@ -42,6 +42,13 @@ jobs:
       - name: Show pinned toolchain
         run: rustup show active-toolchain
 
+      - name: Cache Rust dependencies and build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.os }}
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Verify release architecture
         shell: bash
         run: |
@@ -135,6 +142,15 @@ jobs:
           ref: ${{ steps.suite.outputs.revision }}
           path: pqty
           persist-credentials: false
+      - name: Cache Rust dependencies and build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.os }}
+          workspaces: |
+            . -> target
+            pqty -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install virtual display
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb
@@ -202,6 +218,16 @@ jobs:
           ref: ${{ steps.suite.outputs.revision }}
           path: pqty
           persist-credentials: false
+
+      - name: Cache Rust dependencies and build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.os }}
+          workspaces: |
+            . -> target
+            pqty -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Verify release architecture
         shell: bash

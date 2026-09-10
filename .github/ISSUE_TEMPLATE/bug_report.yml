@@ -34,7 +34,7 @@ body:
     id: installation
     attributes:
       label: Installation method
-      placeholder: Debian package, WinGet, Homebrew, portable installer, or source
+      placeholder: Install script, offline archive, Debian package, Windows app, macOS app, or source
     validations:
       required: true
 
