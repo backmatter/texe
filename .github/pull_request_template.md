@@ -11,7 +11,9 @@
 <!-- List the commands and acceptance journeys you ran. Explain any relevant environment limitation. -->
 
 - [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --all-targets --locked -- -D warnings`
-- [ ] `cargo test --locked`
-- [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked`
+- [ ] `cargo clippy --workspace --all-targets --locked -- -D warnings`
+- [ ] `cargo test --workspace --locked`
+- [ ] `RUSTDOCFLAGS="-D warnings -D missing-docs" cargo doc --workspace --no-deps --locked`
+- [ ] `node --test tests/*.test.js`
+- [ ] `cargo deny check`
 - [ ] Relevant documentation, schemas, and fixtures are updated
