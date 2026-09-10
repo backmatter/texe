@@ -11,10 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- add optional native paper setup apps ([#19](https://github.com/backmatter/texe/pull/19))
-
-### Added
-
 - Optional macOS and Windows apps for creating and opening papers, installing
   VS Code, and building PDFs. Each new paper gets its own project folder.
 
