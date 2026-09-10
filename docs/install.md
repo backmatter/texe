@@ -21,16 +21,7 @@ If your computer is not in this table, read the
 
 ### Debian or Ubuntu
 
-Open the [latest texe release](https://github.com/backmatter/texe/releases/latest),
-expand **Assets**, and download the versioned package named
-`texe_VERSION_amd64.deb`. Open the downloaded package with the system software
-installer and choose **Install**. When it finishes, open Terminal and run:
-
-```sh
-texe --version
-```
-
-For a terminal-only installation that automatically finds the current version:
+Run in Terminal:
 
 ```sh
 release_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' \
@@ -43,8 +34,7 @@ sudo apt install "./${package}"
 texe --version
 ```
 
-Every release keeps its version in the Debian filename; no unversioned Debian
-asset is published.
+The Debian package includes the version in its filename.
 
 ### Other Linux distributions or no administrator access
 
@@ -123,8 +113,6 @@ bash install-texe.sh --from texe-aarch64-macos.tar.gz
 
 ## Create your first paper
 
-After installation:
-
 1. Open a new Terminal window, or PowerShell on Windows.
 2. Run `texe --version` to confirm the command is available.
 3. Move into the folder that should contain the new paper.
@@ -139,11 +127,37 @@ and `main.pdf` and suggests the next command.
 Return to the [first-paper guide](../README.md#create-your-first-paper) for the
 writing workflow.
 
+## Optional desktop apps
+
+The Windows and macOS apps provide graphical setup and bundle a private command
+suite. They do not add `texe` to your shell PATH. Use the CLI instructions above
+for terminal use.
+
+Desktop installers are available in releases that list these assets:
+
+- Windows: `texe-x86_64-windows-setup.exe`. Run it, then open texe from Start.
+- macOS: `texe-aarch64-macos.dmg`. Open it and drag texe into Applications.
+
+In the app:
+
+1. Click **New paper** and enter the title and author.
+2. Keep **VS Code** and **pdfLaTeX**, or choose another editor or engine.
+3. Check the project path. **Change…** selects the parent folder; texe creates
+   a separate folder named after the paper.
+4. Click **Create paper**. If VS Code is missing, click **Install VS Code**.
+5. Wait for **Your paper is ready**. Trust the folder in VS Code when asked.
+
+**New paper** starts another project. **Open a paper…** opens an existing one.
+**Build again** rebuilds it; **Show files** opens its folder.
+
+Check the release notes for signing status. Development builds are unsigned on
+Windows and ad-hoc signed on macOS; they are not notarized releases.
+
 ## Verify a release
 
-This section is optional. Every release includes one aggregate `SHA256SUMS`
-file and GitHub build provenance for all release assets. Windows and macOS
-commands are not platform-signed.
+Every release includes `SHA256SUMS` and GitHub build provenance. These verify
+file integrity and build origin; they are not Apple or Windows code signatures.
+Platform signing is not currently configured. See [signing status](signing.md).
 
 Advanced users can independently verify a downloaded archive with:
 
@@ -171,7 +185,15 @@ uninstalling the command suite:
 texe clean --all
 ```
 
-Native uninstall:
+Graphical uninstall:
+
+- Windows: open **Settings → Apps → Installed apps**, find **texe**, and choose
+  **Uninstall**.
+- macOS: quit texe and move **texe.app** from Applications to the Trash.
+
+These actions keep your papers, PDFs, and downloaded TeX caches.
+
+Command-line package uninstall:
 
 - Debian or Ubuntu: `sudo apt remove texe`
 - Windows WinGet: `winget uninstall --exact --id Backmatter.Texe`

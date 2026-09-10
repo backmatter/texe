@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use sha2::{Digest as _, Sha256};
 
@@ -152,7 +151,7 @@ fn query_directories(kpsewhich: &Path) -> Result<(PathBuf, Vec<PathBuf>), TexeEr
     // Newline delimiters preserve spaces and platform path-list separators.
     const QUERY: &str =
         "-expand-var=$TEXMFDIST\n$TEXMFSYSVAR\n$TEXMFSYSCONFIG\n$TEXMFVAR\n$TEXMFCONFIG";
-    let output = Command::new(kpsewhich)
+    let output = crate::process::command(kpsewhich)
         .arg(QUERY)
         .output()
         .map_err(|source| TexeError::Spawn {
@@ -195,7 +194,7 @@ fn parse_directories(kpsewhich: &Path, output: &str) -> Result<(PathBuf, Vec<Pat
 }
 
 pub fn executable_version(path: &Path) -> Result<String, TexeError> {
-    let output = Command::new(path)
+    let output = crate::process::command(path)
         .arg(OsStr::new("--version"))
         .output()
         .map_err(|source| TexeError::Spawn {

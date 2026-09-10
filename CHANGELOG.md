@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional macOS and Windows apps for creating and opening papers, installing
+  VS Code, and building PDFs. Each new paper gets its own project folder.
+
+### Fixed
+
+- Finish Windows setup when texe exits, even if VS Code remains open.
+- Normalize accented titles and authors before writing LaTeX source.
+- Keep background tool launches from opening console windows on Windows.
+
+### Documentation
+
+- Keep the CLI as the preferred installation and writing workflow.
+- Document desktop installation and signing status. The Windows installer is
+  unsigned; the Mac app is ad-hoc signed and is not notarized.
+
 ## [0.1.3](https://github.com/backmatter/texe/compare/v0.1.2...v0.1.3) - 2026-09-08
 
 ### Added

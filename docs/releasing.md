@@ -71,9 +71,28 @@ release. The tag workflow:
   the installed binaries;
 - builds and installs the Debian package;
 - tests the Linux, macOS, and Windows portable installers and uninstallers;
+- builds `texe-aarch64-macos.dmg` with the AppKit welcome app and private suite;
+- builds `texe-x86_64-windows-setup.exe` with the Windows Forms welcome app,
+  then tests installation, bundled project setup, and uninstall;
 - renders Homebrew and WinGet submissions;
 - writes one aggregate `SHA256SUMS`, attests all assets, and publishes the
   draft GitHub Release.
+
+## Native desktop releases
+
+The native welcome apps are built from `desktop/` and bundled with the same
+pinned command suite that passed the installed-suite tests. CLI archives are
+the default distribution; desktop installers are optional. Follow the [desktop acceptance checklist](../desktop/README.md)
+on a clean Windows and macOS account before releasing the graphical downloads.
+
+See [signing status and no-cost options](signing.md). Configure credentials on
+the release hosts as described in the
+[desktop signing guide](../desktop/README.md#signing). The package scripts support
+Developer ID signing and notarization on macOS, and timestamped Authenticode
+signatures on Windows. Hosted CI currently produces unsigned Windows and ad-hoc
+signed macOS artifacts unless signing credentials are provisioned. State that
+status in release notes; these builds can show OS security prompts and must not
+be presented as signed or notarized.
 
 ## Updating pqty
 

@@ -1,0 +1,94 @@
+name: Complete Mac app workflow
+
+on:
+  push:
+    branches: [codex/native-welcome]
+    paths: [desktop/macos/**, .github/workflows/mac-workflow-check.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: texe-mac-workflow-check
+  cancel-in-progress: true
+
+jobs:
+  session:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read pinned suite metadata
+        id: metadata
+        shell: bash
+        run: |
+          echo "revision=$(cargo xtask pqty revision)" >> "$GITHUB_OUTPUT"
+          version="$(cargo pkgid --package texe | sed -E 's/.*[@#]([^@#]+)$/\1/')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: backmatter/pqty
+          ref: ${{ steps.metadata.outputs.revision }}
+          path: pqty
+          persist-credentials: false
+
+      - name: Build and assemble the current command suite
+        shell: bash
+        run: |
+          cargo build --locked --package texe
+          cargo build --locked --workspace --manifest-path pqty/Cargo.toml
+          mkdir -p "$RUNNER_TEMP/native-app-suite"
+          suffix=""
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix=".exe"; fi
+          cp "target/debug/texe$suffix" "$RUNNER_TEMP/native-app-suite/"
+          cp "pqty/target/debug/pqty$suffix" "$RUNNER_TEMP/native-app-suite/"
+          cp "pqty/target/debug/pqty-fls$suffix" "$RUNNER_TEMP/native-app-suite/"
+
+      - name: Package and test the Mac app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ./scripts/package-macos-app.sh "$RUNNER_TEMP/native-app-suite" \
+            "$RUNNER_TEMP/texe-test.dmg" "${{ steps.metadata.outputs.version }}"
+
+      - name: Install the packaged Mac app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/texe-mounted"
+          hdiutil attach "$RUNNER_TEMP/texe-test.dmg" -nobrowse -mountpoint "$RUNNER_TEMP/texe-mounted"
+          cp -R "$RUNNER_TEMP/texe-mounted/texe.app" /Applications/
+          hdiutil detach "$RUNNER_TEMP/texe-mounted"
+
+      - name: Exercise the native app with real installation and PDF builds
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/mac-workflow-evidence"
+          # A disposable runner may ship VS Code. Hide that copy for this clean-install test.
+          if [[ -d '/Applications/Visual Studio Code.app' ]]; then
+            mv '/Applications/Visual Studio Code.app' "$RUNNER_TEMP/Preinstalled VS Code.app"
+          fi
+          xcrun swiftc -D WORKFLOW_TEST -swift-version 5 -warnings-as-errors \
+            -target arm64-apple-macos12.0 -framework AppKit desktop/macos/main.swift \
+            desktop/macos/tests/WorkflowCheck.swift -o /Applications/texe.app/Contents/MacOS/texe-desktop
+          codesign --force --sign - /Applications/texe.app
+          sudo python3 desktop/macos/tests/permissions.py
+          TEXE_WORKFLOW_EVIDENCE="$RUNNER_TEMP/mac-workflow-evidence" \
+            /Applications/texe.app/Contents/MacOS/texe-desktop
+
+      - name: Upload workflow evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mac-workflow-evidence
+          path: ${{ runner.temp }}/mac-workflow-evidence
+          if-no-files-found: warn

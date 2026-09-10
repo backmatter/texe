@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{Cursor, Read as _, Write as _};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -235,15 +235,15 @@ impl Viewer {
     pub(crate) fn open_browser(&self) -> Result<bool, TexeError> {
         let url = self.url();
         let mut command = if cfg!(target_os = "macos") {
-            let mut command = Command::new("open");
+            let mut command = crate::process::command("open");
             command.arg(&url);
             command
         } else if cfg!(target_os = "windows") {
-            let mut command = Command::new("cmd");
+            let mut command = crate::process::command("cmd");
             command.args(["/C", "start", "", &url]);
             command
         } else {
-            let mut command = Command::new("xdg-open");
+            let mut command = crate::process::command("xdg-open");
             command.arg(&url);
             command
         };

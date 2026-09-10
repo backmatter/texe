@@ -1,6 +1,6 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use crate::app::build_command::run_build_in_flow;
 use crate::app::setup::init::{InitCommand, InitIntegrations, quoted_path, run_init};
@@ -318,7 +318,7 @@ fn title_from_project_name(name: &str) -> String {
 }
 
 fn command_available(command: &str) -> bool {
-    Command::new(command)
+    crate::process::command(command)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
