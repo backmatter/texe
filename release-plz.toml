@@ -9,6 +9,9 @@ git_tag_name = "v{{ version }}"
 pr_draft = false
 publish = false
 release_always = false
+# Internal maintenance alone must not open an empty release PR. Breaking
+# changes still trigger a release regardless of their Conventional Commit type.
+release_commits = '^(feat|fix|docs|perf|revert)(\([^\r\n)]*\))?!?:|^[a-z]+(\([^\r\n)]*\))?!:|(?m)^BREAKING[ -]CHANGE:'
 repo_url = "https://github.com/backmatter/texe"
 semver_check = true
 
