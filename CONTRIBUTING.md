@@ -107,6 +107,10 @@ internal API and may change between releases.
 
 ## Releases
 
+Release PRs require a `feat`, `fix`, `docs`, `perf`, or `revert` commit, or a
+breaking change marked with `!` or a `BREAKING CHANGE:` footer. Internal
+maintenance commits alone do not trigger a release.
+
 release-plz opens a release PR that bumps the version, rewrites `CHANGELOG.md`
 from the commit titles, and tags and drafts the GitHub release once merged. The
 release body repeats the changelog entry. Do not edit `CHANGELOG.md` by hand;
