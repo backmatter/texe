@@ -62,7 +62,16 @@ exports.run = async () => {
     "\\begin{itemize}\n\\item hello world\n\\end{itemize}\n",
   );
   const probeDocument = await vscode.workspace.openTextDocument(probe);
-  const probeEditor = await vscode.window.showTextDocument(probeDocument);
+  // Keep the PDF visible: the active group after Build and View can be its
+  // group, and opening the probe there hides the webview on slower runners.
+  const sourceColumn =
+    vscode.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.toString() === source.toString(),
+    )?.viewColumn || vscode.ViewColumn.One;
+  const probeEditor = await vscode.window.showTextDocument(probeDocument, {
+    viewColumn: sourceColumn,
+    preview: true,
+  });
   probeEditor.options = { tabSize: 2, insertSpaces: true };
   await until(async () => {
     await vscode.commands.executeCommand("editor.action.formatDocument");
@@ -72,6 +81,14 @@ exports.run = async () => {
     "workbench.action.revertAndCloseActiveEditor",
   );
   fs.unlinkSync(probe.fsPath);
+  assert.ok(
+    vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some(
+        (tab) => tab.isActive && tab.input?.uri?.fsPath === pdf.fsPath,
+      ),
+    ),
+    "formatting probe must leave the PDF visible",
+  );
   console.log("PASS tex-ls formats through the default VS Code formatter");
   assert.ok(
     fs.existsSync(path.join(root, ".texe/texmf/ls-R")),
@@ -104,10 +121,36 @@ exports.run = async () => {
     () => connect((target) => target.url.includes("viewer.html?")),
     "PDF webview did not load",
   );
-  await until(
-    () => pdfFrame.evaluate("document.body.innerText.includes('real paper')"),
-    "PDF pages were not rendered",
-  );
+  try {
+    await until(
+      () => pdfFrame.evaluate("document.body.innerText.includes('real paper')"),
+      "PDF pages were not rendered",
+    );
+  } catch (error) {
+    await page.screenshot(
+      path.join(process.env.TEXE_TEST_ROOT, "pdf-render-failure.png"),
+    );
+    fs.writeFileSync(
+      path.join(process.env.TEXE_TEST_ROOT, "pdf-render-failure.json"),
+      JSON.stringify(
+        {
+          tabs: vscode.window.tabGroups.all.map((group) => ({
+            column: group.viewColumn,
+            tabs: group.tabs.map((tab) => ({
+              label: tab.label,
+              active: tab.isActive,
+            })),
+          })),
+          viewer: await pdfFrame.evaluate(
+            "({ text: document.body.innerText, visibility: document.visibilityState })",
+          ),
+        },
+        null,
+        2,
+      ),
+    );
+    throw error;
+  }
   await page.screenshot(path.join(process.env.TEXE_TEST_ROOT, "01-built.png"));
   console.log("PASS real PDF webview rendered document text");
   const syncBytes = fs.readFileSync(path.join(root, "paper.v2.synctex.gz"));
