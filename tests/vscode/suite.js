@@ -20,6 +20,9 @@ exports.run = async () => {
   const companion = vscode.extensions.getExtension(
     "backmatter.texe-paper-layout",
   );
+  const languageServer = vscode.extensions.getExtension("backmatter.tex-ls");
+  assert.ok(languageServer, "tex-ls is installed alongside the companion");
+  await languageServer.activate();
   const api = await companion.activate();
   await api.ready;
   const report = await vscode.commands.executeCommand("texe.buildAndView");
@@ -31,6 +34,81 @@ exports.run = async () => {
     tabs.some((tab) => tab.input?.uri?.fsPath === pdf.fsPath),
     "real PDF editor opened",
   );
+  assert.equal(
+    vscode.workspace
+      .getConfiguration("tex-ls", source)
+      .get("diagnostics.compiler"),
+    false,
+  );
+  assert.equal(
+    vscode.workspace
+      .getConfiguration("editor", { uri: source, languageId: "latex" })
+      .get("defaultFormatter"),
+    "backmatter.tex-ls",
+  );
+  const languageConfig = fs.readFileSync(
+    path.join(root, "tex-ls.toml"),
+    "utf8",
+  );
+  assert.match(languageConfig, /aux-dir\s*=\s*".texe\/build\/output"/);
+  const languageDocument = await vscode.workspace.openTextDocument(source);
+  assert.equal(languageDocument.languageId, "latex");
+  const probe = vscode.Uri.file(
+    path.join(root, ".texe/editor/language-probe.tex"),
+  );
+  fs.mkdirSync(path.dirname(probe.fsPath), { recursive: true });
+  fs.writeFileSync(
+    probe.fsPath,
+    "\\begin{itemize}\n\\item hello world\n\\end{itemize}\n",
+  );
+  const probeDocument = await vscode.workspace.openTextDocument(probe);
+  // Keep the PDF visible: the active group after Build and View can be its
+  // group, and opening the probe there hides the webview on slower runners.
+  const sourceColumn =
+    vscode.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.toString() === source.toString(),
+    )?.viewColumn || vscode.ViewColumn.One;
+  const probeEditor = await vscode.window.showTextDocument(probeDocument, {
+    viewColumn: sourceColumn,
+    preview: true,
+  });
+  probeEditor.options = { tabSize: 2, insertSpaces: true };
+  await until(async () => {
+    await vscode.commands.executeCommand("editor.action.formatDocument");
+    return probeDocument.getText().includes("  \\item hello world");
+  }, "tex-ls did not format the document with the requested indentation");
+  await vscode.commands.executeCommand(
+    "workbench.action.revertAndCloseActiveEditor",
+  );
+  fs.unlinkSync(probe.fsPath);
+  assert.ok(
+    vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some(
+        (tab) => tab.isActive && tab.input?.uri?.fsPath === pdf.fsPath,
+      ),
+    ),
+    "formatting probe must leave the PDF visible",
+  );
+  console.log("PASS tex-ls formats through the default VS Code formatter");
+  assert.ok(
+    fs.existsSync(path.join(root, ".texe/texmf/ls-R")),
+    "package installation wrote ls-R",
+  );
+  assert.match(languageConfig, /extend-exclude\s*=.*\/\.texe\/texmf\//);
+  await until(async () => {
+    const definitions = await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      source,
+      new vscode.Position(0, 17),
+    );
+    return definitions?.some(
+      (definition) =>
+        (definition.targetUri || definition.uri)?.fsPath ===
+        path.join(root, ".texe/texmf/tex/latex/base/article.cls"),
+    );
+  }, "tex-ls did not discover the installed project class while running");
+  console.log("PASS project exclusions and live installed-package navigation");
+
   console.log(
     "PASS real build and PDF tab for dotted filename in path with spaces",
   );
@@ -43,26 +121,64 @@ exports.run = async () => {
     () => connect((target) => target.url.includes("viewer.html?")),
     "PDF webview did not load",
   );
-  await until(
-    () => pdfFrame.evaluate("document.body.innerText.includes('real paper')"),
-    "PDF pages were not rendered",
-  );
+  try {
+    await until(
+      () => pdfFrame.evaluate("document.body.innerText.includes('real paper')"),
+      "PDF pages were not rendered",
+    );
+  } catch (error) {
+    await page.screenshot(
+      path.join(process.env.TEXE_TEST_ROOT, "pdf-render-failure.png"),
+    );
+    fs.writeFileSync(
+      path.join(process.env.TEXE_TEST_ROOT, "pdf-render-failure.json"),
+      JSON.stringify(
+        {
+          tabs: vscode.window.tabGroups.all.map((group) => ({
+            column: group.viewColumn,
+            tabs: group.tabs.map((tab) => ({
+              label: tab.label,
+              active: tab.isActive,
+            })),
+          })),
+          viewer: await pdfFrame.evaluate(
+            "({ text: document.body.innerText, visibility: document.visibilityState })",
+          ),
+        },
+        null,
+        2,
+      ),
+    );
+    throw error;
+  }
   await page.screenshot(path.join(process.env.TEXE_TEST_ROOT, "01-built.png"));
   console.log("PASS real PDF webview rendered document text");
   const syncBytes = fs.readFileSync(path.join(root, "paper.v2.synctex.gz"));
-  fs.writeFileSync(path.join(process.env.TEXE_TEST_ROOT, "paper.synctex.gz"), syncBytes);
+  fs.writeFileSync(
+    path.join(process.env.TEXE_TEST_ROOT, "paper.synctex.gz"),
+    syncBytes,
+  );
   const syncText = require("node:zlib").gunzipSync(syncBytes).toString("utf8");
-  console.log("SYNCTEX EVIDENCE", JSON.stringify({ source: source.fsPath, text: syncText.slice(0, 8000) }));
+  console.log(
+    "SYNCTEX EVIDENCE",
+    JSON.stringify({ source: source.fsPath, text: syncText.slice(0, 8000) }),
+  );
   const workshop = vscode.extensions.getExtension("James-Yu.latex-workshop");
   await workshop.activate();
   // Pinned integration-test hooks only: production uses public VS Code commands.
   // Reuse the activated module: Windows drive-letter casing can otherwise
   // cause Node to load a second copy and break Workshop's circular imports.
   const loaded = Object.values(require.cache).filter(
-    (module) => module.filename?.replaceAll("\\", "/").endsWith("/out/src/locate/synctex.js")
-      && module.exports?.synctex,
+    (module) =>
+      module.filename
+        ?.replaceAll("\\", "/")
+        .endsWith("/out/src/locate/synctex.js") && module.exports?.synctex,
   );
-  assert.equal(loaded.length, 1, "expected one activated LaTeX Workshop SyncTeX module");
+  assert.equal(
+    loaded.length,
+    1,
+    "expected one activated LaTeX Workshop SyncTeX module",
+  );
   const { synctex } = loaded[0].exports;
   const forward = await synctex.components.synctexToPDFCombined(
     3,
@@ -379,6 +495,13 @@ exports.run = async () => {
         .getConfiguration("latex-workshop", folder.uri)
         .get("latex.search.rootFiles.include")?.[0] === "revised.v3.tex",
     "manifest edit did not refresh editor root",
+  );
+  await until(
+    () =>
+      fs
+        .readFileSync(path.join(root, "tex-ls.toml"), "utf8")
+        .includes('root = "revised.v3.tex"'),
+    "manifest edit did not refresh tex-ls root",
   );
   const revised = await vscode.commands.executeCommand("texe.buildAndView");
   assert.equal(revised.schema, "texe.build-report/v1");

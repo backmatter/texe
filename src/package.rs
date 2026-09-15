@@ -15,6 +15,8 @@ use crate::progress::Progress;
 use crate::toolchain::{ResolvedToolchain, locked_format_bootstrap_providers, resolve_executable};
 
 const CAPABILITIES_SCHEMA: &str = "pqty.capabilities/v1";
+mod filename_database;
+
 const LOCK_SCHEMA: &str = "pqty.lock/v1";
 const ENVIRONMENT_SCHEMA: &str = "pqty.env/v1";
 const TRACE_SCHEMA: &str = "pqty.trace/v1";
@@ -273,7 +275,8 @@ impl PqtyClient {
         append_store_argument(&mut arguments, project_root, manifest);
         self.checked_output_with_progress(&arguments, project_root, progress)
             .map(|_| ())
-            .map_err(|error| error.context("could not install pqty environment"))
+            .map_err(|error| error.context("could not install pqty environment"))?;
+        filename_database::refresh(texmf)
     }
 
     pub(crate) fn environment(

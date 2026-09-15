@@ -5,5 +5,10 @@
   "pdf": "paper.v2.pdf",
   "log": ".texe/build/output/paper.v2.log",
   "engine": "pdflatex",
-  "executable": "/usr/bin/texe"
+  "executable": "/usr/bin/texe",
+  "auxDir": ".texe/build/output",
+  "texmfRoots": [
+    "/paper/.texe/texmf"
+  ],
+  "texmfExplicitOnly": false
 }

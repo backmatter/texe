@@ -79,24 +79,39 @@ const {
   );
   const executable =
     process.env.VSCODE_EXECUTABLE || (await downloadAndUnzipVSCode("1.126.0"));
-  if (process.env.LATEX_WORKSHOP_PATH) {
-    fs.cpSync(
-      process.env.LATEX_WORKSHOP_PATH,
-      path.join(extensions, "james-yu.latex-workshop-10.17.1"),
-      { recursive: true },
-    );
-  } else {
+  const dependencies = [
+    ["James-Yu.latex-workshop", "10.17.1", process.env.LATEX_WORKSHOP_PATH],
+    ["backmatter.tex-ls", "0.1.2", process.env.TEX_LS_EXTENSION_PATH],
+  ];
+  // Stage local extensions before the CLI creates its extension index.
+  for (const [identifier, version, local] of dependencies) {
+    if (local) {
+      fs.cpSync(
+        local,
+        path.join(extensions, `${identifier.toLowerCase()}-${version}`),
+        { recursive: true },
+      );
+    }
+  }
+  for (const [identifier, version, local] of dependencies) {
+    if (local) continue;
     const [cli, ...args] = resolveCliArgsFromVSCodeExecutablePath(executable);
     // Windows .cmd launchers cannot be spawned directly. Run VS Code's CLI
     // through its Electron executable without introducing shell quoting.
     const windows = process.platform === "win32";
     const installation = path.dirname(executable);
     const cliScript = windows
-      ? [installation, ...fs.readdirSync(installation).map((name) => path.join(installation, name))]
+      ? [
+          installation,
+          ...fs
+            .readdirSync(installation)
+            .map((name) => path.join(installation, name)),
+        ]
           .map((directory) => path.join(directory, "resources/app/out/cli.js"))
           .find((candidate) => fs.existsSync(candidate))
       : undefined;
-    if (windows && !cliScript) throw new Error("Cannot locate VS Code's Windows CLI script");
+    if (windows && !cliScript)
+      throw new Error("Cannot locate VS Code's Windows CLI script");
     execFileSync(
       windows ? executable : cli,
       [
@@ -105,11 +120,13 @@ const {
         `--user-data-dir=${profile}`,
         `--extensions-dir=${extensions}`,
         "--install-extension",
-        "James-Yu.latex-workshop@10.17.1",
+        `${identifier}@${version}`,
       ],
       {
         stdio: "inherit",
-        env: windows ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" } : process.env,
+        env: windows
+          ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
+          : process.env,
       },
     );
   }
@@ -135,14 +152,18 @@ const {
     // test-electron 2.x uses a shell on Windows and splits workspace paths
     // containing spaces. Code.exe accepts an ordinary argument array.
     await new Promise((resolve, reject) => {
-      const child = spawn(executable, [
-        ...options.launchArgs,
-        "--no-sandbox",
-        "--disable-gpu-sandbox",
-        "--disable-updates",
-        `--extensionDevelopmentPath=${options.extensionDevelopmentPath}`,
-        `--extensionTestsPath=${options.extensionTestsPath}`,
-      ], { env: options.extensionTestsEnv, stdio: "inherit" });
+      const child = spawn(
+        executable,
+        [
+          ...options.launchArgs,
+          "--no-sandbox",
+          "--disable-gpu-sandbox",
+          "--disable-updates",
+          `--extensionDevelopmentPath=${options.extensionDevelopmentPath}`,
+          `--extensionTestsPath=${options.extensionTestsPath}`,
+        ],
+        { env: options.extensionTestsEnv, stdio: "inherit" },
+      );
       child.once("error", reject);
       child.once("exit", (code) => {
         if (code === 0) resolve();

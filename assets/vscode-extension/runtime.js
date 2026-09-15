@@ -268,7 +268,10 @@ function activate(context, requests, openPaper) {
       )
         throw cancelledError();
       if (inspectionKey(folder) !== key) return inspect(folder, sync);
-      if (sync) await run(folder, ["editor", "--configure-only"]);
+      // The catalog belongs to the executable, so an executable or manifest
+      // change can select different runtime roots even before they exist.
+      if (sync || s.infoKey !== key)
+        await run(folder, ["editor", "--configure-only"]);
       if (inspectionKey(folder) !== key) return inspect(folder, sync);
       s.info = info;
       s.infoKey = key;
@@ -718,8 +721,19 @@ function activate(context, requests, openPaper) {
     await inspect(folder, true);
     output.show(true);
     const report = await run(folder, ["doctor", "--offline"]);
+    const languageServer = vscode.extensions?.getExtension("backmatter.tex-ls");
+    const version = languageServer?.packageJSON?.version;
+    const parts =
+      typeof version === "string" && /^\d+\.\d+\.\d+$/.test(version)
+        ? version.split(".").map(Number)
+        : null;
+    const supported =
+      parts &&
+      (parts[0] > 0 || parts[1] > 1 || (parts[1] === 1 && parts[2] >= 2));
     await vscode.window.showInformationMessage(
-      "texe setup is ready (offline check passed).",
+      supported
+        ? `texe setup is ready (offline check passed; tex-ls ${version}).`
+        : "Build setup is ready. Install or update tex-ls to 0.1.2 or newer for completion, navigation, and formatting.",
     );
     return report;
   });

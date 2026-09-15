@@ -146,6 +146,9 @@ fn run_editor_command(command: Command, presentation: ux::Presentation) -> Resul
             "pdf": std::path::PathBuf::from(filename).with_extension("pdf"),
             "log": context.manifest.project.build_dir.join("output").join(std::path::PathBuf::from(filename).with_extension("log")),
             "engine": context.manifest.toolchain.engine,
+            "auxDir": context.manifest.project.build_dir.join("output"),
+            "texmfRoots": crate::toolchain::editor_texmf_roots(&context.root, &context.manifest)?,
+            "texmfExplicitOnly": context.manifest.toolchain.provider == "managed" || context.manifest.packages.remote,
             "executable": std::env::current_exe().ok(),
         }));
     }

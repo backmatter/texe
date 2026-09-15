@@ -1,7 +1,8 @@
 # VS Code
 
-texe manages the build. VS Code and LaTeX Workshop supply editing, completion,
-outline navigation, PDF viewing, and SyncTeX. Your `.tex`, `.bib`, custom
+texe manages builds and build diagnostics. tex-ls supplies
+completion, navigation, source linting, and formatting. LaTeX Workshop supplies
+the PDF viewer and SyncTeX. Your `.tex`, `.bib`, custom
 classes, images, and TeXstudio files stay where they are.
 
 ## Set up an existing paper
@@ -143,3 +144,39 @@ TeXstudio macros, custom menus, dictionaries, and user commands are not
 imported. Keep using the original folder while you rebuild those conveniences
 from VS Code snippets, shortcuts, and extensions. Before switching your daily
 workflow, build the paper once and check its references, figures, and fonts.
+
+## Language server configuration
+
+`texe editor` installs tex-ls if it is missing. Use **texe: Check Setup** to
+check the editor setup.
+
+Setup merges the root file, auxiliary directory, PDF directory, and job name
+into `tex-ls.toml`. These paths are relative to the project and can be committed.
+Setup also adds generated build and package directories to `extend-exclude`,
+so directory discovery skips generated files. Existing exclusion patterns, formatting
+and lint settings, comments, and later edits are preserved.
+`texe editor --preview` shows both proposed configuration files;
+`--replace-conflicts` accepts conflicting owned keys, and `--remove` restores
+previous values without removing later user changes.
+
+Managed projects give tex-ls explicit project and runtime TEXMF roots, without
+searching an unrelated system TeX installation. Setting up the editor does not
+download a runtime. Package installation writes `ls-R`, allowing tex-ls to refresh
+its index while the editor is open. The companion updates settings when the
+manifest or texe executable changes. System projects with remote packages disabled
+retain system package discovery.
+
+tex-ls is the default formatter for LaTeX and BibTeX; format-on-save remains
+opt-in. Its compiler-log diagnostics are disabled because texe reports build
+errors. Workshop's automatic completion triggers, package suggestions, hover,
+external linters, and LaTeX formatting are disabled. Workshop does not expose a
+switch for every language provider: manual completion, symbols, and navigation
+may still overlap while it supplies the PDF viewer. tex-ls may also report
+source diagnostics for installed packages loaded through references; discovery
+exclusions do not suppress those diagnostics.
+
+Other editors can use `texe editor --inspect --json`: `auxDir` is relative to the
+project, `texmfRoots` contains absolute paths, and `texmfExplicitOnly` states
+whether to disable system discovery. Pass the roots and isolation setting through
+tex-ls initialization options, with compiler diagnostics disabled. Inspection is
+read-only and does not install tools or packages.

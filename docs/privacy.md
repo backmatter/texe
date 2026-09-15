@@ -7,7 +7,7 @@ Managed builds download tools and packages from TeX Live mirrors and verify
 their sizes and cryptographic digests. `texe build --offline` disables these
 downloads and requires all dependencies to be cached.
 
-VS Code setup can download VS Code and install LaTeX Workshop. The companion
+VS Code setup can download VS Code and install tex-ls and LaTeX Workshop. tex-ls processes language features locally. The companion
 extension downloads missing TeX dependencies during builds unless
 `texe.allowDownloads` is false.
 

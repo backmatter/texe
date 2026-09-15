@@ -175,6 +175,34 @@ struct ComponentMarker {
 #[derive(Debug, Default)]
 pub struct ManagedToolchainProvider;
 
+/// Describe editor package roots without resolving or downloading the runtime.
+pub(crate) fn editor_texmf_roots(
+    project_root: &Path,
+    manifest: &crate::config::ProjectManifest,
+) -> Result<Vec<PathBuf>, TexeError> {
+    let mut roots = vec![project_root.join(&manifest.packages.texmf)];
+    if manifest.toolchain.provider == "managed" {
+        let selection = catalog::select(&manifest.toolchain.channel, &manifest.toolchain.engine)?;
+        let identity = managed_identity(selection);
+        roots.push(
+            texe_data_home()?
+                .join("toolchains")
+                .join(format!(
+                    "{}-{}-{}-{}",
+                    selection.snapshot.snapshot,
+                    selection.engine.runtime_name,
+                    selection.target,
+                    &identity.fingerprint[..16],
+                ))
+                .join("texmf-dist"),
+        );
+    }
+    roots
+        .into_iter()
+        .map(|path| std::path::absolute(&path).map_err(|source| TexeError::Io { path, source }))
+        .collect()
+}
+
 impl ToolchainProvider for ManagedToolchainProvider {
     fn resolve(
         &self,

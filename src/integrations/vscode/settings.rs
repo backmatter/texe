@@ -23,6 +23,8 @@ struct Ownership {
     original: Option<String>,
     installed: String,
     edits: Vec<OwnedEdit>,
+    #[serde(default)]
+    language_server: Option<super::language_server::Ownership>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -35,7 +37,7 @@ struct OwnedEdit {
     after: serde_json::Value,
 }
 
-fn read_optional(path: &Path) -> Result<Option<String>, TexeError> {
+pub(super) fn read_optional(path: &Path) -> Result<Option<String>, TexeError> {
     validate_settings_target(path)?;
     if fs::metadata(path).is_ok_and(|metadata| metadata.len() > 4 * 1024 * 1024) {
         return Err(TexeError::Build(format!(
@@ -166,7 +168,7 @@ fn plan(
         },
     };
     let mut desired = Vec::new();
-    for (key, value) in desired_settings(manifest) {
+    for (key, value) in desired_settings(root, manifest)? {
         leaves(vec![key.to_string()], &value, &mut desired);
     }
     let mut conflicts = Vec::new();
@@ -204,6 +206,10 @@ fn plan(
             });
         }
     }
+    let (language_server, _, language_conflicts) =
+        super::language_server::plan(root, manifest, ownership.language_server.take())?;
+    ownership.language_server = Some(language_server);
+    conflicts.extend(language_conflicts);
     Ok((ownership, tree.to_string(), conflicts))
 }
 
@@ -216,9 +222,9 @@ pub(crate) fn preview_manifest(
     root: &Path,
     manifest: &ProjectManifest,
 ) -> Result<serde_json::Value, TexeError> {
-    let (_, proposed, conflicts) = plan(root, manifest)?;
+    let (ownership, proposed, conflicts) = plan(root, manifest)?;
     Ok(
-        serde_json::json!({ "schema": "texe.editor-preview/v1", "conflicts": conflicts, "settings": proposed }),
+        serde_json::json!({ "schema": "texe.editor-preview/v1", "conflicts": conflicts, "settings": proposed, "texLsConfig": ownership.language_server.map(|value| value.installed) }),
     )
 }
 
@@ -235,7 +241,15 @@ pub(crate) fn configure(
         )));
     }
     let existed = project_settings_exist(root)?;
-    if read_optional(&project_settings_path(root))?.as_deref() == Some(&proposed) {
+    let language_path = root.join("tex-ls.toml");
+    let language_text = &ownership
+        .language_server
+        .as_ref()
+        .expect("planned language settings")
+        .installed;
+    if read_optional(&project_settings_path(root))?.as_deref() == Some(&proposed)
+        && read_optional(&language_path)?.as_deref() == Some(language_text)
+    {
         return Ok(ProjectSettingsOutcome::Preserved);
     }
     remove_legacy_workspace(root)?;
@@ -249,6 +263,7 @@ pub(crate) fn configure(
     atomic::replace_files(&[
         (&project_settings_path(root), Some(proposed.as_bytes())),
         (&ledger, Some(&bytes)),
+        (&language_path, Some(language_text.as_bytes())),
     ])?;
     Ok(if existed {
         ProjectSettingsOutcome::Replaced
@@ -267,6 +282,12 @@ pub(crate) fn remove(root: &Path) -> Result<IntegrationReport, TexeError> {
                 path: ledger.clone(),
                 source,
             })?;
+        let language_path = root.join("tex-ls.toml");
+        let restored_language = ownership
+            .language_server
+            .as_ref()
+            .map(|owned| super::language_server::restore(root, owned))
+            .transpose()?;
         let path = project_settings_path(root);
         if let Some(current) = read_optional(&path)? {
             let restored = if current == ownership.installed {
@@ -313,12 +334,20 @@ pub(crate) fn remove(root: &Path) -> Result<IntegrationReport, TexeError> {
                 }
                 Some(tree.to_string())
             };
-            atomic::replace_files(&[
+            let mut files: Vec<(&Path, Option<&[u8]>)> = vec![
                 (&path, restored.as_deref().map(str::as_bytes)),
                 (&ledger, None),
-            ])?;
+            ];
+            if let Some(text) = &restored_language {
+                files.push((&language_path, text.as_deref().map(str::as_bytes)));
+            }
+            atomic::replace_files(&files)?;
         } else {
-            atomic::replace_files(&[(&ledger, None)])?;
+            let mut files: Vec<(&Path, Option<&[u8]>)> = vec![(&ledger, None)];
+            if let Some(text) = &restored_language {
+                files.push((&language_path, text.as_deref().map(str::as_bytes)));
+            }
+            atomic::replace_files(&files)?;
         }
     }
     Ok(IntegrationReport {
@@ -438,7 +467,10 @@ fn path_exists(path: &Path) -> Result<bool, TexeError> {
     }
 }
 
-fn desired_settings(manifest: &ProjectManifest) -> BTreeMap<&'static str, serde_json::Value> {
+fn desired_settings(
+    root: &Path,
+    manifest: &ProjectManifest,
+) -> Result<BTreeMap<&'static str, serde_json::Value>, TexeError> {
     let stem = manifest
         .project
         .entry
@@ -446,7 +478,33 @@ fn desired_settings(manifest: &ProjectManifest) -> BTreeMap<&'static str, serde_
         .and_then(std::ffi::OsStr::to_str)
         .unwrap_or("main");
 
-    BTreeMap::from([
+    let isolated = manifest.toolchain.provider == "managed" || manifest.packages.remote;
+    let mut settings = BTreeMap::from([
+        ("tex-ls.texmf.enabled", serde_json::json!(true)),
+        (
+            "tex-ls.texmf.roots",
+            serde_json::json!(crate::toolchain::editor_texmf_roots(root, manifest)?),
+        ),
+        ("tex-ls.texmf.explicitOnly", serde_json::json!(isolated)),
+        ("tex-ls.texmf.useKpsewhich", serde_json::json!(!isolated)),
+        ("tex-ls.diagnostics.compiler", serde_json::json!(false)),
+        (
+            "[latex]",
+            serde_json::json!({"editor.defaultFormatter": "backmatter.tex-ls"}),
+        ),
+        (
+            "[bibtex]",
+            serde_json::json!({"editor.defaultFormatter": "backmatter.tex-ls"}),
+        ),
+        ("latex-workshop.formatting.latex", serde_json::json!("none")),
+        (
+            "latex-workshop.intellisense.triggers.latex",
+            serde_json::json!([]),
+        ),
+        (
+            "latex-workshop.intellisense.atSuggestion.trigger.latex",
+            serde_json::json!(""),
+        ),
         (
             "latex-workshop.latex.external.build.command",
             serde_json::json!(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("texe"))),
@@ -538,10 +596,23 @@ fn desired_settings(manifest: &ProjectManifest) -> BTreeMap<&'static str, serde_
                 "request": slash_path(&manifest.project.entry),
             }),
         ),
-    ])
+    ]);
+    for key in [
+        "latex-workshop.intellisense.package.enabled",
+        "latex-workshop.intellisense.argumentHint.enabled",
+        "latex-workshop.hover.ref.enabled",
+        "latex-workshop.hover.citation.enabled",
+        "latex-workshop.hover.command.enabled",
+        "latex-workshop.hover.preview.enabled",
+        "latex-workshop.linting.chktex.enabled",
+        "latex-workshop.linting.lacheck.enabled",
+    ] {
+        settings.insert(key, serde_json::json!(false));
+    }
+    Ok(settings)
 }
 
-fn slash_path(path: &Path) -> String {
+pub(super) fn slash_path(path: &Path) -> String {
     path.components()
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
@@ -592,6 +663,111 @@ mod tests {
             ),
         )
         .expect("write manifest");
+    }
+
+    #[test]
+    fn language_config_conflicts_are_atomic_and_reversible() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write_manifest(root, "sources/main.tex");
+        let path = root.join("tex-ls.toml");
+        let original = "# personal settings\n[format]\nline-width = 91\n[build]\nroot = \"other.tex\" # keep comment\n";
+        fs::write(&path, original).unwrap();
+        let preview = super::preview(root).unwrap();
+        assert!(
+            preview["conflicts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "tex-ls.toml / build / root")
+        );
+        assert!(configure(root, false).is_err());
+        assert!(!project_settings_path(root).exists());
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        configure(root, true).unwrap();
+        let configured = fs::read_to_string(&path).unwrap();
+        assert!(configured.contains("# keep comment"));
+        let value: toml::Value = toml::from_str(&configured).unwrap();
+        assert_eq!(value["format"]["line-width"].as_integer(), Some(91));
+        assert_eq!(value["build"]["root"].as_str(), Some("sources/main.tex"));
+        assert_eq!(value["build"]["pdf-dir"].as_str(), Some("."));
+        assert_eq!(
+            value["build"]["aux-dir"].as_str(),
+            Some(".texe/build/output")
+        );
+        remove(root).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn language_config_refreshes_owned_keys_and_preserves_later_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write_manifest(root, "main.tex");
+        configure(root, false).unwrap();
+        write_manifest(root, "chapters/paper.tex");
+        configure(root, false).unwrap();
+        let path = root.join("tex-ls.toml");
+        let configured = fs::read_to_string(&path).unwrap();
+        assert!(configured.contains("chapters/paper.tex"));
+        fs::write(
+            &path,
+            format!(
+                "{}\n[format]\nline-width = 77\n",
+                configured.replace("chapters/paper.tex", "custom.tex")
+            ),
+        )
+        .unwrap();
+        remove(root).unwrap();
+        let value: toml::Value = toml::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(value["build"]["root"].as_str(), Some("custom.tex"));
+        assert!(value["build"].get("aux-dir").is_none());
+        assert_eq!(value["format"]["line-width"].as_integer(), Some(77));
+    }
+
+    #[test]
+    fn language_exclusions_preserve_user_patterns_across_refresh_and_removal() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write_manifest(root, "main.tex");
+        let path = root.join("tex-ls.toml");
+        fs::write(&path, "extend-exclude = [\"notes/\"] # personal\n").unwrap();
+        configure(root, false).unwrap();
+        let configured = fs::read_to_string(&path).unwrap();
+        assert!(configured.contains("# personal"));
+        let mut manifest = crate::config::ProjectManifest::load(&root.join("texe.toml")).unwrap();
+        manifest.project.build_dir = ".texe/output".into();
+        fs::write(root.join("texe.toml"), toml::to_string(&manifest).unwrap()).unwrap();
+        configure(root, false).unwrap();
+        let configured = fs::read_to_string(&path).unwrap();
+        assert!(!configured.contains("/.texe/build/"));
+        assert!(configured.contains("/.texe/output/"));
+        fs::write(&path, format!("{configured}\n[format]\nline-width = 77\n")).unwrap();
+        remove(root).unwrap();
+        let value: toml::Value = toml::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(value["extend-exclude"].as_array().unwrap().len(), 1);
+        assert_eq!(value["extend-exclude"][0].as_str(), Some("notes/"));
+        assert_eq!(value["format"]["line-width"].as_integer(), Some(77));
+    }
+
+    #[test]
+    fn editor_roots_do_not_install_a_runtime_and_system_projects_keep_discovery() {
+        let directory = tempfile::tempdir().unwrap();
+        write_manifest(directory.path(), "main.tex");
+        let preview = super::preview(directory.path()).unwrap();
+        let settings: serde_json::Value =
+            serde_json::from_str(preview["settings"].as_str().unwrap()).unwrap();
+        assert_eq!(settings["tex-ls.texmf.explicitOnly"], true);
+        assert_eq!(settings["tex-ls.diagnostics.compiler"], false);
+        assert_eq!(settings["tex-ls.texmf.roots"].as_array().unwrap().len(), 2);
+        assert!(!directory.path().join(".texe").exists());
+        let mut manifest =
+            crate::config::ProjectManifest::load(&directory.path().join("texe.toml")).unwrap();
+        manifest.toolchain.provider = "system".into();
+        manifest.packages.remote = false;
+        let settings = super::desired_settings(directory.path(), &manifest).unwrap();
+        assert_eq!(settings["tex-ls.texmf.explicitOnly"], false);
+        assert_eq!(settings["tex-ls.texmf.useKpsewhich"], true);
     }
 
     #[test]
