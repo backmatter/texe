@@ -7,6 +7,7 @@ use crate::integrations::IntegrationReport;
 use crate::ux;
 
 mod bridge;
+mod language_server;
 mod settings;
 
 // Rust only infers .exe on Windows; VS Code ships a code.cmd launcher.
@@ -34,7 +35,7 @@ pub(crate) fn setup_vscode(
     match settings_outcome {
         settings::ProjectSettingsOutcome::Created => report
             .messages
-            .push("created .vscode/settings.json with texe's LaTeX Workshop defaults".to_string()),
+            .push("created .vscode/settings.json with texe's editor defaults".to_string()),
         settings::ProjectSettingsOutcome::Replaced => report.messages.push(
             "merged texe settings into .vscode/settings.json; recorded reversible changes"
                 .to_string(),
@@ -87,6 +88,7 @@ pub(crate) fn setup_vscode(
         }
     };
     if code_available {
+        ensure_tex_ls(&mut report);
         ensure_latex_workshop(&mut report);
         ensure_layout_companion(&mut report);
     }
@@ -94,6 +96,30 @@ pub(crate) fn setup_vscode(
         report.messages.extend(open_vscode(root)?.messages);
     }
     Ok(report)
+}
+
+fn ensure_tex_ls(report: &mut IntegrationReport) {
+    if let Some(version) = installed_extension_version("backmatter.tex-ls") {
+        report.messages.push(format!(
+            "kept tex-ls {version}; texe requires tex-ls 0.1.2 or newer"
+        ));
+        return;
+    }
+    match code_command()
+        .args(["--install-extension", "backmatter.tex-ls"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(status) if status.success() => report
+            .messages
+            .push("installed tex-ls for completion, navigation, and formatting".into()),
+        _ => report.messages.push(
+            "could not install tex-ls; install backmatter.tex-ls 0.1.2 or newer from Extensions"
+                .into(),
+        ),
+    }
 }
 
 fn ensure_latex_workshop(report: &mut IntegrationReport) {

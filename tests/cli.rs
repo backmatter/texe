@@ -350,6 +350,21 @@ fn adoption_preflight_is_read_only_and_ambiguous_roots_are_rejected() {
     let info: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(info["pdf"], "paper.v2.pdf");
     assert_eq!(
+        Path::new(info["auxDir"].as_str().unwrap()),
+        Path::new(".texe/build/output")
+    );
+    assert_eq!(info["texmfExplicitOnly"], true);
+    assert!(
+        info["texmfRoots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|value| Path::new(value.as_str().unwrap()).is_absolute())
+    );
+    assert!(!root.join("tex-ls.toml").exists());
+    assert!(!root.join(".vscode").exists());
+
+    assert_eq!(
         std::path::Path::new(info["log"].as_str().unwrap()),
         std::path::Path::new(".texe/build/output/paper.v2.log")
     );

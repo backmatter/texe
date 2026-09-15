@@ -1,5 +1,6 @@
 {
   "schema": "texe.editor-preview/v1",
   "conflicts": [],
-  "settings": "{}\n"
+  "settings": "{}\n",
+  "texLsConfig": "extend-exclude = [\"/.texe/build/\", \"/.texe/texmf/\"]\n[build]\nroot = \"paper.v2.tex\"\naux-dir = \".texe/build/output\"\npdf-dir = \".\"\njob-name = \"paper.v2\"\n"
 }

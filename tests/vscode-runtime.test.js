@@ -162,7 +162,11 @@ function harness(outcomes, settings = {}, adoptionError = null) {
       child.emit("close", report.schema === "texe.error/v1" ? 6 : 0, null);
     };
     setImmediate(() => {
-      const report = args[0] === "editor" ? editorReport : outcomes.shift();
+      const report = args.includes("--inspect")
+        ? editorReport
+        : args[0] === "editor"
+          ? { schema: "texe.editor-report/v1", messages: [] }
+          : outcomes.shift();
       if (typeof report === "function") report(child);
       else child.finish(report);
     });
@@ -651,6 +655,22 @@ test("the first editor session displays the adoption failure and a repair clears
     await h.api.build(h.folder);
     assert.equal(h.markers.size, 0);
   } finally {
+    dispose(h);
+  }
+});
+
+test("setup reports missing, outdated, and supported tex-ls without requiring it for builds", async () => {
+  for (const version of [null, "0.1.1", "0.1.2", "0.2.0", "1.0.0"]) {
+    const h = harness([{ schema: "texe.doctor/v1" }]);
+    h.vscode.extensions = {
+      getExtension: () => (version ? { packageJSON: { version } } : undefined),
+    };
+    await h.api.ready;
+    await h.callbacks.get("texe.checkSetup")();
+    const message = h.information.at(-1);
+    if (version === null || version === "0.1.1")
+      assert.match(message, /Install or update tex-ls/);
+    else assert.match(message, /tex-ls/);
     dispose(h);
   }
 });

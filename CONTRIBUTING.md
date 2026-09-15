@@ -86,10 +86,11 @@ covering PDF refresh, diagnostics, failure recovery, SyncTeX, build commands,
 and manifest changes. Linux needs a display server or Xvfb. Screenshots and
 `results.json` land in the temporary directory the run prints.
 
-The harness downloads the VS Code and LaTeX Workshop versions pinned in
+The harness downloads the VS Code, LaTeX Workshop, and tex-ls versions pinned in
 [`tests/vscode/run.js`](tests/vscode/run.js). To use local copies, set
 `VSCODE_EXECUTABLE` to an Electron executable and `LATEX_WORKSHOP_PATH` to an
-installed extension directory.
+installed extension directory. Set `TEX_LS_EXTENSION_PATH` to use a local
+tex-ls extension directory.
 
 ## Pull requests
 

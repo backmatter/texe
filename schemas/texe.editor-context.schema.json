@@ -37,6 +37,18 @@
         "string",
         "null"
       ]
+    },
+    "auxDir": {
+      "type": "string"
+    },
+    "texmfRoots": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "texmfExplicitOnly": {
+      "type": "boolean"
     }
   }
 }
