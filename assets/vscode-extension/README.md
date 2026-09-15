@@ -22,7 +22,7 @@ telemetry.
 
 [VS Code setup and settings removal](https://github.com/backmatter/texe/blob/main/docs/vscode.md)
 
-Language features require **tex-ls 0.1.2 or newer**. `texe editor` installs it when
+Language features use **tex-ls**. `texe editor` installs it when
 missing and configures it for the project's packages and build outputs. LaTeX
 Workshop remains the PDF viewer and SyncTeX provider. **texe: Check Setup** reports
 whether tex-ls needs installing or updating. Formatting uses tex-ls; formatting on

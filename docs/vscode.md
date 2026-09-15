@@ -1,6 +1,6 @@
 # VS Code
 
-texe manages builds and build diagnostics. tex-ls 0.1.2 or newer supplies
+texe manages builds and build diagnostics. tex-ls supplies
 completion, navigation, source linting, and formatting. LaTeX Workshop supplies
 the PDF viewer and SyncTeX. Your `.tex`, `.bib`, custom
 classes, images, and TeXstudio files stay where they are.
@@ -147,8 +147,8 @@ workflow, build the paper once and check its references, figures, and fonts.
 
 ## Language server configuration
 
-`texe editor` installs tex-ls if it is missing and keeps an installed version.
-Use **texe: Check Setup** to check that tex-ls is at least 0.1.2.
+`texe editor` installs tex-ls if it is missing. Use **texe: Check Setup** to
+check the editor setup.
 
 Setup merges the root file, auxiliary directory, PDF directory, and job name
 into `tex-ls.toml`. These paths are relative to the project and can be committed.
@@ -171,7 +171,7 @@ opt-in. Its compiler-log diagnostics are disabled because texe reports build
 errors. Workshop's automatic completion triggers, package suggestions, hover,
 external linters, and LaTeX formatting are disabled. Workshop does not expose a
 switch for every language provider: manual completion, symbols, and navigation
-may still overlap while it supplies the PDF viewer. tex-ls 0.1.2 may also report
+may still overlap while it supplies the PDF viewer. tex-ls may also report
 source diagnostics for installed packages loaded through references; discovery
 exclusions do not suppress those diagnostics.
 
