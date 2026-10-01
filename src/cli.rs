@@ -52,12 +52,6 @@ impl From<TemplateChoice> for StarterTemplate {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
-    /// Hand a LaTeX Workshop build to the active VS Code companion.
-    #[command(hide = true)]
-    EditorBuild {
-        #[arg(long)]
-        project: Option<PathBuf>,
-    },
     /// Initialize a texe project.
     Init {
         /// Directory to initialize.

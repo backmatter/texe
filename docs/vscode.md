@@ -1,182 +1,96 @@
 # VS Code
 
-texe manages builds and build diagnostics. tex-ls supplies
-completion, navigation, source linting, and formatting. LaTeX Workshop supplies
-the PDF viewer and SyncTeX. Your `.tex`, `.bib`, custom
-classes, images, and TeXstudio files stay where they are.
+texe installs **Citet** (`citet.citet`), a single native VS Code extension maintained
+in the Citet repository at `apps/vscode`, beside the Neovim integration. It runs
+texe builds, hosts the tex-ls language server, and owns the PDF.js viewer and
+SyncTeX navigation. LaTeX Workshop and the separate tex-ls extension are not
+required. The texe CLI remains usable on its own.
 
-## Set up an existing paper
+Open a paper with:
 
-```sh
-texe adopt /path/to/paper --check
-texe adopt /path/to/paper
+```bash
+texe editor
 ```
 
-The check writes nothing and downloads nothing. It reports the entry file,
-engine, local classes, editor setting conflicts, and signs of external
-processing. Add `--json` for the machine-readable report.
+The project folder opens directly. Trust the folder to enable local tools. If a
+PDF exists, Citet opens it beside the source. New folders can use **Citet:
+Configure Local Paper**, or **Citet: Build and View**, to adopt an existing paper
+and select its main TeX file.
 
-Useful flags:
+## Local workflow
 
-- `--entry thesis.tex` — required when the paper has several root files. texe
-  does not guess, even with `--yes`.
-- `--no-build` — defer the first build.
-- `--no-editor` — write only `texe.toml` and keep your editor configuration.
-- `--replace-conflicts` — accept the editor changes the check listed.
+Local editing and builds require no account or Citet server. Citet uses
+`texe.toml` for the project and the versioned `texe editor --inspect --json` and
+`texe build --json` protocols for paths, package roots, build progress and errors.
+It does not check for an exact texe or tex-ls version.
 
-An existing `texe.toml` is authoritative and is never overwritten.
+- **Citet: Build and View** (`Ctrl+Alt+B`, `Cmd+Alt+B` on macOS) builds and opens the PDF.
+- **Citet: Build Paper** builds without opening another tab.
+- Saves build configured papers when `citet.buildOnSave` is enabled.
+- The **Citet: Build paper** task uses the same build queue.
+- **Citet: Cancel Local Build / Stop Waiting for Remote Build** stops the current local process tree and clears queued builds.
+- **Citet: Open Build Log** and **Show Build Output** expose diagnostics and progress.
 
-The scan is a preflight, not proof that the paper compiles: dynamic TeX, fonts,
-and custom build scripts are only settled by the first build. Existing
-`.latexmkrc` and Makefile commands are neither run nor imported, so configure
-external processing in `texe.toml` before adopting that workflow.
+Each project has one build queue. Saves during a build request one subsequent
+build with the latest saved sources. Errors appear in Problems, and failed
+builds preserve the last successful PDF and mark it out of date. PDF refresh
+preserves zoom, scroll position and search. The native viewer also opens existing
+PDF files without adopting their parent folder.
 
-If the first build fails, adoption still opens the editor and hands the failure
-to it. Fix the source and save to retry.
+Use **Citet: Sync PDF to Cursor** (`Ctrl+Alt+J`) for source → PDF. Ctrl/Cmd+click
+or double-click in the PDF jumps back to source. Local SyncTeX uses a bundled
+MIT-licensed reader; it does not require Workshop or a host `synctex` executable.
+Rebuild changed sources before navigating an out-of-date PDF.
 
-### Engine detection
+tex-ls supplies completion, hover, navigation, symbols, formatting, code actions
+and linting through native VS Code providers. Citet is the default formatter for
+LaTeX and BibTeX. Compiler diagnostics come from texe. Project and runtime TEXMF
+roots are read from texe's editor context, while `tex-ls.toml` provides reversible
+project root and auxiliary-directory settings.
 
-- `% !TeX program = ...` in the source selects the engine.
-- Without that hint, a literal `fontspec` or `unicode-math` declaration selects
-  managed LuaLaTeX.
-- An explicit pdfLaTeX choice that cannot work is reported before anything is
-  written.
-- Managed pdfLaTeX and LuaLaTeX download their own runtimes. XeLaTeX needs an
-  installed system TeX distribution.
+`citet.texePath` and `citet.texLsPath` select executables without shell argument
+splitting. Otherwise the extension uses an installed tool or a verified GitHub
+release in its own user storage. `citet.allowDownloads: false` disables missing
+tool downloads and makes texe builds offline. Cached tools, runtime and packages
+continue to work. Versions can change independently; unsupported JSON schemas
+produce an actionable error.
 
-## Editor settings
+## Optional Citet collaboration
 
-texe writes only its own keys, preserving JSONC comments and unrelated settings.
+Use **Citet: Login** and **Connect Folder to Citet** to connect a local folder to
+an existing remote project. Existing remote files must match their local copies;
+conflicts are reported before binding or overwriting. Alternatively, **Open
+Project Locally** materializes a remote project into a folder. The binding lives
+in `.citet/config.json` alongside the existing collaboration cache.
 
-```sh
-texe editor --preview             # show the merged settings and any conflicts
-texe editor --replace-conflicts   # accept texe's integration values
-texe editor --configure-only      # write settings only, no extensions, no launch
-texe editor --remove              # undo texe's settings
+Connected projects still build locally by default. **Citet: Choose Build Backend**
+sets `citet.buildBackend` to `local` or `remote` for the folder. There is no silent
+fallback. Remote builds wait for attached document commits before queueing a
+server build and only accept the requested job's successful artifact. If another
+server build supersedes the request, Citet reports that instead of showing it as
+the requested result. Stopping a remote wait does not cancel the server job.
+
+The same build, PDF and navigation commands work with either backend. Switching
+backends gives each artifact its own viewer tab. Remote citations, collaboration
+and Presenter remain available for connected projects. Local bibliography
+completion and insertion use the language server. Generated `.texe` files and the
+local build PDF are excluded from the collaboration mirror.
+
+## Reversible setup
+
+```bash
+texe editor --preview
+texe editor --replace-conflicts
+texe editor --configure-only
+texe editor --remove
 ```
 
-Interactive `texe adopt` shows the proposed settings and asks before applying
-them. `--replace-conflicts` replaces only the conflicting texe keys, never the
-whole file, and settings you later change by hand count as conflicts rather than
-being overwritten. `--remove` restores texe-owned values that still match what
-texe wrote, so your edits survive; keep `.vscode/texe-integration.json` until
-then, since it holds the values needed to undo.
+Settings merge with JSONC comments and unrelated settings preserved. Setup
+records its edits, including `tex-ls.toml`; removal restores values still owned
+by texe and preserves later user edits. Rerunning setup retires old texe-owned
+Workshop/companion settings and replaces the old companion with Citet. Existing
+third-party extensions are not globally uninstalled.
 
-## Everyday commands
-
-Trust the paper folder, then use the Command Palette:
-
-| Action | Command |
-| --- | --- |
-| First-use checklist | **texe: Writing Guide** |
-| Save, build, and open source and PDF | **texe: Build and View** |
-| Build without changing the layout | **texe: Build Paper** |
-| Restore the side-by-side view | **texe: Open Paper Side by Side** |
-| Locate the cursor in the PDF | **texe: Source to PDF** |
-| Find a source error | **texe: Show Problems**, then click the error |
-| Inspect engine output | **texe: Open Build Log** or **texe: Show Output** |
-| Wrap source and make room for the PDF | **texe: Use Writing Layout** |
-| Undo Writing Layout | **texe: Restore Previous Writing Settings** |
-| Check installed tools and caches, offline | **texe: Check Setup** |
-| Use a different texe installation | **texe: Choose Executable** |
-| Re-enable downloads after offline builds | **texe: Allow Build Downloads** |
-| Use F5 to build and view, F6 to build | **texe: Enable Familiar Shortcuts** |
-
-Writing Layout is opt-in and saves the previous folder settings in VS Code
-workspace state. Restoring applies values that still match what it wrote. Use it
-before removing the companion if you also want the layout settings back.
-
-## Builds
-
-Builds on save, the build task, and LaTeX Workshop's Build button share one
-build queue and one download policy. LaTeX Workshop's own auto-build is disabled
-so nothing builds twice.
-
-- Set `texe.buildOnSave` to false for manual builds only.
-- Build commands first save unsaved files in the selected paper folder. In a
-  multi-root workspace, the active file selects the folder.
-- The status bar shows the build phase and elapsed time. Click it during a build
-  to cancel; cancelling is neutral and creates no error toast or PDF badge.
-- Saving during a build queues the newest changes. Success and recovery notices
-  appear once that queued build finishes.
-- Replacing or deleting an external figure or data file also triggers a rebuild.
-  Published PDFs, SyncTeX files, locks, and private state are excluded so builds
-  do not loop.
-- Saving `texe.toml` refreshes the source and PDF paths.
-
-Open the trusted project in VS Code before using LaTeX Workshop's build command.
-
-## Errors and warnings
-
-A failed build keeps the previous PDF, marks its tab with an error badge, and
-shows a toast saying the PDF is from the last successful build. **Show Error**
-jumps to the source; **Open Build Log** opens the log from the failed pass. A
-successful repair clears the diagnostics and the badge.
-
-Each completed build replaces Problems, so an error fixed in one chapter does
-not linger while another fails. Warnings link to the matching build log line,
-and clicking the warning status opens Problems. Repeated identical failures do
-not produce new toasts, and notifications never block the next build.
-
-## Downloads
-
-Builds download missing TeX tools and packages automatically; managed builds
-need no existing TeX installation. Set `texe.allowDownloads` to false for
-offline builds, which then require cached dependencies — **texe: Allow Build
-Downloads** and a rebuild resume downloading. Check Setup stays offline and
-never downloads.
-
-## Finding the texe executable
-
-The generated path works when VS Code is launched from the desktop; if it
-belongs to another machine, the companion falls back to `texe` on `PATH`.
-**Choose Executable** updates the folder setting, and rerunning `texe editor`
-after moving an installation refreshes LaTeX Workshop's external build command.
-For Remote SSH, WSL, and containers, install texe where the extension host runs.
-
-## Coming from TeXstudio
-
-Use LaTeX Workshop's **SyncTeX from cursor** for source → PDF, and Ctrl+click in
-its PDF viewer for inverse search (Cmd+click on macOS). The optional F5 and F6
-bindings apply only to LaTeX editors in configured texe folders.
-
-TeXstudio macros, custom menus, dictionaries, and user commands are not
-imported. Keep using the original folder while you rebuild those conveniences
-from VS Code snippets, shortcuts, and extensions. Before switching your daily
-workflow, build the paper once and check its references, figures, and fonts.
-
-## Language server configuration
-
-`texe editor` installs tex-ls if it is missing. Use **texe: Check Setup** to
-check the editor setup.
-
-Setup merges the root file, auxiliary directory, PDF directory, and job name
-into `tex-ls.toml`. These paths are relative to the project and can be committed.
-Setup also adds generated build and package directories to `extend-exclude`,
-so directory discovery skips generated files. Existing exclusion patterns, formatting
-and lint settings, comments, and later edits are preserved.
-`texe editor --preview` shows both proposed configuration files;
-`--replace-conflicts` accepts conflicting owned keys, and `--remove` restores
-previous values without removing later user changes.
-
-Managed projects give tex-ls explicit project and runtime TEXMF roots, without
-searching an unrelated system TeX installation. Setting up the editor does not
-download a runtime. Package installation writes `ls-R`, allowing tex-ls to refresh
-its index while the editor is open. The companion updates settings when the
-manifest or texe executable changes. System projects with remote packages disabled
-retain system package discovery.
-
-tex-ls is the default formatter for LaTeX and BibTeX; format-on-save remains
-opt-in. Its compiler-log diagnostics are disabled because texe reports build
-errors. Workshop's automatic completion triggers, package suggestions, hover,
-external linters, and LaTeX formatting are disabled. Workshop does not expose a
-switch for every language provider: manual completion, symbols, and navigation
-may still overlap while it supplies the PDF viewer. tex-ls may also report
-source diagnostics for installed packages loaded through references; discovery
-exclusions do not suppress those diagnostics.
-
-Other editors can use `texe editor --inspect --json`: `auxDir` is relative to the
-project, `texmfRoots` contains absolute paths, and `texmfExplicitOnly` states
-whether to disable system discovery. Pass the roots and isolation setting through
-tex-ls initialization options, with compiler diagnostics disabled. Inspection is
-read-only and does not install tools or packages.
+The bundled Citet VSIX is built separately from texe and carries its own version.
+See [the bundle provenance](../assets/citet-vscode.md) for rebuilding it. No Citet
+checkout, Node, Bun or server is required to install it from the texe CLI.

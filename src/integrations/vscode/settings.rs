@@ -168,9 +168,34 @@ fn plan(
         },
     };
     let mut desired = Vec::new();
-    for (key, value) in desired_settings(root, manifest)? {
+    for (key, value) in desired_settings() {
         leaves(vec![key.to_string()], &value, &mut desired);
     }
+    // Carry explicit build preferences across the one-time companion cutover.
+    for (old, new) in [
+        ("texe.allowDownloads", "citet.allowDownloads"),
+        ("texe.buildOnSave", "citet.buildOnSave"),
+    ] {
+        if current.get(new).is_none()
+            && let Some(value) = current.get(old).filter(|value| value.is_boolean())
+        {
+            leaves(vec![new.to_string()], value, &mut desired);
+        }
+    }
+    // Retire only settings still equal to values owned by texe. Later user edits survive.
+    ownership.edits.retain(|edit| {
+        if desired.iter().any(|(path, _)| path == &edit.path) {
+            return true;
+        }
+        if get(&current, &edit.path).as_ref() == Some(&edit.after) {
+            set(
+                &tree.object_value().expect("object"),
+                &edit.path,
+                edit.before.as_ref(),
+            );
+        }
+        false
+    });
     let mut conflicts = Vec::new();
     for (path, after) in desired {
         let before = get(&current, &path);
@@ -467,149 +492,28 @@ fn path_exists(path: &Path) -> Result<bool, TexeError> {
     }
 }
 
-fn desired_settings(
-    root: &Path,
-    manifest: &ProjectManifest,
-) -> Result<BTreeMap<&'static str, serde_json::Value>, TexeError> {
-    let stem = manifest
-        .project
-        .entry
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("main");
-
-    let isolated = manifest.toolchain.provider == "managed" || manifest.packages.remote;
-    let mut settings = BTreeMap::from([
-        ("tex-ls.texmf.enabled", serde_json::json!(true)),
+fn desired_settings() -> BTreeMap<&'static str, serde_json::Value> {
+    BTreeMap::from([
         (
-            "tex-ls.texmf.roots",
-            serde_json::json!(crate::toolchain::editor_texmf_roots(root, manifest)?),
+            "citet.texePath",
+            serde_json::json!(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("texe"))),
         ),
-        ("tex-ls.texmf.explicitOnly", serde_json::json!(isolated)),
-        ("tex-ls.texmf.useKpsewhich", serde_json::json!(!isolated)),
-        ("tex-ls.diagnostics.compiler", serde_json::json!(false)),
+        ("citet.openPaper", serde_json::json!(true)),
         (
             "[latex]",
-            serde_json::json!({"editor.defaultFormatter": "backmatter.tex-ls"}),
+            serde_json::json!({"editor.defaultFormatter": "citet.citet"}),
         ),
         (
             "[bibtex]",
-            serde_json::json!({"editor.defaultFormatter": "backmatter.tex-ls"}),
+            serde_json::json!({"editor.defaultFormatter": "citet.citet"}),
         ),
-        ("latex-workshop.formatting.latex", serde_json::json!("none")),
-        (
-            "latex-workshop.intellisense.triggers.latex",
-            serde_json::json!([]),
-        ),
-        (
-            "latex-workshop.intellisense.atSuggestion.trigger.latex",
-            serde_json::json!(""),
-        ),
-        (
-            "latex-workshop.latex.external.build.command",
-            serde_json::json!(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("texe"))),
-        ),
-        (
-            "latex-workshop.latex.external.build.args",
-            serde_json::json!(["editor-build", "--project", "%WORKSPACE_FOLDER%"]),
-        ),
-        (
-            "latex-workshop.latex.autoBuild.run",
-            serde_json::Value::String("never".to_string()),
-        ),
-        (
-            "latex-workshop.latex.autoBuild.onSave.files.ignore",
-            serde_json::json!([]),
-        ),
-        (
-            "latex-workshop.latex.build.enableMagicComments",
-            serde_json::Value::Bool(false),
-        ),
-        (
-            "latex-workshop.latex.jobname",
-            serde_json::Value::String(stem.to_string()),
-        ),
-        (
-            "latex-workshop.latex.outDir",
-            serde_json::Value::String("%WORKSPACE_FOLDER%".to_string()),
-        ),
-        (
-            "latex-workshop.latex.search.rootFiles.include",
-            serde_json::json!([slash_path(&manifest.project.entry)]),
-        ),
-        (
-            "latex-workshop.latex.search.rootFiles.exclude",
-            serde_json::json!(["**/.texe/**"]),
-        ),
-        (
-            "latex-workshop.latex.rootFile.useSubFile",
-            serde_json::Value::Bool(false),
-        ),
-        (
-            "latex-workshop.latex.rootFile.doNotPrompt",
-            serde_json::Value::Bool(true),
-        ),
-        (
-            "latex-workshop.view.pdf.viewer",
-            serde_json::Value::String("tab".to_string()),
-        ),
-        (
-            "latex-workshop.view.pdf.tab.editorGroup",
-            serde_json::Value::String("right".to_string()),
-        ),
-        (
-            "latex-workshop.message.error.show",
-            serde_json::Value::Bool(false),
-        ),
-        (
-            "latex-workshop.latex.extraExts",
-            serde_json::json!([".tikz"]),
-        ),
-        (
-            "files.associations",
-            serde_json::json!({
-                "*.tikz": "latex",
-            }),
-        ),
+        ("files.associations", serde_json::json!({"*.tikz": "latex"})),
         (
             "files.watcherExclude",
-            serde_json::json!({
-                "**/.texe/**": true,
-            }),
+            serde_json::json!({"**/.texe/**": true}),
         ),
-        (
-            "search.exclude",
-            serde_json::json!({
-                "**/.texe": true,
-            }),
-        ),
-        (
-            "texe.executablePath",
-            serde_json::json!(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("texe"))),
-        ),
-        ("texe.editor.enabled", serde_json::Value::Bool(true)),
-        (
-            "texe.editor.openPaper",
-            serde_json::json!({
-                "source": slash_path(&manifest.project.entry),
-                "pdf": format!("{stem}.pdf"),
-                "request": slash_path(&manifest.project.entry),
-            }),
-        ),
-    ]);
-    for key in [
-        "latex-workshop.intellisense.package.enabled",
-        "latex-workshop.intellisense.argumentHint.enabled",
-        "latex-workshop.hover.ref.enabled",
-        "latex-workshop.hover.citation.enabled",
-        "latex-workshop.hover.command.enabled",
-        "latex-workshop.hover.preview.enabled",
-        "latex-workshop.linting.chktex.enabled",
-        "latex-workshop.linting.lacheck.enabled",
-    ] {
-        settings.insert(key, serde_json::json!(false));
-    }
-    Ok(settings)
+        ("search.exclude", serde_json::json!({"**/.texe": true})),
+    ])
 }
 
 pub(super) fn slash_path(path: &Path) -> String {
@@ -757,17 +661,15 @@ mod tests {
         let preview = super::preview(directory.path()).unwrap();
         let settings: serde_json::Value =
             serde_json::from_str(preview["settings"].as_str().unwrap()).unwrap();
-        assert_eq!(settings["tex-ls.texmf.explicitOnly"], true);
-        assert_eq!(settings["tex-ls.diagnostics.compiler"], false);
-        assert_eq!(settings["tex-ls.texmf.roots"].as_array().unwrap().len(), 2);
+        assert_eq!(settings["citet.openPaper"], true);
+        assert!(
+            !settings
+                .as_object()
+                .unwrap()
+                .keys()
+                .any(|key| key.starts_with("tex-ls.") || key.starts_with("latex-workshop."))
+        );
         assert!(!directory.path().join(".texe").exists());
-        let mut manifest =
-            crate::config::ProjectManifest::load(&directory.path().join("texe.toml")).unwrap();
-        manifest.toolchain.provider = "system".into();
-        manifest.packages.remote = false;
-        let settings = super::desired_settings(directory.path(), &manifest).unwrap();
-        assert_eq!(settings["tex-ls.texmf.explicitOnly"], false);
-        assert_eq!(settings["tex-ls.texmf.useKpsewhich"], true);
     }
 
     #[test]
@@ -783,36 +685,17 @@ mod tests {
         )
         .expect("valid project settings");
         assert_eq!(
-            settings["latex-workshop.latex.external.build.command"],
+            settings["citet.texePath"],
             serde_json::json!(std::env::current_exe().unwrap())
         );
+        assert_eq!(settings["citet.openPaper"], true);
         assert_eq!(
-            settings["latex-workshop.latex.extraExts"],
-            serde_json::json!([".tikz"])
+            settings["[latex]"]["editor.defaultFormatter"],
+            "citet.citet"
         );
-        assert_eq!(
-            settings["latex-workshop.latex.search.rootFiles.include"],
-            serde_json::json!(["sources/main.tex"])
-        );
-        assert_eq!(
-            settings["latex-workshop.latex.search.rootFiles.exclude"],
-            serde_json::json!(["**/.texe/**"])
-        );
-        assert_eq!(
-            settings["latex-workshop.latex.outDir"],
-            "%WORKSPACE_FOLDER%"
-        );
-        assert_eq!(settings["latex-workshop.latex.jobname"], "main");
-        assert_eq!(settings["latex-workshop.latex.rootFile.useSubFile"], false);
-        assert_eq!(settings["latex-workshop.latex.rootFile.doNotPrompt"], true);
         assert_eq!(settings["files.associations"]["*.tikz"], "latex");
         assert_eq!(settings["files.watcherExclude"]["**/.texe/**"], true);
         assert_eq!(settings["search.exclude"]["**/.texe"], true);
-        assert_eq!(settings["texe.editor.enabled"], true);
-        assert_eq!(
-            settings["texe.editor.openPaper"]["source"],
-            "sources/main.tex"
-        );
         assert!(!legacy_workspace_path(directory.path()).exists());
     }
 
@@ -838,7 +721,7 @@ mod tests {
         write_manifest(directory.path(), "main.tex");
         fs::create_dir(directory.path().join(".vscode")).unwrap();
         let path = project_settings_path(directory.path());
-        fs::write(&path, r#"{"latex-workshop.view.pdf.viewer":null}"#).unwrap();
+        fs::write(&path, r#"{"citet.openPaper":null}"#).unwrap();
         configure(directory.path(), true).unwrap();
         let tree = super::parse(&fs::read_to_string(&path).unwrap()).unwrap();
         tree.object_value()
@@ -850,12 +733,9 @@ mod tests {
             .unwrap()
             .to_serde_value()
             .unwrap();
-        assert_eq!(
-            value.get("latex-workshop.view.pdf.viewer"),
-            Some(&serde_json::Value::Null)
-        );
+        assert_eq!(value.get("citet.openPaper"), Some(&serde_json::Value::Null));
         assert_eq!(value["editor.fontSize"], 17);
-        assert!(value.get("texe.editor.openPaper").is_none());
+        assert!(value.get("citet.texePath").is_none());
     }
 
     #[test]
@@ -876,13 +756,10 @@ mod tests {
         write_manifest(directory.path(), "main.tex");
         fs::create_dir(directory.path().join(".vscode")).unwrap();
         let path = project_settings_path(directory.path());
-        let original = r#"{"latex-workshop.latex.autoBuild.run":"onSave","editor.wordWrap":"on"}"#;
+        let original = r#"{"citet.openPaper":false,"editor.wordWrap":"on"}"#;
         fs::write(&path, original).unwrap();
         let preview = super::preview(directory.path()).unwrap();
-        assert_eq!(
-            preview["conflicts"],
-            serde_json::json!(["latex-workshop.latex.autoBuild.run"])
-        );
+        assert_eq!(preview["conflicts"], serde_json::json!(["citet.openPaper"]));
         assert!(configure(directory.path(), false).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), original);
         assert!(
@@ -910,15 +787,12 @@ mod tests {
         write_manifest(directory.path(), "sources/paper.v2.tex");
         configure(directory.path(), false).unwrap();
         let tree = super::parse(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(
-            tree.to_serde_value().unwrap()["texe.editor.openPaper"]["pdf"],
-            "paper.v2.pdf"
-        );
+        assert_eq!(tree.to_serde_value().unwrap()["citet.openPaper"], true);
         tree.object_value()
             .unwrap()
-            .get("latex-workshop.view.pdf.viewer")
+            .get("citet.openPaper")
             .unwrap()
-            .set_value("browser".into());
+            .set_value(false.into());
         tree.object_value()
             .unwrap()
             .append("editor.fontSize", 17.into());
@@ -929,8 +803,48 @@ mod tests {
             .to_serde_value()
             .unwrap();
         assert_eq!(value["editor.fontSize"], 17);
-        assert_eq!(value["latex-workshop.view.pdf.viewer"], "browser");
-        assert!(value.get("texe.editor.enabled").is_none());
+        assert_eq!(value["citet.openPaper"], false);
+        assert!(value.get("citet.texePath").is_none());
+    }
+
+    #[test]
+    fn cutover_retires_owned_companion_settings_and_preserves_user_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        write_manifest(directory.path(), "main.tex");
+        configure(directory.path(), false).unwrap();
+        let path = project_settings_path(directory.path());
+        let tree = super::parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        let object = tree.object_value().unwrap();
+        object.append("latex-workshop.latex.autoBuild.run", "never".into());
+        object.append("texe.allowDownloads", false.into());
+        fs::write(&path, tree.to_string()).unwrap();
+        let record = directory.path().join(".vscode/texe-integration.json");
+        let mut ownership: super::Ownership =
+            serde_json::from_str(&fs::read_to_string(&record).unwrap()).unwrap();
+        for (key, after) in [
+            (
+                "latex-workshop.latex.autoBuild.run",
+                serde_json::json!("never"),
+            ),
+            ("texe.allowDownloads", serde_json::json!(true)),
+        ] {
+            ownership.edits.push(super::OwnedEdit {
+                path: vec![key.into()],
+                before: None,
+                before_exists: false,
+                after,
+            });
+        }
+        fs::write(record, serde_json::to_string(&ownership).unwrap()).unwrap();
+        configure(directory.path(), false).unwrap();
+        let value = super::parse(&fs::read_to_string(path).unwrap())
+            .unwrap()
+            .to_serde_value()
+            .unwrap();
+        assert!(value.get("latex-workshop.latex.autoBuild.run").is_none());
+        assert_eq!(value["texe.allowDownloads"], false);
+        assert_eq!(value["citet.allowDownloads"], false);
+        assert_eq!(value["citet.openPaper"], true);
     }
 
     #[test]

@@ -55,7 +55,7 @@ pub(crate) fn setup_vscode(
             .to_string(),
     );
     report.messages.push(
-        "VS Code may open this new folder in Restricted Mode; choose Trust to enable build-on-save and LaTeX Workshop"
+        "VS Code may open this new folder in Restricted Mode; choose Trust to enable Citet language tools and builds"
             .to_string(),
     );
 
@@ -88,9 +88,7 @@ pub(crate) fn setup_vscode(
         }
     };
     if code_available {
-        ensure_tex_ls(&mut report);
-        ensure_latex_workshop(&mut report);
-        ensure_layout_companion(&mut report);
+        ensure_citet(&mut report);
     }
     if open && code_available {
         report.messages.extend(open_vscode(root)?.messages);
@@ -98,80 +96,20 @@ pub(crate) fn setup_vscode(
     Ok(report)
 }
 
-fn ensure_tex_ls(report: &mut IntegrationReport) {
-    if let Some(version) = installed_extension_version("backmatter.tex-ls") {
-        report.messages.push(format!(
-            "kept tex-ls {version}; texe requires tex-ls 0.1.2 or newer"
-        ));
-        return;
-    }
-    match code_command()
-        .args(["--install-extension", "backmatter.tex-ls"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        Ok(status) if status.success() => report
-            .messages
-            .push("installed tex-ls for completion, navigation, and formatting".into()),
-        _ => report.messages.push(
-            "could not install tex-ls; install backmatter.tex-ls 0.1.2 or newer from Extensions"
-                .into(),
-        ),
-    }
-}
-
-fn ensure_latex_workshop(report: &mut IntegrationReport) {
-    if installed_extension_version("James-Yu.latex-workshop").is_some() {
-        report
-            .messages
-            .push("kept the installed LaTeX Workshop extension unchanged".to_string());
-        return;
-    }
-    match code_command()
-        .args(["--install-extension", "James-Yu.latex-workshop"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        Ok(status) if status.success() => report
-            .messages
-            .push("installed the LaTeX Workshop extension".to_string()),
-        Ok(status) => report.messages.push(format!(
-            "VS Code extension installation returned {status}; install LaTeX Workshop from Extensions"
-        )),
-        Err(source) => report.messages.push(format!(
-            "could not install LaTeX Workshop ({source}); install it from Extensions"
-        )),
-    }
-}
-
-fn ensure_layout_companion(report: &mut IntegrationReport) {
-    let layout_version = installed_extension_version("backmatter.texe-paper-layout");
-    let same_version = layout_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
-    if same_version
-        && installed_extension_path("backmatter.texe-paper-layout")
-            .is_some_and(|path| bridge::matches_installed(&path).unwrap_or(false))
+fn ensure_citet(report: &mut IntegrationReport) {
+    if installed_extension_path("citet.citet")
+        .is_some_and(|path| bridge::matches_installed(&path).unwrap_or(false))
     {
         report
             .messages
-            .push("texe's VS Code companion is available in VS Code".to_string());
+            .push("Citet's native LaTeX integration is available in VS Code".into());
         return;
     }
-    let action = if same_version {
-        "refreshed"
-    } else if layout_version.is_some() {
-        "updated"
-    } else {
-        "installed"
-    };
     let extension = match bridge::path() {
         Ok(extension) => extension,
         Err(error) => {
             report.messages.push(format!(
-                "could not prepare texe's VS Code companion ({error}); run `texe build` in a terminal until the companion is installed"
+                "could not prepare Citet ({error}); use `texe build` in a terminal"
             ));
             return;
         }
@@ -179,22 +117,26 @@ fn ensure_layout_companion(report: &mut IntegrationReport) {
     match code_command()
         .arg("--install-extension")
         .arg(&extension)
-        // This is texe's own versioned companion, not the third-party LaTeX
-        // Workshop extension.
         .arg("--force")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
     {
-        Ok(status) if status.success() => report.messages.push(format!(
-            "{action} texe's VS Code companion for VS Code"
-        )),
-        Ok(status) => report.messages.push(format!(
-            "could not install texe's VS Code companion ({status}); run `texe build` in a terminal until the companion is installed"
-        )),
-        Err(source) => report.messages.push(format!(
-            "could not install texe's VS Code companion ({source}); run `texe build` in a terminal until the companion is installed"
+        Ok(status) if status.success() => {
+            report.messages.push("installed Citet for local builds, language tools, PDF viewing and optional collaboration".into());
+            if installed_extension_version("backmatter.texe-paper-layout").is_some() {
+                let _ = code_command()
+                    .args(["--uninstall-extension", "backmatter.texe-paper-layout"])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+        result => report.messages.push(format!(
+            "could not install Citet ({result:?}); install {} manually or use `texe build`",
+            extension.display()
         )),
     }
 }
@@ -291,9 +233,7 @@ fn open_targets(root: &Path, manifest: &ProjectManifest) -> Vec<PathBuf> {
     let pdf = root.join(stem).with_extension("pdf");
     let mut targets = vec![source];
     if pdf.is_file() {
-        // LaTeX Workshop registers its internal viewer as VS Code's default
-        // custom editor for PDF files. Listing the PDF last makes it the
-        // visible tab while leaving the source ready to edit.
+        // Citet opens the project PDF beside the source after activation.
         targets.push(pdf);
     }
     targets

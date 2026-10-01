@@ -424,7 +424,7 @@ fn adoption_can_accept_previewed_editor_conflicts_without_a_manifest_workaround(
     let root = directory.path();
     fs::write(root.join("main.tex"), "\\documentclass{article}").unwrap();
     fs::create_dir(root.join(".vscode")).unwrap();
-    let original = "{\"latex-workshop.latex.autoBuild.run\":\"onSave\",\"editor.fontSize\":19}";
+    let original = "{\"citet.openPaper\":false,\"editor.fontSize\":19}";
     fs::write(root.join(".vscode/settings.json"), original).unwrap();
     let output = texe(root, &["adopt", "--yes", "--no-build"]);
     assert!(!output.status.success());
@@ -439,8 +439,5 @@ fn adoption_can_accept_previewed_editor_conflicts_without_a_manifest_workaround(
     let settings: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join(".vscode/settings.json")).unwrap()).unwrap();
     assert_eq!(settings["editor.fontSize"], 19);
-    assert_eq!(
-        settings["latex-workshop.latex.external.build.args"][0],
-        "editor-build"
-    );
+    assert_eq!(settings["citet.openPaper"], true);
 }

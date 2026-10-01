@@ -9,7 +9,6 @@ use crate::{TexeError, ux};
 mod adoption;
 mod build_command;
 mod doctor;
-mod editor_bridge;
 mod maintenance;
 mod output;
 mod project;
@@ -78,7 +77,6 @@ fn run(cli: Cli) -> Result<(), TexeError> {
 
 fn run_command(command: Command, presentation: ux::Presentation) -> Result<(), TexeError> {
     match command {
-        Command::EditorBuild { project } => editor_bridge::build(project.as_deref()),
         command @ Command::Adopt { .. } => adoption::run(command, presentation),
         command @ Command::Init { .. } => run_init_command(command, presentation),
         command @ Command::Doctor { .. } => run_doctor_command(command, presentation),

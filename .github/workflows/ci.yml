@@ -98,7 +98,7 @@ jobs:
         run: cargo doc --workspace --no-deps --locked
 
   vscode-extension:
-    name: VS Code companion
+    name: Viewer protocol
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -108,7 +108,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run mocked extension-host tests
+      - name: Check browser viewer protocol
         run: node --test tests/*.test.js
 
   vscode-real:

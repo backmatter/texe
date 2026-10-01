@@ -83,14 +83,15 @@ TEXE_TEST_MANAGED=1 TEXE_TEST_SUITE=/absolute/path/to/suite npm test --prefix te
 Omit `TEXE_TEST_MANAGED=1` to use system `pdflatex` and `kpsewhich`. The tests
 run against a temporary VS Code profile, extension directory, and paper,
 covering PDF refresh, diagnostics, failure recovery, SyncTeX, build commands,
-and manifest changes. Linux needs a display server or Xvfb. Screenshots and
-`results.json` land in the temporary directory the run prints.
+and native language formatting. Linux needs a display server or Xvfb. `results.json` lands in the temporary directory the run prints.
 
-The harness downloads the VS Code, LaTeX Workshop, and tex-ls versions pinned in
-[`tests/vscode/run.js`](tests/vscode/run.js). To use local copies, set
-`VSCODE_EXECUTABLE` to an Electron executable and `LATEX_WORKSHOP_PATH` to an
-installed extension directory. Set `TEX_LS_EXTENSION_PATH` to use a local
-tex-ls extension directory.
+The harness downloads the VS Code version pinned in
+[`tests/vscode/run.js`](tests/vscode/run.js) and loads the bundled Citet VSIX.
+It installs no dependent extensions. Use `VSCODE_EXECUTABLE` for a local Electron
+executable and `TEX_LS_BINARY` for a local language-server executable. Otherwise
+Citet downloads a checksum-verified server release. To update the extension,
+build/export it from `citet/apps/vscode`; see
+[`assets/citet-vscode.md`](assets/citet-vscode.md).
 
 ## Pull requests
 
