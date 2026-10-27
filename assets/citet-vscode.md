@@ -5,7 +5,7 @@ real VS Code workflow tests. It is not embedded in texe or included in the
 published crate. `texe editor` installs `backmatter.citet` from the Marketplace;
 VS Code installs its standalone tex-ls dependency.
 
-- SHA-256: `0b92f557b91dc685ff4813c628aad077cac46d20e31c51f95faab4cfe522a6db`
+- SHA-256: `3c58e3ce59eefd1c66027e6f758e7ceab19853e9e4184ef6544c7a1989bbf64c`
 - Build: `bun run --cwd apps/vscode export:texe` from the Citet repository.
 - This fixture includes the Linux sync binary. The local-only editor tests do
   not start the sync daemon. Platform release packaging belongs to Citet's CI.
