@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::TexeError;
 use crate::atomic::write as atomic_write;
 use crate::build::process::{
-    engine_input_environment, engine_path_from, managed_path, raw_engine_output, search_path_from,
-    source_date_environment,
+    engine_input_environment, engine_path_from, is_portable_build, managed_path, portable_output,
+    raw_engine_output, search_path_from, source_date_environment,
 };
 use crate::package::PackageEnvironment;
 use crate::progress::{PhaseKind, Progress};
@@ -97,10 +97,16 @@ pub(super) fn ensure(
     }
     let recipe = format_recipe(&toolchain.engine)?;
     let environment_key = environment_cache_key(&package_environment.fingerprint)?;
-    let format_cache = managed.map_or_else(
-        || build_root.join("formats"),
-        |runtime| runtime.format_cache.clone(),
-    );
+    let format_cache = if is_portable_build(project_root, build_root) {
+        // A document must never write executable format state shared with other
+        // papers. Project-private formats also retire with their environment.
+        build_root.join("formats")
+    } else {
+        managed.map_or_else(
+            || build_root.join("formats"),
+            |runtime| runtime.format_cache.clone(),
+        )
+    };
     let target = format_cache
         .join(&toolchain.identity.fingerprint)
         .join(environment_key)
@@ -110,7 +116,25 @@ pub(super) fn ensure(
         formats: target.join("formats"),
     };
     let format_file = format.formats.join(format!("{}.fmt", recipe.name));
+    if is_portable_build(project_root, build_root) {
+        validate_private_format_paths(project_root, &target, &format.formats)?;
+        if fs::symlink_metadata(&format_file)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(TexeError::Build(
+                "A portable format cache must not alias a source file".into(),
+            ));
+        }
+    }
     if format_file.is_file() {
+        if is_portable_build(project_root, build_root) {
+            super::generated::read(
+                project_root,
+                &format.formats,
+                &format_file,
+                super::generated::MAX_ARTIFACT,
+            )?;
+        }
         return Ok(Some(format));
     }
 
@@ -167,6 +191,21 @@ fn prepare_format_build<'a>(
         source,
     })?;
     let staging = parent.join(format!(".{}.{}.tmp", recipe.name, std::process::id()));
+    if target.starts_with(project_root.join(".texe/environments"))
+        || super::process::protection_requested()
+    {
+        crate::portable::private_directory(
+            project_root,
+            parent.strip_prefix(project_root).map_err(|_| {
+                TexeError::Build("Private format cache is outside the project".into())
+            })?,
+        )?;
+        if fs::symlink_metadata(&staging).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return Err(TexeError::Build(
+                "Private format staging must not alias source directories".into(),
+            ));
+        }
+    }
     if staging.exists() {
         remove_format_staging(&staging, recipe.name)?;
     }
@@ -196,16 +235,68 @@ fn prepare_format_build<'a>(
     })
 }
 
+fn validate_private_format_paths(
+    root: &Path,
+    target: &Path,
+    formats: &Path,
+) -> Result<(), TexeError> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| TexeError::Build("Invalid format cache directory".into()))?;
+    crate::portable::private_directory(
+        root,
+        parent
+            .strip_prefix(root)
+            .map_err(|_| TexeError::Build("Private format cache is outside the project".into()))?,
+    )?;
+    for path in [target, formats] {
+        match fs::symlink_metadata(path) {
+            Ok(_) => crate::portable::private_directory(
+                root,
+                path.strip_prefix(root).map_err(|_| {
+                    TexeError::Build("Private format cache is outside the project".into())
+                })?,
+            )?,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(TexeError::Io {
+                    path: path.into(),
+                    source,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 fn generate_format(build: &FormatBuild<'_>) -> Result<(), TexeError> {
     prepare_format_configuration(build)?;
     let arguments = format_arguments(build);
     let environment = format_environment(build);
-    let output = raw_engine_output(
-        &build.toolchain.engine_executable,
-        &arguments,
-        build.project_root,
-        &environment,
-    )?;
+    let output = if build
+        .target
+        .starts_with(build.project_root.join(".texe/environments"))
+        || super::process::protection_requested()
+    {
+        portable_output(
+            build.project_root,
+            build.toolchain,
+            &build.toolchain.engine_executable,
+            &arguments,
+            build.project_root,
+            &environment,
+            std::slice::from_ref(&build.staging),
+            &[],
+            &[],
+        )?
+    } else {
+        raw_engine_output(
+            &build.toolchain.engine_executable,
+            &arguments,
+            build.project_root,
+            &environment,
+        )?
+    };
     validate_generated_format(build, &output)?;
     publish_generated_format(build)
 }
@@ -379,16 +470,17 @@ fn validate_generated_format(
     build: &FormatBuild<'_>,
     output: &std::process::Output,
 ) -> Result<(), TexeError> {
+    let format = build.formats.join(format!("{}.fmt", build.recipe.name));
     if output.status.success()
-        && build
-            .formats
-            .join(format!("{}.fmt", build.recipe.name))
-            .is_file()
+        && super::generated::read_local(&format, super::generated::MAX_ARTIFACT).is_ok()
     {
         return Ok(());
     }
-    let log = fs::read_to_string(build.formats.join(format!("{}.log", build.recipe.name)))
-        .unwrap_or_default();
+    let log = super::generated::text_local(
+        &build.formats.join(format!("{}.log", build.recipe.name)),
+        super::generated::MAX_METADATA,
+    )
+    .unwrap_or_default();
     let detail = if log.is_empty() {
         format!(
             "{}\n{}",
@@ -621,5 +713,102 @@ mod tests {
         assert!(configuration.contains("location-precedence = texmf"));
         assert!(!configuration.contains("location_precedence"));
         assert!(!configuration.contains("location-precedence = system"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn portable_format_creation_rejects_links_before_changing_research() {
+        use crate::package::PackageEnvironment;
+        use crate::progress::{Progress, ProgressLayout};
+        use crate::toolchain::{ResolvedToolchain, ToolchainIdentity, VerificationPolicy};
+
+        for alias in ["cache", "target", "formats", "format-file", "staging"] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("project");
+            let research = fixture.path().join("research");
+            fs::create_dir_all(&root).unwrap();
+            fs::create_dir_all(&research).unwrap();
+            let source = research.join("notes.tex");
+            fs::write(&source, b"research source").unwrap();
+            let build = root
+                .join(".texe/environments")
+                .join("a".repeat(64))
+                .join("build");
+            let cache = build.join("formats");
+            let target = cache.join("test-toolchain/test-packages/pdflatex");
+            let link = match alias {
+                "cache" => cache,
+                "target" => target.clone(),
+                "formats" => target.join("formats"),
+                "format-file" => target.join("formats/pdflatex.fmt"),
+                "staging" => target
+                    .parent()
+                    .unwrap()
+                    .join(format!(".pdflatex.{}.tmp", std::process::id())),
+                _ => unreachable!(),
+            };
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(
+                if alias == "format-file" {
+                    &source
+                } else {
+                    &research
+                },
+                &link,
+            )
+            .unwrap();
+            let toolchain = ResolvedToolchain {
+                provider: "managed".into(),
+                engine: "pdflatex".into(),
+                engine_executable: root.join("engine-must-not-run"),
+                kpsewhich_executable: root.join("kpsewhich-must-not-run"),
+                texmf_dist: root.join("texmf"),
+                engine_roots: Vec::new(),
+                identity: ToolchainIdentity {
+                    provider: "managed".into(),
+                    engine: "pdflatex".into(),
+                    channel: "test".into(),
+                    target: "test".into(),
+                    fingerprint: "test-toolchain".into(),
+                    registry_url: None,
+                    registry_metadata_digest: None,
+                    artifacts: Vec::new(),
+                },
+                managed: None,
+                verification: VerificationPolicy::Deep,
+                offline: true,
+            };
+            let packages = PackageEnvironment {
+                schema: "pqty.environment/v1".into(),
+                fingerprint: "sha256:test-packages".into(),
+                font_maps: Vec::new(),
+            };
+            let progress = Progress::new(
+                root.join("timing.json"),
+                "pdflatex",
+                true,
+                4,
+                false,
+                false,
+                ProgressLayout::Standalone,
+            );
+            let error = super::ensure(
+                &root,
+                &toolchain,
+                &root.join("texmf"),
+                &packages,
+                &build,
+                true,
+                &progress,
+            )
+            .unwrap_err();
+            let message = error.to_string().to_lowercase();
+            assert!(
+                message.contains("private") || message.contains("portable"),
+                "{alias}: {message}"
+            );
+            assert_eq!(fs::read(&source).unwrap(), b"research source", "{alias}");
+            assert_eq!(fs::read_dir(&research).unwrap().count(), 1, "{alias}");
+        }
     }
 }

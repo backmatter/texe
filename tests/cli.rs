@@ -232,6 +232,10 @@ fn json_errors_keep_stdout_machine_readable_and_share_the_human_category() {
     assert_eq!(envelope["schema"], "texe.error/v1");
     assert_eq!(envelope["error"]["category"], "project");
     assert_eq!(envelope["error"]["code"], 3);
+    assert!(envelope["error"].get("retry").is_none());
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../schemas/texe.error.schema.json")).unwrap();
+    jsonschema::draft202012::validate(&schema, &envelope).expect("declared CLI error protocol");
 
     let human = texe(directory.path(), &["doctor"]);
     assert_eq!(human.status.code(), Some(3));
@@ -246,6 +250,31 @@ fn json_errors_keep_stdout_machine_readable_and_share_the_human_category() {
     assert_eq!(
         human_error.trim_end(),
         fixture(include_str!("fixtures/transcripts/missing-project.txt"))
+    );
+}
+
+#[test]
+fn protected_build_safety_capabilities_are_machine_readable_without_running_a_compiler() {
+    let directory = tempfile::tempdir().unwrap();
+    let result = texe(directory.path(), &["__sandbox-run", "--capabilities"]);
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty());
+    let capabilities: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(
+        capabilities,
+        serde_json::json!({
+            "schema":"texe.build-safety/v1", "sourcePublicationGuard":true, "aggregateOutputBudget":true
+        })
+    );
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../schemas/texe.build-safety.schema.json")).unwrap();
+    jsonschema::draft202012::validate(&schema, &capabilities).unwrap();
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    assert!(
+        !texe(directory.path(), &["--help"])
+            .stdout
+            .windows(b"__sandbox-run".len())
+            .any(|part| part == b"__sandbox-run")
     );
 }
 

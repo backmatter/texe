@@ -17,6 +17,95 @@ fn mirrors_nested_source_directories_for_include_auxiliaries() {
 }
 
 #[test]
+fn directory_mirror_skips_old_builds_and_recovery_at_every_depth() {
+    let project = tempfile::tempdir().expect("temporary project");
+    let build_root = project.path().join(".texe/environments/current/build");
+    let output = build_root.join("output");
+    let texmf = project.path().join(".texe/environments/current/texmf");
+    fs::create_dir_all(&output).unwrap();
+    fs::create_dir_all(project.path().join("Sources/chapters")).unwrap();
+    fs::create_dir_all(project.path().join("nested/chapters")).unwrap();
+    for prefix in ["", "nested/"] {
+        for private in [
+            ".texe/environments/old/build/output/old-build/chapters",
+            ".citet/recovery/saved-drafts",
+            ".git/objects/ab",
+        ] {
+            fs::create_dir_all(project.path().join(format!("{prefix}{private}"))).unwrap();
+        }
+    }
+    fs::write(project.path().join("main.tex"), b"research source").unwrap();
+    fs::write(project.path().join("main.pdf"), b"last successful PDF").unwrap();
+    fs::write(
+        project
+            .path()
+            .join("nested/.citet/recovery/saved-drafts/draft.tex"),
+        b"recovery draft",
+    )
+    .unwrap();
+
+    mirror_project_directories(project.path(), &output, &[&build_root, &texmf]).unwrap();
+
+    assert!(output.join("Sources/chapters").is_dir());
+    assert!(output.join("nested/chapters").is_dir());
+    for prefix in ["", "nested/"] {
+        for private in [".texe", ".citet", ".git"] {
+            assert!(!output.join(format!("{prefix}{private}")).exists());
+        }
+    }
+    assert_eq!(
+        fs::read(project.path().join("main.tex")).unwrap(),
+        b"research source"
+    );
+    assert_eq!(
+        fs::read(project.path().join("main.pdf")).unwrap(),
+        b"last successful PDF"
+    );
+    assert_eq!(
+        fs::read(
+            project
+                .path()
+                .join("nested/.citet/recovery/saved-drafts/draft.tex")
+        )
+        .unwrap(),
+        b"recovery draft"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn directory_mirror_rejects_a_symlink_without_touching_its_target() {
+    let project = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let build_root = project.path().join(".texe/build");
+    let output = build_root.join("output");
+    let texmf = project.path().join(".texe/texmf");
+    fs::create_dir_all(project.path().join("Sources/chapters")).unwrap();
+    fs::create_dir_all(&output).unwrap();
+    fs::write(outside.path().join("research.tex"), b"outside research").unwrap();
+    fs::write(outside.path().join("research.pdf"), b"outside last PDF").unwrap();
+    std::os::unix::fs::symlink(outside.path(), output.join("Sources")).unwrap();
+
+    assert!(mirror_project_directories(project.path(), &output, &[&build_root, &texmf]).is_err());
+
+    assert_eq!(
+        fs::read(outside.path().join("research.tex")).unwrap(),
+        b"outside research"
+    );
+    assert_eq!(
+        fs::read(outside.path().join("research.pdf")).unwrap(),
+        b"outside last PDF"
+    );
+    assert!(!outside.path().join("chapters").exists());
+    assert!(
+        fs::symlink_metadata(output.join("Sources"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[test]
 fn convergence_snapshot_tracks_nested_include_auxiliaries() {
     let directory = tempfile::tempdir().expect("temporary output");
     let nested = directory.path().join("chapters");
@@ -424,7 +513,8 @@ fn publishes_only_the_final_artifact_at_the_project_root() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let internal = directory.path().join(".texe/build/output/main.pdf");
     fs::create_dir_all(internal.parent().expect("output parent")).expect("output directory");
-    fs::write(&internal, b"%PDF-test").expect("internal artifact");
+    let pdf = crate::build::artifact::pdf_fixture("test artifact");
+    fs::write(&internal, &pdf).expect("internal artifact");
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     std::io::Write::write_all(&mut encoder, b"SyncTeX Version:1\n").unwrap();
     let sync = encoder.finish().unwrap();
@@ -439,10 +529,7 @@ fn publishes_only_the_final_artifact_at_the_project_root() {
         Some(directory.path().join("main.synctex.gz"))
     );
     assert_eq!(published.paths().len(), 2);
-    assert_eq!(
-        fs::read(&published.artifact).expect("published PDF"),
-        b"%PDF-test"
-    );
+    assert_eq!(fs::read(&published.artifact).expect("published PDF"), pdf);
     assert_eq!(
         fs::read(directory.path().join("main.synctex.gz")).expect("published SyncTeX"),
         sync
@@ -456,7 +543,11 @@ fn publication_failure_preserves_the_previous_pdf_and_lock() {
     let root = directory.path();
     let internal = root.join(".texe/build/output/main.pdf");
     fs::create_dir_all(internal.parent().expect("parent")).expect("output");
-    fs::write(&internal, b"new PDF").expect("PDF");
+    fs::write(
+        &internal,
+        crate::build::artifact::pdf_fixture("new artifact"),
+    )
+    .expect("PDF");
     fs::write(root.join("main.pdf"), b"old PDF").expect("previous PDF");
     fs::write(root.join("texe.lock"), b"old lock").expect("previous lock");
     fs::create_dir(root.join("main.synctex.gz")).expect("blocked SyncTeX destination");
@@ -472,7 +563,11 @@ fn publication_removes_stale_synctex_when_the_engine_did_not_produce_it() {
     let root = directory.path();
     let internal = root.join(".texe/build/output/main.pdf");
     fs::create_dir_all(internal.parent().expect("parent")).expect("output");
-    fs::write(&internal, b"new PDF").expect("PDF");
+    fs::write(
+        &internal,
+        crate::build::artifact::pdf_fixture("new artifact"),
+    )
+    .expect("PDF");
     fs::write(root.join("main.synctex.gz"), b"stale sync").expect("old SyncTeX");
     let published = publish_artifact(root, &internal, b"new lock").expect("publish");
     assert!(published.synctex.is_none());
@@ -500,6 +595,126 @@ use crate::build::warnings::collect_warnings;
 use crate::config::GeneratedInput;
 use crate::toolchain::ResolvedToolchain;
 
+#[cfg(all(unix, target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn protected_local_validation_rejects_source_aliases_before_any_parent_write() {
+    for fault in ["entry", "inputs", "bibliography", "build", "texmf", "lock"] {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("project");
+        let outside = fixture.path().join("research");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let original = b"research worth retaining";
+        fs::write(root.join("main.tex"), original).unwrap();
+        fs::write(root.join("main.pdf"), b"last good PDF").unwrap();
+        fs::write(outside.join("notes.tex"), original).unwrap();
+        let mut manifest: crate::config::ProjectManifest =
+            toml::from_str("schema='texe.project/v1'\n[project]\nentry='main.tex'\n[toolchain]\nengine='pdflatex'\n").unwrap();
+        if matches!(fault, "entry" | "inputs" | "bibliography") {
+            let output = root.join(".texe/build/output");
+            fs::create_dir_all(&output).unwrap();
+            fs::write(output.join("notes.tex"), original).unwrap();
+            if fault == "entry" {
+                fs::remove_file(root.join("main.tex")).unwrap();
+                std::os::unix::fs::symlink(output.join("notes.tex"), root.join("main.tex"))
+                    .unwrap();
+            } else {
+                std::os::unix::fs::symlink(&output, root.join("source-alias")).unwrap();
+                if fault == "inputs" {
+                    manifest.inputs.roots.push("source-alias".into());
+                } else {
+                    manifest.bibliography.roots.push("source-alias".into());
+                }
+            }
+        } else {
+            fs::create_dir(root.join(".texe")).unwrap();
+            let target = match fault {
+                "build" => &manifest.project.build_dir,
+                "texmf" => &manifest.packages.texmf,
+                "lock" => &manifest.packages.lock,
+                _ => unreachable!(),
+            };
+            fs::create_dir_all(root.join(target).parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(
+                if fault == "lock" {
+                    outside.join("notes.tex")
+                } else {
+                    outside.clone()
+                },
+                root.join(target),
+            )
+            .unwrap();
+        }
+        let before = fs::read_dir(&outside).unwrap().count();
+        assert!(
+            super::protected_manifest(&root, &manifest).is_err(),
+            "{fault}"
+        );
+        assert_eq!(
+            fs::read(root.join("main.tex")).unwrap(),
+            original,
+            "{fault}"
+        );
+        assert_eq!(
+            fs::read(root.join("main.pdf")).unwrap(),
+            b"last good PDF",
+            "{fault}"
+        );
+        assert_eq!(
+            fs::read(outside.join("notes.tex")).unwrap(),
+            original,
+            "{fault}"
+        );
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), before, "{fault}");
+        assert!(!root.join(".texe/project").exists(), "{fault}");
+    }
+}
+
+#[test]
+fn explicit_protection_is_scoped_and_restores_nested_invocations() {
+    assert!(!super::process::protection_requested());
+    {
+        let _outer = super::process::ProtectionScope::enter(true);
+        assert!(super::process::protection_requested());
+        {
+            let _inner = super::process::ProtectionScope::enter(false);
+            assert!(super::process::protection_requested());
+        }
+        assert!(super::process::protection_requested());
+    }
+    assert!(!super::process::protection_requested());
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn protected_local_layout_keeps_declared_hidden_paths_and_general_source_root() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    fs::write(root.join("main.tex"), b"research source").unwrap();
+    let manifest: crate::config::ProjectManifest = toml::from_str(
+        "schema='texe.project/v1'\n[project]\nentry='main.tex'\nbuild_dir='.texe/custom-build'\n[toolchain]\nengine='lualatex'\n[inputs]\nroots=['.']\n",
+    ).unwrap();
+    let effective = super::protected_manifest(root, &manifest).unwrap();
+    assert_eq!(effective, manifest);
+    assert!(!root.join(".texe").exists());
+    assert_eq!(fs::read(root.join("main.tex")).unwrap(), b"research source");
+    for reserved in [
+        ".texe/recovery",
+        ".texe/editor",
+        ".texe/project",
+        ".texe/environments",
+        ".texe/runtime",
+    ] {
+        let mut conflicting = manifest.clone();
+        conflicting.project.build_dir = reserved.into();
+        assert!(
+            super::protected_manifest(root, &conflicting).is_err(),
+            "{reserved}"
+        );
+        assert!(!root.join(".texe").exists(), "{reserved}");
+    }
+}
+
 #[test]
 fn finds_artifacts_without_stripping_dotted_jobnames() {
     let directory = tempfile::tempdir().unwrap();
@@ -507,5 +722,240 @@ fn finds_artifacts_without_stripping_dotted_jobnames() {
     assert_eq!(
         super::filesystem::find_artifact(directory.path(), Path::new("sources/paper.v2.tex")),
         Some(directory.path().join("paper.v2.pdf"))
+    );
+}
+
+#[test]
+fn changing_sources_between_render_and_cache_record_forces_the_next_render() {
+    for during_record in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        fs::write(root.join("paper.v2.tex"), b"\\input{chapter one.tex}").unwrap();
+        fs::write(root.join("chapter one.tex"), b"original research").unwrap();
+        let manifest: crate::ProjectManifest = toml::from_str(
+            "schema='texe.project/v1'\n[project]\nentry='paper.v2.tex'\n[toolchain]\nengine='pdflatex'\n",
+        ).unwrap();
+        let state_path = root.join(".texe/build").join(crate::state::STATE_NAME);
+        let pdf = root.join("paper.v2.pdf");
+        fs::write(&pdf, b"derived from original research").unwrap();
+        crate::state::write(
+            &state_path,
+            "previous",
+            "environment",
+            root,
+            std::slice::from_ref(&pdf),
+        )
+        .unwrap();
+        let rendered = crate::state::source_fingerprint(root, &manifest)
+            .unwrap()
+            .unwrap();
+        if !during_record {
+            fs::write(
+                root.join("chapter one.tex"),
+                b"new research saved during rendering",
+            )
+            .unwrap();
+        }
+        let called = std::cell::Cell::new(false);
+        super::record_if_sources_unchanged(root, &manifest, &state_path, Some(&rendered), || {
+            called.set(true);
+            fs::write(
+                root.join("chapter one.tex"),
+                b"new research saved during rendering",
+            )
+            .unwrap();
+            crate::state::write(
+                &state_path,
+                "incorrect post-render fingerprint",
+                "environment",
+                root,
+                std::slice::from_ref(&pdf),
+            )
+        })
+        .unwrap();
+        assert_eq!(called.get(), during_record);
+        assert!(
+            crate::state::read(&state_path).is_none(),
+            "the next build must miss the no-op cache"
+        );
+        assert_eq!(fs::read(&pdf).unwrap(), b"derived from original research");
+        assert_eq!(
+            fs::read(root.join("chapter one.tex")).unwrap(),
+            b"new research saved during rendering"
+        );
+
+        // The queued retry can record only the PDF rendered from those new
+        // bytes; dotted output names must stay outside the source snapshot.
+        let retry_sources = crate::state::source_fingerprint(root, &manifest)
+            .unwrap()
+            .unwrap();
+        fs::write(&pdf, b"derived from new research").unwrap();
+        super::record_if_sources_unchanged(
+            root,
+            &manifest,
+            &state_path,
+            Some(&retry_sources),
+            || {
+                crate::state::write(
+                    &state_path,
+                    "new render",
+                    "environment",
+                    root,
+                    std::slice::from_ref(&pdf),
+                )
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            crate::state::read(&state_path).unwrap().fingerprint,
+            "new render"
+        );
+    }
+}
+
+#[test]
+fn edit_and_revert_during_cache_record_is_detected_even_with_the_original_mtime() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let source = root.join("main.tex");
+    fs::write(&source, b"original source").unwrap();
+    let original_mtime = fs::metadata(&source).unwrap().modified().unwrap();
+    let manifest: crate::ProjectManifest = toml::from_str(
+        "schema='texe.project/v1'\n[project]\nentry='main.tex'\n[toolchain]\nengine='pdflatex'\n",
+    )
+    .unwrap();
+    let pdf = root.join("main.pdf");
+    fs::write(&pdf, b"PDF from transient source").unwrap();
+    let state_path = root.join(".texe/build").join(crate::state::STATE_NAME);
+    let rendered = crate::state::source_fingerprint(root, &manifest)
+        .unwrap()
+        .unwrap();
+    super::record_if_sources_unchanged(root, &manifest, &state_path, Some(&rendered), || {
+        fs::write(&source, b"transient source").unwrap();
+        let replacement = root.join("save-replacement");
+        fs::write(&replacement, b"original source").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(original_mtime))
+            .unwrap();
+        fs::rename(&replacement, &source).unwrap();
+        crate::state::write(
+            &state_path,
+            "incorrect reverted-source fingerprint",
+            "environment",
+            root,
+            std::slice::from_ref(&pdf),
+        )
+    })
+    .unwrap();
+    assert!(crate::state::read(&state_path).is_none());
+    assert_eq!(fs::read(&source).unwrap(), b"original source");
+    assert_eq!(
+        fs::metadata(&source).unwrap().modified().unwrap(),
+        original_mtime
+    );
+    assert_eq!(fs::read(&pdf).unwrap(), b"PDF from transient source");
+}
+
+#[test]
+fn an_unavailable_render_source_snapshot_disables_and_removes_the_no_op_cache() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::write(root.join("main.tex"), b"research source").unwrap();
+    let pdf = root.join("main.pdf");
+    fs::write(&pdf, b"last PDF").unwrap();
+    let manifest: crate::ProjectManifest = toml::from_str(
+        "schema='texe.project/v1'\n[project]\nentry='main.tex'\n[toolchain]\nengine='pdflatex'\n",
+    )
+    .unwrap();
+    let state_path = root.join(".texe/build").join(crate::state::STATE_NAME);
+    crate::state::write(
+        &state_path,
+        "previous",
+        "environment",
+        root,
+        std::slice::from_ref(&pdf),
+    )
+    .unwrap();
+    super::record_if_sources_unchanged(root, &manifest, &state_path, None, || {
+        panic!("a failed/bounded source snapshot cannot record a reusable build")
+    })
+    .unwrap();
+    assert!(crate::state::read(&state_path).is_none());
+    assert_eq!(fs::read(root.join("main.tex")).unwrap(), b"research source");
+    assert_eq!(fs::read(pdf).unwrap(), b"last PDF");
+}
+
+#[test]
+fn changed_and_reverted_render_inputs_keep_the_previous_pdf_and_retry_publication() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let source = root.join("main.tex");
+    fs::write(&source, b"original researcher source").unwrap();
+    let manifest: crate::ProjectManifest = toml::from_str(
+        "schema='texe.project/v1'\n[project]\nentry='main.tex'\n[toolchain]\nengine='pdflatex'\n",
+    )
+    .unwrap();
+    let last_pdf = crate::build::artifact::pdf_fixture("previous complete research");
+    fs::write(root.join("main.pdf"), &last_pdf).unwrap();
+    fs::write(root.join("texe.lock"), b"researcher-owned lock").unwrap();
+    let internal = root.join(".texe/build/output/main.pdf");
+    fs::create_dir_all(internal.parent().unwrap()).unwrap();
+    fs::write(
+        &internal,
+        crate::build::artifact::pdf_fixture("transient source render"),
+    )
+    .unwrap();
+    let rendered = super::capture_render_sources(root, &manifest).unwrap();
+    let original_time = fs::metadata(&source).unwrap().modified().unwrap();
+    fs::write(&source, b"transient input seen by the compiler").unwrap();
+    let replacement = root.join("save-replacement");
+    fs::write(&replacement, b"original researcher source").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&replacement)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(original_time))
+        .unwrap();
+    fs::rename(&replacement, &source).unwrap();
+    let called = std::cell::Cell::new(false);
+    let lock = root.join(".texe/build/texe.lock");
+    let error = super::publish_if_sources_unchanged(root, &manifest, &rendered, || {
+        called.set(true);
+        super::artifact::publish_artifact_at(root, &internal, b"execution lock", &lock)
+    })
+    .unwrap_err();
+    assert!(matches!(error, crate::TexeError::SourcesChanged));
+    assert!(
+        !called.get(),
+        "an unstable render must never enter publication"
+    );
+    assert_eq!(fs::read(root.join("main.pdf")).unwrap(), last_pdf);
+    assert_eq!(fs::read(&source).unwrap(), b"original researcher source");
+    assert_eq!(
+        fs::metadata(&source).unwrap().modified().unwrap(),
+        original_time
+    );
+    assert_eq!(
+        fs::read(root.join("texe.lock")).unwrap(),
+        b"researcher-owned lock"
+    );
+    assert!(internal.is_file());
+    assert!(!lock.exists());
+    assert!(!root.join(".texe/recovery").exists());
+
+    let stable = super::capture_render_sources(root, &manifest).unwrap();
+    let retry_pdf = super::artifact::pdf_fixture("fresh original source render");
+    fs::write(&internal, &retry_pdf).unwrap();
+    super::publish_if_sources_unchanged(root, &manifest, &stable, || {
+        super::artifact::publish_artifact_at(root, &internal, b"execution lock", &lock)
+    })
+    .unwrap();
+    assert_eq!(fs::read(root.join("main.pdf")).unwrap(), retry_pdf);
+    assert_eq!(
+        fs::read(root.join("texe.lock")).unwrap(),
+        b"researcher-owned lock"
     );
 }

@@ -63,7 +63,18 @@ pub(super) fn execute_build(
     embedded: bool,
 ) -> Result<BuildOutcome, TexeError> {
     let started = std::time::Instant::now();
-    let context = load_project(project)?;
+    let _protection = build::process::ProtectionScope::enter(options.protected);
+    let initial = load_project(project)?;
+    if options.protected {
+        // Validate source/derived separation before even the project lock mkdir.
+        build::protected_manifest(&initial.root, &initial.manifest)?;
+    }
+    crate::portable::private_directory(&initial.root, Path::new(".texe/project"))?;
+    let _project_guard = crate::guard::BuildGuard::acquire(&initial.root.join(".texe/project"))?;
+    let mut context = load_project(Some(&initial.root))?;
+    if options.protected {
+        context.manifest = build::protected_manifest(&context.root, &context.manifest)?;
+    }
     let build_root = context.root.join(&context.manifest.project.build_dir);
     confirm_first_download(
         &context,
@@ -138,6 +149,7 @@ pub(super) fn execute_build(
             return Err(error);
         }
     };
+    crate::portable::retention::built(&context.root, &report.environment_fingerprint);
     Ok(BuildOutcome {
         entry: context.manifest.project.entry,
         report,

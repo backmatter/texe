@@ -5,7 +5,6 @@
 //! network request.
 
 use std::fmt;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -124,14 +123,20 @@ pub(crate) fn from_engine_log(
     let (family, message, explanation, action) = classify(&evidence, &original);
     let location = locate(&logical_log, entry).map(|(file, line)| {
         let safe_file = confined_file(project_root, &file).unwrap_or_else(|| entry.to_path_buf());
-        let source = fs::read_to_string(project_root.join(&safe_file))
-            .ok()
-            .and_then(|contents| {
-                contents
-                    .lines()
-                    .nth(line.saturating_sub(1))
-                    .map(str::to_string)
-            });
+        let source = crate::build::generated::read(
+            project_root,
+            project_root,
+            &project_root.join(&safe_file),
+            crate::build::generated::MAX_METADATA,
+        )
+        .ok()
+        .and_then(|contents| String::from_utf8(contents).ok())
+        .and_then(|contents| {
+            contents
+                .lines()
+                .nth(line.saturating_sub(1))
+                .map(str::to_string)
+        });
         SourceLocation {
             file: safe_file,
             line,
@@ -400,7 +405,18 @@ fn unwrap_log(log: &str) -> String {
 
 fn primary_original(log: &str, stdout: &str, stderr: &str) -> String {
     let lines = log.lines().collect::<Vec<_>>();
-    if let Some(index) = lines.iter().rposition(|line| fatal_diagnostic_line(line)) {
+    if let Some(mut index) = lines.iter().rposition(|line| fatal_diagnostic_line(line)) {
+        // TeX's noninteractive missing-file prompt ends in an emergency stop.
+        // Preserve the fatal cause before that generic terminal message so
+        // editors can identify the missing dependency from the diagnostic.
+        let terminal = lines[index].trim().to_ascii_lowercase();
+        if (terminal.ends_with("emergency stop.") || terminal.ends_with("emergency stop"))
+            && let Some(cause) = lines[..index]
+                .iter()
+                .rposition(|line| fatal_diagnostic_line(line))
+        {
+            index = cause;
+        }
         let mut focused = lines[index].trim_start_matches('!').trim().to_string();
         let mut previous_width = lines[index].chars().count();
         for continuation in lines.iter().skip(index + 1) {
@@ -577,6 +593,81 @@ l.42 \includegrphics{result.pdf}
         let diagnostic = diagnose("! An unusual engine failure.\nl.1 text", "text\n");
         assert_eq!(diagnostic.family, "latex-error");
         assert!(diagnostic.explanation.contains("unusual engine failure"));
+    }
+
+    #[test]
+    fn missing_package_before_emergency_stop_keeps_the_structured_dependency_family() {
+        for terminal in [
+            "./main.tex:3: Emergency stop.",
+            "/home/citet/vscode-audit/environment-final/remote paper/main.tex:3: Emergency s\ntop.",
+        ] {
+            let diagnostic = diagnose(
+                &format!(
+                    "! LaTeX Error: File `geometry.sty' not found.\n\nType X to quit or <RETURN> to proceed,\nor enter new name. (Default extension: sty)\n\n{terminal}\n<read *>\nl.3 \\begin{{document}}\n"
+                ),
+                "\\documentclass{article}\n\\usepackage{geometry}\n\\begin{document}\n",
+            );
+            assert_eq!(diagnostic.family, "missing-input");
+            assert!(diagnostic.original.contains("geometry.sty"));
+            assert!(!diagnostic.original.contains("Emergency stop"));
+            let json = serde_json::to_value(diagnostic).unwrap();
+            assert_eq!(json["family"], "missing-input");
+        }
+    }
+
+    #[test]
+    fn informational_missing_package_before_emergency_stop_is_not_a_dependency_failure() {
+        let diagnostic = diagnose(
+            "Package biblatex Info: ... file 'authoryear.dbx' not found.\n./main.tex:3: Emergency stop.\nl.3 \\begin{document}\n",
+            "source\n",
+        );
+        assert_eq!(diagnostic.family, "latex-error");
+        assert!(diagnostic.original.contains("Emergency stop"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn diagnostic_source_preview_does_not_follow_log_nominated_source_aliases() {
+        let directory = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("private.tex"), "private sentinel\n").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("private.tex"),
+            directory.path().join("main.tex"),
+        )
+        .unwrap();
+        let diagnostic = from_engine_log(
+            directory.path(),
+            Path::new("main.tex"),
+            &directory.path().join(".texe/build/output/main.log"),
+            "! Undefined control sequence.\nl.1 \\badmacro",
+            "",
+            "",
+        );
+        assert!(diagnostic.location.as_ref().unwrap().source.is_none());
+        assert!(
+            !serde_json::to_string(&diagnostic)
+                .unwrap()
+                .contains("private sentinel")
+        );
+    }
+
+    #[test]
+    fn oversized_source_preview_is_omitted_without_changing_the_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("main.tex");
+        let bytes = crate::build::generated::MAX_METADATA + 1;
+        fs::File::create(&source).unwrap().set_len(bytes).unwrap();
+        let diagnostic = from_engine_log(
+            directory.path(),
+            Path::new("main.tex"),
+            &directory.path().join(".texe/build/output/main.log"),
+            "! Undefined control sequence.\nl.1 \\badmacro",
+            "",
+            "",
+        );
+        assert!(diagnostic.location.as_ref().unwrap().source.is_none());
+        assert_eq!(fs::metadata(source).unwrap().len(), bytes);
     }
 
     #[test]

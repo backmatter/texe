@@ -27,6 +27,12 @@ pub(super) fn mirror_project_directories(
                 source,
             })?;
             let path = entry.path();
+            if matches!(
+                entry.file_name().to_str(),
+                Some(".texe" | ".citet" | ".git")
+            ) {
+                continue;
+            }
             if excluded
                 .iter()
                 .any(|excluded| path == *excluded || path.starts_with(excluded))
@@ -43,11 +49,30 @@ pub(super) fn mirror_project_directories(
             let relative = path
                 .strip_prefix(project_root)
                 .expect("directory came from the project root");
-            let mirrored = output_dir.join(relative);
-            fs::create_dir_all(&mirrored).map_err(|source| TexeError::Io {
-                path: mirrored,
-                source,
-            })?;
+            let mut checked = output_dir.to_path_buf();
+            for part in relative.components() {
+                checked.push(part);
+                match fs::symlink_metadata(&checked) {
+                    Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+                    Ok(_) => {
+                        return Err(TexeError::Build(
+                            "Private build directories must not contain source aliases".into(),
+                        ));
+                    }
+                    Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                        fs::create_dir(&checked).map_err(|source| TexeError::Io {
+                            path: checked.clone(),
+                            source,
+                        })?;
+                    }
+                    Err(source) => {
+                        return Err(TexeError::Io {
+                            path: checked,
+                            source,
+                        });
+                    }
+                }
+            }
             pending.push(path);
         }
     }
@@ -57,7 +82,18 @@ pub(super) fn mirror_project_directories(
 pub(super) fn auxiliary_snapshot(
     directory: &Path,
 ) -> Result<BTreeMap<PathBuf, Vec<u8>>, TexeError> {
+    let absolute = std::path::absolute(directory).map_err(|source| TexeError::Io {
+        path: directory.into(),
+        source,
+    })?;
+    let anchor = absolute
+        .ancestors()
+        .last()
+        .ok_or_else(|| TexeError::Build("Invalid private auxiliary directory".into()))?;
+    super::generated::validate_parent(anchor, &absolute.join(".snapshot"))?;
     let mut snapshot = BTreeMap::new();
+    let mut total = 0usize;
+    let mut count = 0usize;
     let mut pending = vec![directory.to_path_buf()];
     while let Some(current) = pending.pop() {
         let entries = fs::read_dir(&current).map_err(|source| TexeError::Io {
@@ -65,6 +101,12 @@ pub(super) fn auxiliary_snapshot(
             source,
         })?;
         for entry in entries {
+            count += 1;
+            if count > 100_000 {
+                return Err(TexeError::Build(
+                    "Compiler auxiliary output contains too many files".into(),
+                ));
+            }
             let entry = entry.map_err(|source| TexeError::Io {
                 path: current.clone(),
                 source,
@@ -81,10 +123,16 @@ pub(super) fn auxiliary_snapshot(
             if !file_type.is_file() || !is_auxiliary(&path) {
                 continue;
             }
-            let bytes = fs::read(&path).map_err(|source| TexeError::Io {
-                path: path.clone(),
-                source,
-            })?;
+            let bytes = super::generated::read_local(&path, super::generated::MAX_METADATA)?;
+            total = total.saturating_add(bytes.len());
+            if total
+                > usize::try_from(super::generated::MAX_ARTIFACT)
+                    .expect("bounded output limit fits usize")
+            {
+                return Err(TexeError::Build(
+                    "Compiler auxiliary output exceeded 128 MiB".into(),
+                ));
+            }
             let relative = path
                 .strip_prefix(directory)
                 .expect("auxiliary came from the output directory")

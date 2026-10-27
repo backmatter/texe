@@ -25,6 +25,9 @@ cargo xtask pqty check ../pqty
 
 Set `PQTY_REPO` if pqty lives elsewhere.
 
+See [native suite releases](docs/releasing.md) for the automated pqty update
+handoff, protected dependency checks and release recovery.
+
 ## Run the checks
 
 ```sh
@@ -86,11 +89,10 @@ covering PDF refresh, diagnostics, failure recovery, SyncTeX, build commands,
 and native language formatting. Linux needs a display server or Xvfb. `results.json` lands in the temporary directory the run prints.
 
 The harness downloads the VS Code version pinned in
-[`tests/vscode/run.js`](tests/vscode/run.js) and loads the bundled Citet VSIX.
-It installs no dependent extensions. Use `VSCODE_EXECUTABLE` for a local Electron
-executable and `TEX_LS_BINARY` for a local language-server executable. Otherwise
-Citet downloads a checksum-verified server release. To update the extension,
-build/export it from `citet/apps/vscode`; see
+[`tests/vscode/run.js`](tests/vscode/run.js), loads the checked-in Citet test
+fixture, and installs its standalone tex-ls dependency. Use `VSCODE_EXECUTABLE`
+for a local Electron executable and `TEX_LS_BINARY` for a local language server.
+The fixture is excluded from native release packages and runtime code. See
 [`assets/citet-vscode.md`](assets/citet-vscode.md).
 
 ## Pull requests

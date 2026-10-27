@@ -1,13 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::Read as _;
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use super::generated;
+use crate::TexeError;
 use crate::config::ProjectManifest;
 use crate::toolchain::ResolvedToolchain;
-use crate::{TexeError, atomic};
 
 const CACHE_SCHEMA: &str = "texe.auxiliary-cache/v1";
 pub(super) const CACHE_NAME: &str = "auxiliary-cache.json";
@@ -133,7 +135,7 @@ pub(super) fn cache_key(
 }
 
 pub(super) fn read(path: &Path, expected_key: &str) -> AuxiliaryCache {
-    let Ok(bytes) = fs::read(path) else {
+    let Ok(bytes) = generated::read_local(path, generated::MAX_METADATA) else {
         return AuxiliaryCache::empty(expected_key);
     };
     let Ok(cache) = serde_json::from_slice::<AuxiliaryCache>(&bytes) else {
@@ -152,7 +154,15 @@ pub(super) fn write(path: &Path, cache: &AuxiliaryCache) -> Result<(), TexeError
         source,
     })?;
     bytes.push(b'\n');
-    atomic::write(path, &bytes)
+    let absolute = std::path::absolute(path).map_err(|source| TexeError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let root = absolute
+        .ancestors()
+        .last()
+        .expect("absolute filesystem root");
+    generated::write(root, &absolute, &bytes)
 }
 
 impl AuxiliaryCache {
@@ -181,7 +191,11 @@ impl AuxiliaryCache {
 
 pub(super) fn relative_path(root: &Path, path: &Path) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?;
-    if relative.as_os_str().is_empty() {
+    if relative.as_os_str().is_empty()
+        || !relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    {
         return None;
     }
     Some(
@@ -194,15 +208,38 @@ pub(super) fn relative_path(root: &Path, path: &Path) -> Option<String> {
 }
 
 pub(super) fn file_digest(path: &Path) -> Option<String> {
-    let bytes = fs::read(path).ok()?;
+    let bytes = generated::read_local(path, generated::MAX_ARTIFACT).ok()?;
     Some(bytes_digest(&bytes))
 }
 
 pub(super) fn required_file_digest(path: &Path) -> Result<String, TexeError> {
-    let bytes = fs::read(path).map_err(|source| TexeError::Io {
+    // This is a resolved, trusted tool executable. System installations may
+    // legitimately use symbolic or hard links; compiler output may not.
+    let file = fs::File::open(path).map_err(|source| TexeError::Io {
         path: path.to_path_buf(),
         source,
     })?;
+    let metadata = file.metadata().map_err(|source| TexeError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !metadata.is_file() || metadata.len() > generated::MAX_ARTIFACT {
+        return Err(TexeError::Build(
+            "The auxiliary executable must be a bounded regular file".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(generated::MAX_ARTIFACT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|source| TexeError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if bytes.len() as u64 > generated::MAX_ARTIFACT {
+        return Err(TexeError::Build(
+            "The auxiliary executable exceeds its size limit".into(),
+        ));
+    }
     Ok(bytes_digest(&bytes))
 }
 
@@ -332,5 +369,89 @@ mod tests {
         let changed = required_file_digest(&executable).expect("changed digest");
 
         assert_ne!(initial, changed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compiler_cache_aliases_are_ignored_without_reading_research_files() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let research = directory.path().join("research.json");
+        let cache = AuxiliaryCache::from_entries(
+            "recipe",
+            BTreeMap::from([(
+                "private".into(),
+                CachedOutput {
+                    input_digest: "input".into(),
+                    output: "output".into(),
+                    output_digest: "digest".into(),
+                },
+            )]),
+            BTreeMap::new(),
+        );
+        let original = serde_json::to_vec(&cache).unwrap();
+        fs::write(&research, &original).unwrap();
+        let alias = directory.path().join("cache.json");
+        symlink(&research, &alias).unwrap();
+        assert!(read(&alias, "recipe").bibliography.is_empty());
+        assert_eq!(file_digest(&alias), None);
+        fs::remove_file(&alias).unwrap();
+        fs::hard_link(&research, &alias).unwrap();
+        assert!(read(&alias, "recipe").bibliography.is_empty());
+        assert_eq!(file_digest(&alias), None);
+        assert_eq!(fs::read(&research).unwrap(), original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compiler_output_parent_aliases_cannot_redirect_cache_reads_or_writes() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let research = directory.path().join("research");
+        fs::create_dir(&research).unwrap();
+        fs::write(research.join("cache.json"), b"research source").unwrap();
+        symlink(&research, directory.path().join("derived")).unwrap();
+        let redirected = directory.path().join("derived/cache.json");
+        assert_eq!(file_digest(&redirected), None);
+        assert!(write(&redirected, &AuxiliaryCache::empty("recipe")).is_err());
+        assert_eq!(
+            fs::read(research.join("cache.json")).unwrap(),
+            b"research source"
+        );
+        assert!(
+            super::relative_path(directory.path(), &directory.path().join("../outside")).is_none()
+        );
+    }
+
+    #[test]
+    fn oversized_compiler_output_is_rejected_before_hashing() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("main.bbl");
+        fs::File::create(&path)
+            .unwrap()
+            .set_len(super::generated::MAX_ARTIFACT + 1)
+            .unwrap();
+        assert_eq!(file_digest(&path), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trusted_auxiliary_executable_aliases_keep_working() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("binary");
+        fs::write(&binary, b"trusted executable").unwrap();
+        let symbolic = directory.path().join("symlinked-executable");
+        let hard = directory.path().join("hardlinked-executable");
+        symlink(&binary, &symbolic).unwrap();
+        fs::hard_link(&binary, &hard).unwrap();
+        assert_eq!(
+            required_file_digest(&symbolic).unwrap(),
+            required_file_digest(&binary).unwrap()
+        );
+        assert_eq!(
+            required_file_digest(&hard).unwrap(),
+            required_file_digest(&binary).unwrap()
+        );
     }
 }

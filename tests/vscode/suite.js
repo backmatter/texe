@@ -14,17 +14,31 @@ exports.run = async () => {
   const pdf = path.join(root, "paper.v2.pdf");
   const document = await vscode.workspace.openTextDocument(source);
   const editor = await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
-  const extension = vscode.extensions.getExtension("citet.citet");
+  const extension = vscode.extensions.getExtension("backmatter.citet");
   assert.ok(extension, "unified extension is available");
   assert.equal(vscode.extensions.getExtension("James-Yu.latex-workshop"), undefined);
-  assert.equal(vscode.extensions.getExtension("backmatter.tex-ls"), undefined);
+  assert.ok(vscode.extensions.getExtension("backmatter.tex-ls"));
   const api = await extension.activate();
-  assert.equal(vscode.workspace.getConfiguration("citet", source).get("buildBackend"), "local");
+  assert.ok(["auto", "local"].includes(vscode.workspace.getConfiguration("citet", source).get("buildBackend")));
+  if (process.platform !== "linux") {
+    const before = document.getText(), messages = [];
+    const original = vscode.window.showErrorMessage;
+    vscode.window.showErrorMessage = async message => { messages.push(message); return undefined; };
+    try { await vscode.commands.executeCommand("citet.buildAndView"); }
+    finally { vscode.window.showErrorMessage = original; }
+    assert.ok(messages.some(message => /protected local builds.*Linux/i.test(message)), messages.join("\n"));
+    assert.equal(document.getText(), before, "unsupported local builds preserve the source");
+    assert.equal(fs.existsSync(pdf), false, "unsupported local builds do not publish a PDF");
+    await until(async () => Array.isArray(await vscode.commands.executeCommand("vscode.executeFormatDocumentProvider", source, {tabSize: 2, insertSpaces: true})), "standalone tex-ls formatter did not start");
+    fs.writeFileSync(path.join(process.env.TEXE_TEST_ROOT, "results.json"), JSON.stringify({extension: extension.id, formatting: true, localBuild: false, unsupportedLocalBuildRejected: true, sourcePreserved: true}, null, 2));
+    console.log("PASS editor language features and unsupported protected-build preservation");
+    return;
+  }
   await vscode.commands.executeCommand("citet.buildAndView");
   assert.ok(fs.statSync(pdf).size > 1000);
   assert.ok(fs.existsSync(pdf.replace(/\.pdf$/, ".synctex.gz")));
   await until(() => vscode.window.tabGroups.all.some((group) => group.tabs.some((tab) => tab.input instanceof vscode.TabInputCustom && tab.input.viewType === "citet.pdf")), "native PDF tab did not open");
-  assert.equal(vscode.workspace.getConfiguration("editor", { uri: source, languageId: "latex" }).get("defaultFormatter"), "citet.citet");
+  assert.equal(vscode.workspace.getConfiguration("editor", { uri: source, languageId: "latex" }).get("defaultFormatter"), "backmatter.tex-ls");
   const state = [...api.pdfViewer.panels.values()][0];
   assert.ok(state, "PDF viewer is attached to the local backend");
   await until(() => state.documentPages > 0, "native PDF viewer did not render a page");
@@ -34,7 +48,7 @@ exports.run = async () => {
   const inverse = await state.target.backend.pdfToSource(mapped.page, mapped.x + 10, mapped.y + mapped.height / 2);
   assert.equal(fs.realpathSync(inverse.filePath), fs.realpathSync(source.fsPath));
   assert.ok(inverse.line >= 2 && inverse.line <= 4);
-  // Native formatting is supplied by Citet's LSP client, with no extra extension.
+  // The standalone tex-ls extension supplies formatting.
   const probe = vscode.Uri.file(path.join(root, ".texe", "editor", "language-probe.tex"));
   fs.mkdirSync(path.dirname(probe.fsPath), { recursive: true });
   fs.writeFileSync(probe.fsPath, "\\begin{itemize}\n\\item hello world\n\\end{itemize}\n");
@@ -65,5 +79,5 @@ exports.run = async () => {
   await vscode.commands.executeCommand("citet.compile");
   await until(() => !state.stale, "building after cancellation did not recover");
   fs.writeFileSync(path.join(process.env.TEXE_TEST_ROOT, "results.json"), JSON.stringify({ extension: extension.id, localBuild: true, nativePdf: true, forwardSync: mapped, inverseSync: inverse, formatting: true, previousPdfPreserved: true, errorRecovery: true, cancellation: true, renderedPages: state.documentPages }, null, 2));
-  console.log("PASS unified extension: local build, PDF tab, SyncTeX, LSP, failure recovery; no server or dependent extensions");
+  console.log("PASS Citet and standalone tex-ls: local build, PDF tab, SyncTeX, language features and failure recovery");
 };

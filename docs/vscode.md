@@ -1,10 +1,10 @@
 # VS Code
 
-texe installs **Citet** (`citet.citet`), a single native VS Code extension maintained
-in the Citet repository at `apps/vscode`, beside the Neovim integration. It runs
-texe builds, hosts the tex-ls language server, and owns the PDF.js viewer and
-SyncTeX navigation. LaTeX Workshop and the separate tex-ls extension are not
-required. The texe CLI remains usable on its own.
+texe installs **Citet** (`backmatter.citet`) from the VS Code Marketplace.
+VS Code installs its standalone `backmatter.tex-ls` dependency for language
+features. Citet owns texe builds, the PDF.js viewer and SyncTeX navigation.
+VS Code manages editor updates independently of the native command suite.
+The texe CLI remains usable on its own.
 
 Open a paper with:
 
@@ -43,17 +43,21 @@ MIT-licensed reader; it does not require Workshop or a host `synctex` executable
 Rebuild changed sources before navigating an out-of-date PDF.
 
 tex-ls supplies completion, hover, navigation, symbols, formatting, code actions
-and linting through native VS Code providers. Citet is the default formatter for
-LaTeX and BibTeX. Compiler diagnostics come from texe. Project and runtime TEXMF
+and linting through native VS Code providers. The standalone tex-ls extension
+is the default formatter for LaTeX and BibTeX. Compiler diagnostics come from texe. Project and runtime TEXMF
 roots are read from texe's editor context, while `tex-ls.toml` provides reversible
 project root and auxiliary-directory settings.
 
-`citet.texePath` and `citet.texLsPath` select executables without shell argument
-splitting. Otherwise the extension uses an installed tool or a verified GitHub
-release in its own user storage. `citet.allowDownloads: false` disables missing
-tool downloads and makes texe builds offline. Cached tools, runtime and packages
-continue to work. Versions can change independently; unsupported JSON schemas
-produce an actionable error.
+`citet.texePath` selects the native build executable. Otherwise Citet uses texe
+on PATH or its own checksum-verified compatible texe suite. Managed online builds
+check for tool updates at most once per day, without an update timer or a startup
+check. `citet.allowDownloads: false` disables checks and downloads and makes
+local builds offline. Cached tools, runtimes and packages continue to work.
+Use **Citet: Update Local Build Tools** to check immediately. PATH and configured
+installations remain managed by their installer or package manager.
+
+Use `tex-ls.*` settings and commands for language features. VS Code updates that
+extension independently of texe and Citet.
 
 ## Optional Citet collaboration
 
@@ -63,12 +67,33 @@ conflicts are reported before binding or overwriting. Alternatively, **Open
 Project Locally** materializes a remote project into a folder. The binding lives
 in `.citet/config.json` alongside the existing collaboration cache.
 
-Connected projects still build locally by default. **Citet: Choose Build Backend**
+Connected projects use protected local builds on Linux x64 by default and hosted
+builds on other hosts. **Citet: Choose Build Backend**
 sets `citet.buildBackend` to `local` or `remote` for the folder. There is no silent
 fallback. Remote builds wait for attached document commits before queueing a
 server build and only accept the requested job's successful artifact. If another
 server build supersedes the request, Citet reports that instead of showing it as
-the requested result. Stopping a remote wait does not cancel the server job.
+the requested result. Cancelling your online build aborts its worker request and
+prevents it from publishing success, while retaining the last successful PDF.
+A collaborator's separate build continues.
+
+Connected papers automatically prepare a verified package, font and runtime
+environment while online. Local builds retain the chosen engine and work
+offline once prepared. Adding a missing dependency while online refreshes the
+environment and retries the build. Protected local compilation currently
+requires Linux x64 with Landlock V3; unsupported platforms stop before running
+the source. Standalone managed adoption supports pdfLaTeX, XeLaTeX and LuaLaTeX;
+prepared Citet environments also support Shipout and Tectonic. Shipout Biber
+papers require another engine.
+
+Protected builds bound the process group's resident memory to 2 GiB and private
+compiler output to 4 GiB and 100,000 entries. The output budget also adapts to
+available disk space, preserving a 512 MiB reserve; existing writable caches
+count toward the aggregate cap. Checks run before launch, after exit, and about
+every 100 ms while compiling, including open deleted temporary files. This is a
+sampled watchdog rather than a filesystem quota, so writes during a check can
+overshoot the threshold. A stopped build keeps saved sources and the last PDF;
+`texe clean` removes derived build files if a disk warning requires space.
 
 The same build, PDF and navigation commands work with either backend. Switching
 backends gives each artifact its own viewer tab. Remote citations, collaboration
@@ -91,6 +116,9 @@ by texe and preserves later user edits. Rerunning setup retires old texe-owned
 Workshop/companion settings and replaces the old companion with Citet. Existing
 third-party extensions are not globally uninstalled.
 
-The bundled Citet VSIX is built separately from texe and carries its own version.
-See [the bundle provenance](../assets/citet-vscode.md) for rebuilding it. No Citet
-checkout, Node, Bun or server is required to install it from the texe CLI.
+The CLI keeps Citet 0.1.2 or newer when already installed. Otherwise it asks
+VS Code to install the current Marketplace version. It does not overwrite a
+newer extension with a bundled copy. For an offline editor setup, install the
+platform-specific tex-ls VSIX and the Citet VSIX before running `texe editor`.
+The checked-in Citet VSIX is a test fixture, excluded from the native executable
+and crate. See [fixture provenance](../assets/citet-vscode.md).

@@ -8,8 +8,8 @@ mod vscode;
 
 pub(crate) use git::setup_git;
 pub(crate) use vscode::{
-    configure_vscode, open_vscode, preview_vscode, preview_vscode_manifest, record_editor_error,
-    remove_vscode, setup_vscode,
+    configure_vscode, configure_vscode_owned, open_vscode, preview_vscode, preview_vscode_manifest,
+    record_editor_error, remove_vscode, setup_vscode,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -7,12 +7,15 @@ use crate::atomic::write as atomic_write;
 use crate::build::environment::{EngineEnvironmentContext, engine_environment};
 use crate::build::filesystem::job_stem;
 use crate::build::format::{self, ManagedFormat};
-use crate::build::process::{engine_path_from, raw_engine_output, raw_output};
+use crate::build::process::{
+    engine_path_from, is_portable_build, portable_output, raw_engine_output, raw_output,
+};
 use crate::build::warnings::remove_if_file;
 use crate::build::{BuildContext, EngineRun};
 use crate::config::GeneratedInput;
 
 impl BuildContext<'_> {
+    #[allow(clippy::too_many_lines)]
     pub(super) fn run_engine(
         &self,
         output_dir: &Path,
@@ -20,13 +23,34 @@ impl BuildContext<'_> {
         discovery: bool,
         halt_on_error: bool,
     ) -> Result<EngineRun, TexeError> {
+        if is_portable_build(self.project_root, &self.build_root) {
+            crate::portable::private_directory(
+                self.project_root,
+                output_dir.strip_prefix(self.project_root).map_err(|_| {
+                    TexeError::Build("Private output directory is outside the project".into())
+                })?,
+            )?;
+        }
         let stem = job_stem(&self.manifest.project.entry)?;
         let log_path = output_dir.join(format!("{stem}.log"));
         let fls_path = output_dir.join(format!("{stem}.fls"));
         remove_if_file(&log_path)?;
         remove_if_file(&fls_path)?;
+        for extension in ["pdf", "dvi", "synctex.gz"] {
+            remove_if_file(&output_dir.join(format!("{stem}.{extension}")))?;
+        }
         self.materialize_generated_inputs(output_dir)?;
-        if self.toolchain.managed.is_none() && managed_format.is_some() {
+        let portable = crate::portable::active(self.project_root)?;
+        let entry = crate::portable::entry_for_build(
+            self.project_root,
+            self.manifest,
+            output_dir,
+            portable.as_ref(),
+        )?;
+        if self.toolchain.managed.is_none()
+            && managed_format.is_some()
+            && !is_portable_build(self.project_root, &self.build_root)
+        {
             write_system_fontconfig(output_dir, &self.texmf)?;
         }
 
@@ -50,9 +74,9 @@ impl BuildContext<'_> {
                 "-no-shell-escape"
             }),
             prefixed_engine_path("-output-directory=", output_dir, self.project_root),
-            engine_path_from(&self.entry, self.project_root),
+            engine_path_from(&entry, self.project_root),
         ]);
-        let environment = engine_environment(
+        let mut environment = engine_environment(
             self.toolchain,
             &EngineEnvironmentContext {
                 working_directory: self.project_root,
@@ -65,7 +89,59 @@ impl BuildContext<'_> {
                 shell_escape: self.manifest.toolchain.shell_escape,
             },
         );
-        let output = if self.toolchain.managed.is_some() || managed_format.is_some() {
+        if is_portable_build(self.project_root, &self.build_root) {
+            let mut fonts = vec![self.texmf.join("fonts")];
+            if let Some(runtime) = &self.toolchain.managed {
+                fonts.push(runtime.root.join("texmf-dist/fonts"));
+            } else if portable.is_none() {
+                fonts.extend(
+                    self.toolchain
+                        .engine_roots
+                        .iter()
+                        .filter(|path| {
+                            path.file_name()
+                                .and_then(std::ffi::OsStr::to_str)
+                                .is_some_and(|name| {
+                                    name.eq_ignore_ascii_case("fonts")
+                                        || name.eq_ignore_ascii_case(".fonts")
+                                })
+                        })
+                        .cloned(),
+                );
+            }
+            environment.extend(crate::compiler_sandbox::font_environment(
+                self.project_root,
+                output_dir,
+                &fonts,
+            )?);
+        }
+        let output = if is_portable_build(self.project_root, &self.build_root) {
+            portable_output(
+                self.project_root,
+                self.toolchain,
+                &self.toolchain.engine_executable,
+                &arguments,
+                self.project_root,
+                &environment,
+                std::slice::from_ref(&self.build_root),
+                &managed_format
+                    .map(|format| vec![format.root.clone()])
+                    .unwrap_or_default()
+                    .into_iter()
+                    .chain(super::process::source_read_roots(
+                        self.project_root,
+                        self.manifest,
+                    )?)
+                    .chain(
+                        (portable.is_none() && self.toolchain.managed.is_none())
+                            .then_some(self.toolchain.engine_roots.iter().cloned())
+                            .into_iter()
+                            .flatten(),
+                    )
+                    .collect::<Vec<_>>(),
+                &[],
+            )?
+        } else if self.toolchain.managed.is_some() || managed_format.is_some() {
             raw_engine_output(
                 &self.toolchain.engine_executable,
                 &arguments,
@@ -105,6 +181,15 @@ pub(super) fn write_generated_inputs(
     inputs: &[GeneratedInput],
 ) -> Result<(), TexeError> {
     let generated_root = output_dir.join(".texe-generated");
+    let absolute = std::path::absolute(output_dir).map_err(|source| TexeError::Io {
+        path: output_dir.into(),
+        source,
+    })?;
+    let anchor = absolute
+        .ancestors()
+        .last()
+        .ok_or_else(|| TexeError::Build("Invalid private output path".into()))?;
+    super::generated::validate_parent(anchor, &absolute.join(".texe-generated"))?;
     match fs::symlink_metadata(&generated_root) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
             fs::remove_file(&generated_root).map_err(|source| TexeError::Io {
@@ -127,7 +212,11 @@ pub(super) fn write_generated_inputs(
         }
     }
     for input in inputs {
-        atomic_write(&generated_root.join(&input.path), input.content.as_bytes())?;
+        super::generated::write(
+            anchor,
+            &absolute.join(".texe-generated").join(&input.path),
+            input.content.as_bytes(),
+        )?;
     }
     Ok(())
 }

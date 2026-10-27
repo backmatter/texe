@@ -7,9 +7,10 @@ Managed builds download tools and packages from TeX Live mirrors and verify
 their sizes and cryptographic digests. `texe build --offline` disables these
 downloads and requires all dependencies to be cached.
 
-VS Code setup can download VS Code and installs the bundled Citet extension.
+VS Code setup can download VS Code and installs Citet from the Marketplace.
+VS Code installs and updates its standalone tex-ls dependency.
 Language processing, builds, PDF viewing and SyncTeX run locally without an
-account or server. Citet can download checksum-verified texe/tex-ls releases and
+account or server. Citet can download checksum-verified texe releases and
 missing TeX dependencies unless `citet.allowDownloads` is false. Sources are
 synchronized to a Citet server only after connecting a project; remote builds are
 selected explicitly with `citet.buildBackend`.

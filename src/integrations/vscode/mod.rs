@@ -6,7 +6,6 @@ use crate::config::ProjectManifest;
 use crate::integrations::IntegrationReport;
 use crate::ux;
 
-mod bridge;
 mod language_server;
 mod settings;
 
@@ -96,65 +95,37 @@ pub(crate) fn setup_vscode(
     Ok(report)
 }
 
+fn supported_citet_version(version: &str) -> bool {
+    let parts = version
+        .split('.')
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>();
+    parts.is_ok_and(|parts| parts.len() == 3 && parts.as_slice() >= [0, 1, 2].as_slice())
+}
+
 fn ensure_citet(report: &mut IntegrationReport) {
-    if installed_extension_path("citet.citet")
-        .is_some_and(|path| bridge::matches_installed(&path).unwrap_or(false))
+    if installed_extension_version("backmatter.citet")
+        .is_some_and(|version| supported_citet_version(&version))
     {
         report
             .messages
-            .push("Citet's native LaTeX integration is available in VS Code".into());
+            .push("Citet is available in VS Code; VS Code manages its updates".into());
         return;
     }
-    let extension = match bridge::path() {
-        Ok(extension) => extension,
-        Err(error) => {
-            report.messages.push(format!(
-                "could not prepare Citet ({error}); use `texe build` in a terminal"
-            ));
-            return;
-        }
-    };
     match code_command()
-        .arg("--install-extension")
-        .arg(&extension)
-        .arg("--force")
+        .args(["--install-extension", "backmatter.citet", "--force"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
     {
-        Ok(status) if status.success() => {
-            report.messages.push("installed Citet for local builds, language tools, PDF viewing and optional collaboration".into());
-            if installed_extension_version("backmatter.texe-paper-layout").is_some() {
-                let _ = code_command()
-                    .args(["--uninstall-extension", "backmatter.texe-paper-layout"])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
+        Ok(status) if status.success() && installed_extension_version("backmatter.citet").is_some_and(|version| supported_citet_version(&version)) => {
+            report.messages.push("installed Citet and its tex-ls dependency from the VS Code Marketplace".into());
         }
         result => report.messages.push(format!(
-            "could not install Citet ({result:?}); install {} manually or use `texe build`",
-            extension.display()
+            "could not install Citet 0.1.2 or newer ({result:?}); install backmatter.citet from Extensions or use `texe build` in a terminal"
         )),
     }
-}
-
-fn installed_extension_path(identifier: &str) -> Option<PathBuf> {
-    let output = code_command()
-        .args(["--locate-extension", identifier])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())?;
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(PathBuf::from)
-        .filter(|path| path.is_dir())
 }
 
 fn installed_extension_version(identifier: &str) -> Option<String> {
@@ -180,7 +151,7 @@ fn extension_version_from_list(output: &[u8], identifier: &str) -> Option<String
 }
 
 pub(crate) fn open_vscode(root: &Path) -> Result<IntegrationReport, TexeError> {
-    let manifest = ProjectManifest::load(&root.join("texe.toml"))?;
+    let manifest = settings::project_manifest(root)?;
     let targets = open_targets(root, &manifest);
     let source = &targets[0];
     let pdf = targets.get(1);
@@ -249,6 +220,13 @@ pub(crate) fn configure_vscode(root: &Path, replace: bool) -> Result<Integration
     })
 }
 
+pub(crate) fn configure_vscode_owned(root: &Path) -> Result<IntegrationReport, TexeError> {
+    settings::configure_owned(root)?;
+    Ok(IntegrationReport {
+        messages: vec!["updated texe-owned VS Code settings; preserved user overrides".into()],
+    })
+}
+
 pub(crate) fn preview_vscode_manifest(
     root: &Path,
     manifest: &ProjectManifest,
@@ -266,6 +244,16 @@ mod tests {
 
     use crate::config::ProjectManifest;
     use crate::integrations::vscode::{extension_version_from_list, open_targets};
+
+    #[test]
+    fn accepts_independently_updated_citet_extensions() {
+        for version in ["0.1.2", "0.1.10", "0.2.0", "1.0.0"] {
+            assert!(super::supported_citet_version(version));
+        }
+        for version in ["0.1.1", "", "0.1", "0.1.2-beta.1", "0.1.2.0"] {
+            assert!(!super::supported_citet_version(version));
+        }
+    }
 
     #[test]
     fn launches_vscode_from_a_directory_with_spaces() {

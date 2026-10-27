@@ -22,6 +22,8 @@ pub(crate) enum ProjectSettingsOutcome {
 struct Ownership {
     original: Option<String>,
     installed: String,
+    #[serde(default)]
+    preserved_user_edits: bool,
     edits: Vec<OwnedEdit>,
     #[serde(default)]
     language_server: Option<super::language_server::Ownership>,
@@ -151,6 +153,7 @@ fn leaves(
 fn plan(
     root: &Path,
     manifest: &ProjectManifest,
+    preserve_conflicts: bool,
 ) -> Result<(Ownership, String, Vec<String>), TexeError> {
     validate_directory(&root.join(".vscode"), "read", "VS Code settings")?;
     let original = read_optional(&project_settings_path(root))?;
@@ -158,10 +161,17 @@ fn plan(
     let current = tree.to_serde_value().expect("object");
     let mut ownership: Ownership = match read_optional(&root.join(".vscode/texe-integration.json"))?
     {
-        Some(text) => serde_json::from_str(&text).map_err(|source| TexeError::Json {
-            path: root.join(".vscode/texe-integration.json"),
-            source,
-        })?,
+        Some(text) => {
+            let mut owned: Ownership =
+                serde_json::from_str(&text).map_err(|source| TexeError::Json {
+                    path: root.join(".vscode/texe-integration.json"),
+                    source,
+                })?;
+            if original.as_deref() != Some(owned.installed.as_str()) {
+                owned.preserved_user_edits = true;
+            }
+            owned
+        }
         None => Ownership {
             original,
             ..Default::default()
@@ -209,15 +219,22 @@ fn plan(
                 .is_none_or(|edit| Some(&edit.after) != before.as_ref())
         {
             conflicts.push(path.join(" / "));
+            if preserve_conflicts {
+                continue;
+            }
         }
         // A non-object ancestor is also a conflict; never silently discard it.
-        for length in 1..path.len() {
-            if get(&current, &path[..length]).is_some_and(|v| !v.is_object()) {
-                return Err(TexeError::Build(format!(
-                    "{} must be an object before texe can merge settings",
-                    path[..length].join(" / ")
-                )));
+        if let Some(length) = (1..path.len())
+            .find(|length| get(&current, &path[..*length]).is_some_and(|v| !v.is_object()))
+        {
+            if preserve_conflicts {
+                conflicts.push(path[..length].join(" / "));
+                continue;
             }
+            return Err(TexeError::Build(format!(
+                "{} must be an object before texe can merge settings",
+                path[..length].join(" / ")
+            )));
         }
         set(&tree.object_value().expect("object"), &path, Some(&after));
         if let Some(edit) = owned {
@@ -231,15 +248,26 @@ fn plan(
             });
         }
     }
-    let (language_server, _, language_conflicts) =
-        super::language_server::plan(root, manifest, ownership.language_server.take())?;
+    let (language_server, _, language_conflicts) = super::language_server::plan(
+        root,
+        manifest,
+        ownership.language_server.take(),
+        preserve_conflicts,
+    )?;
     ownership.language_server = Some(language_server);
     conflicts.extend(language_conflicts);
     Ok((ownership, tree.to_string(), conflicts))
 }
 
+pub(super) fn project_manifest(root: &Path) -> Result<ProjectManifest, TexeError> {
+    match crate::portable::active(root)? {
+        Some(environment) => crate::portable::manifest_for_project(root, &environment),
+        None => ProjectManifest::load(&root.join("texe.toml")),
+    }
+}
+
 pub(crate) fn preview(root: &Path) -> Result<serde_json::Value, TexeError> {
-    let manifest = ProjectManifest::load(&root.join("texe.toml"))?;
+    let manifest = project_manifest(root)?;
     preview_manifest(root, &manifest)
 }
 
@@ -247,7 +275,7 @@ pub(crate) fn preview_manifest(
     root: &Path,
     manifest: &ProjectManifest,
 ) -> Result<serde_json::Value, TexeError> {
-    let (ownership, proposed, conflicts) = plan(root, manifest)?;
+    let (ownership, proposed, conflicts) = plan(root, manifest, false)?;
     Ok(
         serde_json::json!({ "schema": "texe.editor-preview/v1", "conflicts": conflicts, "settings": proposed, "texLsConfig": ownership.language_server.map(|value| value.installed) }),
     )
@@ -257,9 +285,21 @@ pub(crate) fn configure(
     root: &Path,
     replace_conflicts: bool,
 ) -> Result<ProjectSettingsOutcome, TexeError> {
-    let manifest = ProjectManifest::load(&root.join("texe.toml"))?;
-    let (mut ownership, proposed, conflicts) = plan(root, &manifest)?;
-    if !conflicts.is_empty() && !replace_conflicts {
+    configure_with_policy(root, replace_conflicts, false)
+}
+
+pub(crate) fn configure_owned(root: &Path) -> Result<ProjectSettingsOutcome, TexeError> {
+    configure_with_policy(root, false, true)
+}
+
+fn configure_with_policy(
+    root: &Path,
+    replace_conflicts: bool,
+    preserve_conflicts: bool,
+) -> Result<ProjectSettingsOutcome, TexeError> {
+    let manifest = project_manifest(root)?;
+    let (mut ownership, proposed, conflicts) = plan(root, &manifest, preserve_conflicts)?;
+    if !conflicts.is_empty() && !replace_conflicts && !preserve_conflicts {
         return Err(TexeError::Build(format!(
             "VS Code settings conflict: {}; inspect with `texe editor --preview`, then use --replace-conflicts to accept",
             conflicts.join(", ")
@@ -315,7 +355,7 @@ pub(crate) fn remove(root: &Path) -> Result<IntegrationReport, TexeError> {
             .transpose()?;
         let path = project_settings_path(root);
         if let Some(current) = read_optional(&path)? {
-            let restored = if current == ownership.installed {
+            let restored = if current == ownership.installed && !ownership.preserved_user_edits {
                 ownership.original
             } else {
                 let tree = parse(&current)?;
@@ -501,11 +541,11 @@ fn desired_settings() -> BTreeMap<&'static str, serde_json::Value> {
         ("citet.openPaper", serde_json::json!(true)),
         (
             "[latex]",
-            serde_json::json!({"editor.defaultFormatter": "citet.citet"}),
+            serde_json::json!({"editor.defaultFormatter": "backmatter.tex-ls"}),
         ),
         (
             "[bibtex]",
-            serde_json::json!({"editor.defaultFormatter": "citet.citet"}),
+            serde_json::json!({"editor.defaultFormatter": "backmatter.tex-ls"}),
         ),
         ("files.associations", serde_json::json!({"*.tikz": "latex"})),
         (
@@ -567,6 +607,176 @@ mod tests {
             ),
         )
         .expect("write manifest");
+    }
+
+    fn write_portable_environment(root: &Path, entry: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut profile = serde_json::json!({
+            "schema": "texe.hosted-profile/v1",
+            "runtimeRecipe": "texlive-2026-07-26"
+        });
+        profile["id"] = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(serde_json::to_vec(&profile).unwrap()))
+        )
+        .into();
+        let mut environment = serde_json::json!({
+            "schema": "texe.environment/v1",
+            "projectId": "editor-portable",
+            "entry": entry,
+            "engine": "pdflatex",
+            "source_date_epoch": 1,
+            "profile": profile,
+            "packages": {"schema": "pqty.lock/v1", "stage": "exact"}
+        });
+        let id = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(serde_json::to_vec(&environment).unwrap()))
+        );
+        environment["id"] = id.clone().into();
+        fs::create_dir_all(root.join(".texe")).unwrap();
+        fs::write(
+            root.join(crate::portable::ACTIVE),
+            serde_json::to_vec(&environment).unwrap(),
+        )
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn portable_project_editor_setup_and_refresh_need_no_source_manifest() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let source = "\\documentclass{article}\n\\begin{document}Research\\end{document}\n";
+        fs::write(root.join("main.tex"), source).unwrap();
+        let initial = write_portable_environment(root, "main.tex");
+        assert!(
+            super::preview(root).unwrap()["conflicts"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        configure(root, false).unwrap();
+        assert!(!root.join("texe.toml").exists());
+        let language_path = root.join("tex-ls.toml");
+        let initial_text = fs::read_to_string(&language_path).unwrap();
+        assert!(initial_text.contains(initial.strip_prefix("sha256:").unwrap()));
+        fs::write(
+            &language_path,
+            format!("{initial_text}\n[format]\nline-width = 91\n"),
+        )
+        .unwrap();
+
+        let refreshed = write_portable_environment(root, "chapters/paper.tex");
+        configure(root, false).unwrap();
+        let language_text = fs::read_to_string(&language_path).unwrap();
+        let language: toml::Value = toml::from_str(&language_text).unwrap();
+        assert_eq!(
+            language["build"]["root"].as_str(),
+            Some("chapters/paper.tex")
+        );
+        assert!(
+            language["build"]["aux-dir"]
+                .as_str()
+                .unwrap()
+                .contains(refreshed.strip_prefix("sha256:").unwrap())
+        );
+        assert!(!language_text.contains(initial.strip_prefix("sha256:").unwrap()));
+        assert_eq!(language["format"]["line-width"].as_integer(), Some(91));
+        assert_eq!(fs::read_to_string(root.join("main.tex")).unwrap(), source);
+        assert!(!root.join("texe.toml").exists());
+    }
+
+    #[test]
+    fn owned_refresh_preserves_preferences_and_removal_across_environment_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        fs::write(root.join("main.tex"), "research source").unwrap();
+        fs::write(root.join("main.pdf"), "last successful PDF").unwrap();
+        let initial = write_portable_environment(root, "main.tex");
+        configure(root, false).unwrap();
+        let path = project_settings_path(root);
+        let tree = super::parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        let object = tree.object_value().unwrap();
+        object
+            .get("citet.openPaper")
+            .unwrap()
+            .set_value(super::input(&serde_json::json!(false)));
+        object.append("editor.wordWrap", super::input(&serde_json::json!("on")));
+        object
+            .object_value("[latex]")
+            .unwrap()
+            .get("editor.defaultFormatter")
+            .unwrap()
+            .set_value(super::input(&serde_json::json!("researcher.formatter")));
+        fs::write(&path, tree.to_string()).unwrap();
+        let user_settings = fs::read_to_string(&path).unwrap();
+        let language_path = root.join("tex-ls.toml");
+        let language = fs::read_to_string(&language_path)
+            .unwrap()
+            .replace("job-name = \"main\"", "job-name = \"personal\"");
+        fs::write(
+            &language_path,
+            format!("{language}\n[format]\nline-width = 91\n"),
+        )
+        .unwrap();
+        let refreshed = write_portable_environment(root, "chapters/paper.tex");
+
+        assert!(configure(root, false).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), user_settings);
+        super::configure_owned(root).unwrap();
+        let settings = super::parse(&fs::read_to_string(&path).unwrap())
+            .unwrap()
+            .to_serde_value()
+            .unwrap();
+        assert_eq!(settings["citet.openPaper"], false);
+        assert_eq!(settings["editor.wordWrap"], "on");
+        assert_eq!(
+            settings["[latex]"]["editor.defaultFormatter"],
+            "researcher.formatter"
+        );
+        let language_text = fs::read_to_string(&language_path).unwrap();
+        let language: toml::Value = toml::from_str(&language_text).unwrap();
+        assert_eq!(
+            language["build"]["root"].as_str(),
+            Some("chapters/paper.tex")
+        );
+        assert!(
+            language["build"]["aux-dir"]
+                .as_str()
+                .unwrap()
+                .contains(refreshed.strip_prefix("sha256:").unwrap())
+        );
+        assert!(!language_text.contains(initial.strip_prefix("sha256:").unwrap()));
+        assert_eq!(language["build"]["job-name"].as_str(), Some("personal"));
+        assert_eq!(language["format"]["line-width"].as_integer(), Some(91));
+
+        remove(root).unwrap();
+        let settings = super::parse(&fs::read_to_string(&path).unwrap())
+            .unwrap()
+            .to_serde_value()
+            .unwrap();
+        assert_eq!(settings["citet.openPaper"], false);
+        assert_eq!(settings["editor.wordWrap"], "on");
+        assert_eq!(
+            settings["[latex]"]["editor.defaultFormatter"],
+            "researcher.formatter"
+        );
+        let language: toml::Value =
+            toml::from_str(&fs::read_to_string(&language_path).unwrap()).unwrap();
+        assert_eq!(language["build"]["job-name"].as_str(), Some("personal"));
+        assert!(language["build"].get("aux-dir").is_none());
+        assert!(language["build"].get("root").is_none());
+        assert_eq!(language["format"]["line-width"].as_integer(), Some(91));
+        assert_eq!(
+            fs::read_to_string(root.join("main.tex")).unwrap(),
+            "research source"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("main.pdf")).unwrap(),
+            "last successful PDF"
+        );
+        assert!(!root.join("texe.toml").exists());
     }
 
     #[test]
@@ -691,7 +901,7 @@ mod tests {
         assert_eq!(settings["citet.openPaper"], true);
         assert_eq!(
             settings["[latex]"]["editor.defaultFormatter"],
-            "citet.citet"
+            "backmatter.tex-ls"
         );
         assert_eq!(settings["files.associations"]["*.tikz"], "latex");
         assert_eq!(settings["files.watcherExclude"]["**/.texe/**"], true);

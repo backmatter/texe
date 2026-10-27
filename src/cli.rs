@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -52,6 +53,39 @@ impl From<TemplateChoice> for StarterTemplate {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    #[command(name = "__sandbox-watch", hide = true)]
+    SandboxWatch {
+        #[arg(long)]
+        parent: u32,
+        #[arg(long)]
+        group: u32,
+        #[arg(long)]
+        policy: String,
+    },
+    #[command(name = "__sandbox-run", hide = true)]
+    SandboxRun {
+        #[arg(long, conflicts_with_all = ["policy", "executable", "arguments"])]
+        capabilities: bool,
+        #[arg(long, required_unless_present = "capabilities")]
+        policy: Option<String>,
+        #[arg(long, required_unless_present = "capabilities")]
+        executable: Option<PathBuf>,
+        #[arg(last = true, allow_hyphen_values = true)]
+        arguments: Vec<OsString>,
+    },
+    /// Prepare and activate a verified portable environment without modifying sources or texe.toml.
+    Environment {
+        #[arg(long)]
+        project: PathBuf,
+        #[arg(long)]
+        descriptor: PathBuf,
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        runtime: Option<PathBuf>,
+        #[arg(long)]
+        offline: bool,
+    },
     /// Initialize a texe project.
     Init {
         /// Directory to initialize.
@@ -141,6 +175,9 @@ pub(crate) enum Command {
         /// Project directory or texe.toml. Searches ancestors when omitted.
         #[arg(long)]
         project: Option<PathBuf>,
+        /// Keep sources read-only and confine compiler output to private build state.
+        #[arg(long)]
+        protected: bool,
         /// Require the existing package lock and forbid convergence.
         #[arg(long)]
         frozen: bool,
@@ -203,6 +240,13 @@ pub(crate) enum Command {
         /// Update settings without installing extensions or launching VS Code.
         #[arg(long, conflicts_with = "remove")]
         configure_only: bool,
+        /// Refresh owned or missing settings while preserving user overrides.
+        #[arg(
+            long,
+            requires = "configure_only",
+            conflicts_with = "replace_conflicts"
+        )]
+        owned_only: bool,
         /// Accept replacement of the conflicting texe integration values.
         #[arg(long, conflicts_with = "remove")]
         replace_conflicts: bool,

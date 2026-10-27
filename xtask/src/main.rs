@@ -102,6 +102,9 @@ enum PqtyCommand {
         reference: String,
         /// pqty checkout; defaults to PQTY_REPO or ../pqty.
         checkout: Option<PathBuf>,
+        /// Skip an already pinned or older stable release.
+        #[arg(long)]
+        if_newer: bool,
     },
 }
 
@@ -186,7 +189,8 @@ fn run(cli: Cli) -> Result<()> {
             PqtyCommand::Update {
                 reference,
                 checkout,
-            } => pqty::update(&reference, checkout.as_deref()),
+                if_newer,
+            } => pqty::update(&reference, checkout.as_deref(), if_newer),
         },
         XtaskCommand::Package { command } => match command {
             PackageCommand::Suite { output } => package::suite(output.as_deref()),

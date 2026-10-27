@@ -8,7 +8,7 @@ pub const PROJECT_SCHEMA: &str = "texe.project/v1";
 pub const MANIFEST_NAME: &str = "texe.toml";
 const DEFAULT_ENTRY: &str = "main.tex";
 const DEFAULT_ENGINE: &str = "pdflatex";
-const MANAGED_ENGINES: &[&str] = &["pdflatex", "lualatex"];
+const MANAGED_ENGINES: &[&str] = &["pdflatex", "lualatex", "xelatex"];
 const MAX_GENERATED_INPUTS: usize = 128;
 const MAX_GENERATED_INPUT_BYTES: usize = 1024 * 1024;
 const MAX_GENERATED_INPUT_TOTAL_BYTES: usize = 4 * 1024 * 1024;
@@ -537,7 +537,7 @@ roots = ["vendor/natbib"]
     #[test]
     fn init_uses_system_provider_for_engines_without_a_managed_recipe() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        let (manifest, _) = init_project(directory.path(), Path::new("main.tex"), "xelatex")
+        let (manifest, _) = init_project(directory.path(), Path::new("main.tex"), "latex")
             .expect("project initializes");
         let source = fs::read_to_string(manifest).expect("manifest can be read");
         assert!(source.contains("provider = \"system\""));

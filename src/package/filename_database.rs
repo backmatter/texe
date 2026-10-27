@@ -1,18 +1,44 @@
 use std::{fs, path::Path};
 
 use crate::TexeError;
+use crate::build::generated;
 
 /// Write a deterministic kpathsea database after package materialization.
 pub(super) fn refresh(root: &Path) -> Result<(), TexeError> {
-    if !root.exists() {
-        return Ok(());
+    match fs::symlink_metadata(root) {
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(TexeError::Io {
+                path: root.into(),
+                source,
+            });
+        }
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => {
+            return Err(TexeError::Build(
+                "The package environment must be a private directory".into(),
+            ));
+        }
     }
+    let path = root.join("ls-R");
+    let absolute = std::path::absolute(&path).map_err(|source| TexeError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    let anchor = absolute
+        .ancestors()
+        .last()
+        .expect("absolute filesystem root");
+    generated::validate_parent(anchor, &absolute)?;
     let mut output =
         "% ls-R -- filename database for kpathsea; do not change this line.\n".to_string();
     visit(root, root, &mut output)?;
-    let path = root.join("ls-R");
-    if fs::read(&path).ok().as_deref() != Some(output.as_bytes()) {
-        crate::atomic::write(&path, output.as_bytes())?;
+    if generated::read_local(&path, generated::MAX_METADATA)
+        .ok()
+        .as_deref()
+        != Some(output.as_bytes())
+    {
+        generated::write(anchor, &absolute, output.as_bytes())?;
     }
     Ok(())
 }
@@ -89,5 +115,45 @@ mod tests {
         let updated = fs::read_to_string(path).unwrap();
         assert!(!updated.contains("example.sty"));
         assert!(updated.contains("new.sty"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_database_root_alias_cannot_redirect_reads_or_writes() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let research = directory.path().join("research");
+        fs::create_dir(&research).unwrap();
+        fs::write(research.join("ls-R"), b"research notes").unwrap();
+        let alias = directory.path().join("texmf");
+        symlink(&research, &alias).unwrap();
+        assert!(refresh(&alias).is_err());
+        assert_eq!(fs::read(research.join("ls-R")).unwrap(), b"research notes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_database_replaces_derived_leaf_alias_without_changing_its_target() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("texmf");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("example.sty"), b"package").unwrap();
+        let research = directory.path().join("research.tex");
+        fs::write(&research, b"research notes").unwrap();
+        symlink(&research, root.join("ls-R")).unwrap();
+        refresh(&root).unwrap();
+        assert_eq!(fs::read(&research).unwrap(), b"research notes");
+        assert!(
+            !fs::symlink_metadata(root.join("ls-R"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            fs::read_to_string(root.join("ls-R"))
+                .unwrap()
+                .contains("example.sty")
+        );
     }
 }

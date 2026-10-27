@@ -1,0 +1,122 @@
+name: Update pqty suite
+
+on:
+  repository_dispatch:
+    types: [pqty-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable pqty release tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pqty-suite-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'backmatter/texe' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PQTY_TAG: ${{ inputs.tag || github.event.client_payload.tag }}
+      PQTY_REPO: ${{ github.workspace }}/pqty
+    steps:
+      - name: Validate published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          [[ "$PQTY_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          gh release view "$PQTY_TAG" --repo backmatter/pqty --json isDraft,isPrerelease \
+            --jq '(.isDraft == false) and (.isPrerelease == false)' | grep -qx true
+
+      - name: Create release-app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Check out released pqty source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: backmatter/pqty
+          ref: ${{ env.PQTY_TAG }}
+          path: pqty
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify source ancestry
+        working-directory: pqty
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: |
+            .
+            pqty
+          cache-bin: false
+
+      - name: Update exact suite pin
+        id: pin
+        shell: bash
+        run: |
+          cargo xtask pqty update "$PQTY_TAG" "$PQTY_REPO" --if-newer
+          if git diff --quiet -- suite.lock.toml; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify installed-suite contracts
+        if: steps.pin.outputs.changed == 'true'
+        run: cargo xtask verify contracts
+
+      - name: Prepare protected suite update
+        if: steps.pin.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: |
+          branch="automation/pqty-$PQTY_TAG"
+          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state all --json url --jq '.[0].url // empty')
+          if [[ -n "$existing" ]]; then
+            echo "Existing suite update: $existing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if git ls-remote --exit-code --heads origin "$branch"; then
+            # Recover a run interrupted after its push and before PR creation.
+            git fetch origin "$branch"
+            git show FETCH_HEAD:suite.lock.toml > "$RUNNER_TEMP/pqty-existing-lock.toml"
+            cmp suite.lock.toml "$RUNNER_TEMP/pqty-existing-lock.toml"
+          else
+            git switch -c "$branch"
+            git add suite.lock.toml
+            git config user.name 'backmatter-release[bot]'
+            git config user.email 'backmatter-release[bot]@users.noreply.github.com'
+            git commit -m "fix: update pqty suite to $PQTY_TAG"
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+          cat > "$RUNNER_TEMP/pqty-update-body.md" <<EOF_BODY
+          Updates the native command suite to the published pqty $PQTY_TAG release, including its exact source revision, source checksum, and protocol schemas.
+
+          Validation: installed-suite contracts passed. The required platform journeys and existing release checks gate merging and the subsequent texe release. Editor releases remain independent.
+          EOF_BODY
+          gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base main \
+            --title "fix: update pqty suite to $PQTY_TAG" --body-file "$RUNNER_TEMP/pqty-update-body.md" >> "$GITHUB_STEP_SUMMARY"

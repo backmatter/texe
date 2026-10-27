@@ -122,6 +122,9 @@ pub(super) fn confirm_first_download(
     include_project_packages: bool,
     presentation: ux::Presentation,
 ) -> Result<(), TexeError> {
+    if crate::portable::active(&context.root)?.is_some() {
+        return Ok(());
+    }
     let first_build = state::read(&build_root.join(state::STATE_NAME)).is_none();
     if !first_build {
         return Ok(());

@@ -504,9 +504,11 @@ mod managed;
 mod platform;
 mod system;
 
+pub(crate) use component::ensure_biber_for_snapshot;
 pub use component::{ensure_bundled_biber, ensure_managed_biber};
 use managed::install_managed_runtime;
 pub use system::{SystemToolchainProvider, executable_version, resolve_executable};
+pub(crate) use system::{protected_manifest_executable, validate_protected_tools};
 
 #[cfg(test)]
 mod tests {

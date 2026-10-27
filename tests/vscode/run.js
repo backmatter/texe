@@ -80,12 +80,16 @@ const {
     process.env.VSCODE_EXECUTABLE || (await downloadAndUnzipVSCode("1.126.0"));
   if (process.env.TEXE_TEST_DOWNLOAD_TOOLS === "1" || process.env.TEX_LS_BINARY) {
     const settings = JSON.parse(fs.readFileSync(path.join(paper, ".vscode/settings.json")));
-    if (process.env.TEXE_TEST_DOWNLOAD_TOOLS === "1") { settings["citet.texePath"] = ""; settings["citet.texLsPath"] = ""; }
-    else settings["citet.texLsPath"] = process.env.TEX_LS_BINARY;
+    if (process.env.TEXE_TEST_DOWNLOAD_TOOLS === "1") settings["citet.texePath"] = "";
+    if (process.env.TEX_LS_BINARY) settings["tex-ls.server.path"] = process.env.TEX_LS_BINARY;
     fs.writeFileSync(path.join(paper, ".vscode/settings.json"), JSON.stringify(settings, null, 2));
   }
   console.log(`Real VS Code test workspace: ${root}`);
   fs.writeFileSync(path.join(os.tmpdir(), "texe-vscode-latest"), root);
+  const cli = require("@vscode/test-electron").resolveCliArgsFromVSCodeExecutablePath(executable);
+  execFileSync(cli[0], [...cli.slice(1), `--user-data-dir=${profile}`, `--extensions-dir=${extensions}`, "--install-extension", "backmatter.tex-ls", "--force"], {
+    env: {...environment, ELECTRON_RUN_AS_NODE: "1"}, stdio: "inherit",
+  });
   const options = {
     vscodeExecutablePath: executable,
     extensionDevelopmentPath: extension,

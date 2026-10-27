@@ -103,6 +103,7 @@ pub(crate) fn generate(
          \u{20}\u{20}\"unicode-data\",\n\
          ]\n"
     );
+    output.push_str("\n[engines.xelatex]\nruntime_name = \"xetex\"\nexecutable = \"xetex\"\nformat_recipe = \"xelatex-english-fontmaps-synctex-sourcedate-v1\"\nbootstrap_providers = [\"amsfonts\", \"babel\", \"cm\", \"dehyph\", \"dvips\", \"firstaid\", \"hyph-utf8\", \"hyphen-base\", \"knuth-lib\", \"l3backend\", \"l3kernel\", \"latex\", \"latex-fonts\", \"latexconfig\", \"tex-ini-files\", \"texlive-scripts\", \"unicode-data\", \"xetex\", \"lm\"]\n");
     let mut cache = BTreeMap::new();
     for target in TARGETS {
         emit_platform(&agent, base, target, &mut cache, &mut output)?;
@@ -132,7 +133,7 @@ fn emit_platform(
     }
     output.push_str(&format!("biber = {biber_artifact}\n"));
     output.push_str(&format!("\n[platforms.{target}.artifacts]\n"));
-    for engine in ["pdflatex", "lualatex"] {
+    for engine in ["pdflatex", "lualatex", "xelatex"] {
         output.push_str(&format!("{engine} = [\n"));
         for name in providers(engine, target)? {
             output.push_str("  ");
@@ -228,6 +229,16 @@ fn providers(engine: &str, target: &str) -> Result<Vec<String>> {
             "+makeindex",
             "pdftex",
             "+pdftex",
+        ],
+        "xelatex" => vec![
+            "+bibtex",
+            "kpathsea",
+            "+kpathsea",
+            "makeindex",
+            "+makeindex",
+            "xetex",
+            "+xetex",
+            "+dvipdfmx",
         ],
         "lualatex" => {
             let mut names = vec![

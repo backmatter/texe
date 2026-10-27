@@ -9,7 +9,8 @@ use sha2::{Digest as _, Sha256};
 use crate::TexeError;
 use crate::build::auxiliary::{self, CachedOutput, OutputCache};
 use crate::build::process::{
-    managed_path, raw_bundled_biber_output, raw_engine_output, raw_output, search_path_from,
+    is_portable_build, managed_path, portable_output, raw_bundled_biber_output, raw_engine_output,
+    raw_output, search_path_from,
 };
 use crate::config::ProjectManifest;
 use crate::progress::{PhaseKind, Progress};
@@ -136,7 +137,14 @@ fn bibliography_controls(
     recorder_path: &Path,
 ) -> Result<Vec<BibliographyControl>, TexeError> {
     let mut candidates = BTreeSet::new();
-    if let Ok(recorder) = fs::read_to_string(recorder_path) {
+    let recorder = super::generated::optional(
+        project_root,
+        output_dir,
+        recorder_path,
+        super::generated::MAX_METADATA,
+    )?;
+    if let Some(recorder) = recorder {
+        let recorder = String::from_utf8_lossy(&recorder);
         for line in recorder.lines() {
             let Some(path) = line.strip_prefix("OUTPUT ") else {
                 continue;
@@ -226,10 +234,7 @@ fn collect_bibliography_control_files(
 }
 
 fn bibtex_control_file(path: &Path) -> Result<bool, TexeError> {
-    let bytes = fs::read(path).map_err(|source| TexeError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let bytes = super::generated::read_local(path, super::generated::MAX_METADATA)?;
     Ok(bytes
         .split(|byte| *byte == b'\n')
         .any(|line| line.starts_with(br"\bibdata{"))
@@ -245,10 +250,8 @@ fn bibliography_control_digest(
     let mut hasher = Sha256::new();
     match control.processor {
         BibliographyProcessor::Biber => {
-            let bytes = fs::read(&control.path).map_err(|source| TexeError::Io {
-                path: control.path.clone(),
-                source,
-            })?;
+            let bytes =
+                super::generated::read_local(&control.path, super::generated::MAX_METADATA)?;
             hasher.update(bytes);
         }
         BibliographyProcessor::Bibtex => {
@@ -279,10 +282,12 @@ fn persistent_control_digest(
         let relative = path.strip_prefix(context.project_root).unwrap_or(&path);
         hasher.update(relative.as_os_str().as_encoded_bytes());
         hasher.update(b"\0");
-        hasher.update(fs::read(&path).map_err(|source| TexeError::Io {
-            path: path.clone(),
-            source,
-        })?);
+        hasher.update(super::generated::read(
+            context.project_root,
+            context.project_root,
+            &path,
+            super::generated::MAX_ARTIFACT,
+        )?);
         hasher.update(b"\0");
     }
     Ok(hex::encode(hasher.finalize()))
@@ -369,10 +374,7 @@ fn hash_bibtex_auxiliary(
     if !canonical.starts_with(output_root) || !visited.insert(canonical.clone()) {
         return Ok(());
     }
-    let bytes = fs::read(&canonical).map_err(|source| TexeError::Io {
-        path: canonical.clone(),
-        source,
-    })?;
+    let bytes = super::generated::read_local(path, super::generated::MAX_METADATA)?;
     for line in bytes.split(|byte| *byte == b'\n') {
         if line.starts_with(br"\citation{")
             || line.starts_with(br"\bibdata{")
@@ -400,6 +402,7 @@ fn bibtex_auxiliary_include(line: &[u8]) -> Option<&str> {
     (!value.is_empty()).then_some(value)
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_bibliography_processor(
     project_root: &Path,
     manifest: &ProjectManifest,
@@ -438,7 +441,14 @@ fn run_bibliography_processor(
     let processor_stem = bibtex_proxy
         .as_ref()
         .map_or(stem, |proxy| proxy.stem.as_str());
-    let arguments = [OsString::from(processor_stem)];
+    let protected = is_portable_build(
+        project_root,
+        &project_root.join(&manifest.project.build_dir),
+    );
+    let mut arguments = vec![OsString::from(processor_stem)];
+    if protected && control.processor == BibliographyProcessor::Biber {
+        arguments.insert(0, OsString::from("--noconf"));
+    }
     let mut environment =
         bibliography_environment(project_root, manifest, texmf, toolchain, directory);
     if let Some(managed) = &toolchain.managed
@@ -456,7 +466,24 @@ fn run_bibliography_processor(
             library_dir.as_os_str().to_os_string(),
         ));
     }
-    if let Some(cache) = &executable.par_cache {
+    let private_cache = protected.then(|| {
+        project_root
+            .join(&manifest.project.build_dir)
+            .join("biber-cache")
+    });
+    let par_cache = executable
+        .par_cache
+        .as_ref()
+        .map(|cache| private_cache.as_ref().unwrap_or(cache));
+    if let Some(cache) = par_cache {
+        if protected {
+            crate::portable::private_directory(
+                project_root,
+                cache.strip_prefix(project_root).map_err(|_| {
+                    TexeError::Build("Private bibliography cache is outside the project".into())
+                })?,
+            )?;
+        }
         fs::create_dir_all(cache).map_err(|source| TexeError::Io {
             path: cache.clone(),
             source,
@@ -465,8 +492,69 @@ fn run_bibliography_processor(
             OsString::from("PAR_GLOBAL_TEMP"),
             cache.as_os_str().to_os_string(),
         ));
+        environment.push((
+            OsString::from("PAR_GLOBAL_TMPDIR"),
+            cache.as_os_str().to_os_string(),
+        ));
     }
-    let output = if executable.par_cache.is_some() {
+    let output = if protected {
+        if let Some(cache) = par_cache {
+            // Only the pinned processor's version mode runs before isolation,
+            // so its executable PAR files can be extracted without exposing
+            // compiler-driven chmod to the researcher's source tree.
+            // An earlier compiler could have changed its writable PAR cache.
+            // Never execute those bytes in the unsandboxed parent preparation.
+            fs::remove_dir_all(cache).map_err(|source| TexeError::Io {
+                path: cache.clone(),
+                source,
+            })?;
+            crate::portable::private_directory(
+                project_root,
+                cache.strip_prefix(project_root).map_err(|_| {
+                    TexeError::Build("Private bibliography cache is outside the project".into())
+                })?,
+            )?;
+            let mut warm = crate::process::command(&executable.path);
+            warm.env_clear()
+                .args(["--noconf", "--version"])
+                .current_dir(cache);
+            for (name, value) in &environment {
+                warm.env(name, value);
+            }
+            warm.env("HOME", cache)
+                .env("TMPDIR", cache)
+                .env("TEMP", cache)
+                .env("TMP", cache);
+            let warmed = warm.output().map_err(|source| TexeError::Spawn {
+                tool: executable.path.clone(),
+                source,
+            })?;
+            if !warmed.status.success() {
+                return Err(TexeError::Build(
+                    "Could not prepare the pinned bibliography processor".into(),
+                ));
+            }
+            crate::compiler_sandbox::prepare_biber_native_libraries(project_root, cache)?;
+        }
+        let reads = executable
+            .library_dir
+            .iter()
+            .cloned()
+            .chain(super::process::source_read_roots(project_root, manifest)?)
+            .collect::<Vec<_>>();
+        let executes = par_cache.into_iter().cloned().collect::<Vec<_>>();
+        portable_output(
+            project_root,
+            toolchain,
+            &executable.path,
+            &arguments,
+            directory,
+            &environment,
+            &[project_root.join(&manifest.project.build_dir)],
+            &reads,
+            &executes,
+        )?
+    } else if executable.par_cache.is_some() {
         raw_bundled_biber_output(&executable.path, &arguments, directory, &environment)?
     } else if toolchain.managed.is_some() {
         raw_engine_output(&executable.path, &arguments, directory, &environment)?
@@ -477,7 +565,9 @@ fn run_bibliography_processor(
         || control.path.with_extension("blg"),
         BibtexControlProxy::blg,
     );
-    let processor_log = fs::read_to_string(&processor_log_path).unwrap_or_default();
+    let processor_log =
+        super::generated::text_local(&processor_log_path, super::generated::MAX_METADATA)
+            .unwrap_or_default();
     if output.status.success() {
         if let Some(proxy) = &bibtex_proxy {
             proxy.publish(control)?;
@@ -526,6 +616,15 @@ impl BibtexControlProxy {
                 control.display()
             ))
         })?;
+        let absolute = std::path::absolute(control).map_err(|source| TexeError::Io {
+            path: control.into(),
+            source,
+        })?;
+        let anchor = absolute
+            .ancestors()
+            .last()
+            .ok_or_else(|| TexeError::Build("Invalid bibliography control path".into()))?;
+        super::generated::validate_parent(anchor, &absolute)?;
         for nonce in 0..100u32 {
             let mut hasher = Sha256::new();
             hasher.update(control.as_os_str().as_encoded_bytes());
@@ -573,11 +672,19 @@ impl BibtexControlProxy {
 
     fn publish(&self, control: &BibliographyControl) -> Result<(), TexeError> {
         let bbl = self.bbl();
-        let bytes = fs::read(&bbl).map_err(|source| TexeError::Io { path: bbl, source })?;
-        crate::atomic::write(&control.path.with_extension("bbl"), &bytes)?;
+        let bytes = super::generated::read_local(&bbl, super::generated::MAX_METADATA)?;
+        let absolute = std::path::absolute(&control.path).map_err(|source| TexeError::Io {
+            path: control.path.clone(),
+            source,
+        })?;
+        let anchor = absolute
+            .ancestors()
+            .last()
+            .ok_or_else(|| TexeError::Build("Invalid bibliography control path".into()))?;
+        super::generated::write(anchor, &absolute.with_extension("bbl"), &bytes)?;
         let blg = self.blg();
-        if let Ok(bytes) = fs::read(&blg) {
-            crate::atomic::write(&control.path.with_extension("blg"), &bytes)?;
+        if let Ok(bytes) = super::generated::read_local(&blg, super::generated::MAX_METADATA) {
+            super::generated::write(anchor, &absolute.with_extension("blg"), &bytes)?;
         }
         Ok(())
     }
@@ -586,7 +693,11 @@ impl BibtexControlProxy {
 impl Drop for BibtexControlProxy {
     fn drop(&mut self) {
         for path in [&self.path, &self.bbl(), &self.blg()] {
-            let _ = fs::remove_file(path);
+            if let Ok(absolute) = std::path::absolute(path)
+                && let Some(anchor) = absolute.ancestors().last()
+            {
+                let _ = super::generated::remove(anchor, &absolute);
+            }
         }
     }
 }
@@ -608,11 +719,17 @@ fn flatten_bibtex_auxiliary(
     if !canonical.starts_with(&root) || !visited.insert(canonical.clone()) {
         return Ok(());
     }
-    let bytes = fs::read(&canonical).map_err(|source| TexeError::Io {
-        path: canonical.clone(),
-        source,
-    })?;
+    let bytes = super::generated::read_local(path, super::generated::MAX_METADATA)?;
     for line in bytes.split(|byte| *byte == b'\n') {
+        if output.len()
+            > usize::try_from(super::generated::MAX_METADATA)
+                .expect("bounded output limit fits usize")
+            || visited.len() > 1000
+        {
+            return Err(TexeError::Build(
+                "Flattened bibliography controls exceeded their size limit".into(),
+            ));
+        }
         if line.starts_with(br"\citation{") {
             output.extend_from_slice(line);
             output.push(b'\n');
@@ -710,7 +827,8 @@ fn bibliography_environment(
     let package_bibtex = texmf.join("bibtex/bib");
     let package_biblatex = texmf.join("biblatex/bib");
     let package_styles = texmf.join("bibtex/bst");
-    let mut bibliography_roots = vec![project_root];
+    let generated = working_directory.join(".texe-generated");
+    let mut bibliography_roots = vec![generated.as_path(), project_root];
     bibliography_roots.extend(configured_roots.iter().map(PathBuf::as_path));
     bibliography_roots.extend([package_bibtex.as_path(), package_biblatex.as_path()]);
     let mut style_roots = vec![project_root];

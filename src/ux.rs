@@ -96,6 +96,8 @@ struct ErrorBody {
     action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     diagnostic: Option<crate::diagnostics::Diagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry: Option<&'static str>,
 }
 
 impl ErrorEnvelope {
@@ -112,6 +114,7 @@ impl ErrorEnvelope {
                     TexeError::Diagnostic(diagnostic) => Some((**diagnostic).clone()),
                     _ => None,
                 },
+                retry: matches!(error, TexeError::SourcesChanged).then_some("source-changed"),
             },
         }
     }
@@ -257,6 +260,27 @@ mod tests {
     use crate::TexeError;
     use crate::ux::{ErrorCategory, human_error, normalize_transcript};
     use std::path::Path;
+
+    #[test]
+    fn source_change_retry_is_a_schema_declared_build_error_only() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../schemas/texe.error.schema.json")).unwrap();
+        for (error, retry) in [
+            (TexeError::SourcesChanged, Some("source-changed")),
+            (TexeError::Build("failed compiler".into()), None),
+        ] {
+            let envelope = serde_json::to_value(super::ErrorEnvelope::from_error(&error)).unwrap();
+            assert_eq!(envelope["error"]["category"], "build");
+            assert_eq!(envelope["error"]["code"], 6);
+            assert_eq!(envelope["error"]["retry"].as_str(), retry);
+            jsonschema::draft202012::validate(&schema, &envelope).unwrap();
+        }
+        let mut invalid =
+            serde_json::to_value(super::ErrorEnvelope::from_error(&TexeError::SourcesChanged))
+                .unwrap();
+        invalid["error"]["retry"] = "retry-anything".into();
+        assert!(jsonschema::draft202012::validate(&schema, &invalid).is_err());
+    }
 
     #[test]
     fn categories_have_distinct_stable_exit_codes() {

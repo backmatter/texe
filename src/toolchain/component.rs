@@ -33,6 +33,23 @@ pub fn ensure_bundled_biber(
     )
 }
 
+/// Resolve only the bibliography component from an exact runtime recipe.
+/// Native engines need the matching processor without a TeX Live executable.
+pub(crate) fn ensure_biber_for_snapshot(
+    snapshot: &str,
+    verification: VerificationPolicy,
+    offline: bool,
+) -> Result<ManagedBiber, TexeError> {
+    let home = texe_data_home()?;
+    ensure_biber_component(
+        &home.join("components"),
+        &home.join("downloads"),
+        catalog::select_platform(snapshot)?,
+        verification,
+        offline,
+    )
+}
+
 pub fn ensure_managed_biber(runtime: &ManagedRuntime) -> Result<ManagedBiber, TexeError> {
     let selection = catalog::select_platform(&runtime.snapshot)?;
     ensure_biber_component(

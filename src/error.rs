@@ -85,6 +85,9 @@ pub enum TexeError {
     /// The document build failed.
     #[error("build error: {0}")]
     Build(String),
+    /// Saved inputs changed while the compiler was rendering them.
+    #[error("The paper changed during its build. The previous PDF has been kept.")]
+    SourcesChanged,
     /// A structured diagnostic already suitable for user-facing rendering.
     #[error("{0}")]
     Diagnostic(Box<diagnostics::Diagnostic>),
@@ -98,7 +101,9 @@ impl TexeError {
             Self::Usage(_) | Self::Prompt(_) => ux::ErrorCategory::Usage,
             Self::Network { .. } => ux::ErrorCategory::Network,
             Self::ToolNotFound(_) | Self::Toolchain(_) => ux::ErrorCategory::Tool,
-            Self::Build(_) | Self::Process { .. } | Self::Diagnostic(_) => ux::ErrorCategory::Build,
+            Self::Build(_) | Self::SourcesChanged | Self::Process { .. } | Self::Diagnostic(_) => {
+                ux::ErrorCategory::Build
+            }
             Self::Io { .. } | Self::Spawn { .. } => ux::ErrorCategory::System,
         }
     }
@@ -123,9 +128,17 @@ impl TexeError {
                 "check the connection and retry, or use `texe build --offline` with a populated cache",
             ),
             Self::Toolchain(_) => Some("run `texe doctor --verbose` for the failing tool and path"),
+            Self::Build(message)
+                if message.contains("native runtime") || message.contains("Native runtime") =>
+            {
+                Some(
+                    "update texe to a compatible release or export the project environment again; use `--verbose` for details",
+                )
+            }
             Self::Build(_) | Self::Process { .. } => Some(
                 "fix the first source error shown above, then build again; use `--verbose` for the full engine detail",
             ),
+            Self::SourcesChanged => Some("build the latest saved paper again"),
             Self::Diagnostic(_) => None,
             Self::Io { .. } | Self::Json { .. } | Self::Spawn { .. } => {
                 Some("check the named path and permissions, then try again")
@@ -153,5 +166,12 @@ mod tests {
 
         let build = TexeError::Build("connection diagram is invalid".to_string());
         assert_eq!(build.category(), ErrorCategory::Build);
+    }
+
+    #[test]
+    fn runtime_preparation_errors_do_not_blame_the_paper_source() {
+        let error = TexeError::Build("Native runtime exceeds its unpacked size limit".into());
+        assert!(error.action().unwrap().contains("update texe"));
+        assert!(!error.action().unwrap().contains("source error"));
     }
 }

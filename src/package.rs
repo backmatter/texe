@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::TexeError;
-use crate::atomic::write as atomic_write;
+use crate::build::generated;
 use crate::build::process::{checked_output, raw_output_streaming};
 use crate::config::ProjectManifest;
 use crate::progress::Progress;
@@ -44,6 +44,8 @@ struct Capabilities {
     trace_report_schema: String,
     convergence_report_schema: String,
     progress_schema: String,
+    #[serde(default)]
+    bundle_schema: String,
 }
 
 impl Capabilities {
@@ -125,6 +127,13 @@ impl PqtyClient {
             &manifest.packages.trace_adapter,
             require_bundled,
         )?;
+        let manager =
+            crate::toolchain::protected_manifest_executable(project_root, manifest, &manager)?;
+        let trace_adapter = crate::toolchain::protected_manifest_executable(
+            project_root,
+            manifest,
+            &trace_adapter,
+        )?;
         let capabilities = Self::inspect_capabilities(&manager, project_root)?;
         capabilities.validate(&manager)?;
         let client = Self {
@@ -157,14 +166,53 @@ impl PqtyClient {
         })
     }
 
+    pub(crate) fn import_bundle(
+        &self,
+        root: &Path,
+        bundle: &Path,
+        lock: &Path,
+    ) -> Result<(), TexeError> {
+        generated::optional(root, root, lock, generated::MAX_METADATA)?;
+        let capabilities = Self::inspect_capabilities(&self.manager, root)?;
+        if capabilities.bundle_schema != "pqty.bundle/v1" {
+            return Err(TexeError::Build(
+                "This pqty version cannot prepare a portable environment; update texe.".into(),
+            ));
+        }
+        let store = self.cache_home.join("pqty/store");
+        checked_output(
+            &self.manager,
+            &[
+                "--no-config".into(),
+                "--offline".into(),
+                "import".into(),
+                "--bundle".into(),
+                bundle.as_os_str().to_owned(),
+                "--lock".into(),
+                lock.as_os_str().to_owned(),
+                "--store".into(),
+                store.as_os_str().to_owned(),
+            ],
+            root,
+            &self.process_environment(),
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn fingerprint(&self) -> &str {
         &self.fingerprint
     }
 
     pub(crate) fn ensure_lock(&self, request: &EnsureLockRequest<'_>) -> Result<(), TexeError> {
         let lock = request.lock;
+        let existing = generated::optional(
+            request.project_root,
+            request.project_root,
+            lock,
+            generated::MAX_METADATA,
+        )?;
         if request.frozen {
-            if lock.is_file() {
+            if existing.is_some() {
                 return Ok(());
             }
             return Err(TexeError::Build(format!(
@@ -193,6 +241,7 @@ impl PqtyClient {
         let toolchain = request.toolchain;
         let entry = request.entry;
         let progress = request.progress;
+        generated::validate_parent(project_root, request.lock)?;
         if let Some(parent) = request.lock.parent() {
             fs::create_dir_all(parent).map_err(|source| TexeError::Io {
                 path: parent.to_path_buf(),
@@ -259,6 +308,8 @@ impl PqtyClient {
         texmf: &Path,
         progress: &Progress,
     ) -> Result<(), TexeError> {
+        generated::read(project_root, project_root, lock, generated::MAX_METADATA)?;
+        generated::validate_parent(project_root, &texmf.join(".pqty-output"))?;
         let mut arguments = vec![
             OsString::from("--no-config"),
             OsString::from("--progress"),
@@ -285,6 +336,8 @@ impl PqtyClient {
         lock: &Path,
         output_path: &Path,
     ) -> Result<PackageEnvironment, TexeError> {
+        generated::read(project_root, project_root, lock, generated::MAX_METADATA)?;
+        generated::validate_parent(project_root, output_path)?;
         let mut arguments = vec![
             OsString::from("--no-config"),
             OsString::from("env"),
@@ -295,6 +348,11 @@ impl PqtyClient {
         let environment = self.process_environment();
         let output = checked_output(&self.manager, &arguments, project_root, &environment)
             .map_err(|error| error.context("could not inspect pqty environment"))?;
+        if output.stdout.len() as u64 > generated::MAX_METADATA {
+            return Err(TexeError::Build(
+                "The package environment exceeds its metadata size limit".into(),
+            ));
+        }
         let environment: PackageEnvironment =
             serde_json::from_slice(&output.stdout).map_err(|source| TexeError::Json {
                 path: output_path.to_path_buf(),
@@ -306,7 +364,7 @@ impl PqtyClient {
                 environment.schema
             )));
         }
-        atomic_write(output_path, &output.stdout)?;
+        generated::write(project_root, output_path, &output.stdout)?;
         Ok(environment)
     }
 
@@ -321,6 +379,8 @@ impl PqtyClient {
         let trace = request.trace;
         let frozen = request.frozen;
         let progress = request.progress;
+        generated::read(project_root, project_root, lock, generated::MAX_METADATA)?;
+        generated::read(project_root, project_root, trace, generated::MAX_METADATA)?;
         if frozen {
             let mut arguments = vec![
                 OsString::from("--no-config"),
@@ -402,6 +462,7 @@ impl PqtyClient {
         if providers.is_empty() {
             return Ok(());
         }
+        generated::read(project_root, project_root, lock, generated::MAX_METADATA)?;
         let mut arguments = vec![
             OsString::from("--no-config"),
             OsString::from("--progress"),
@@ -489,7 +550,7 @@ impl LockedConsumerRequirements {
 }
 
 fn locked_consumer_requirements(lock: &Path) -> LockedConsumerRequirements {
-    let Ok(bytes) = fs::read(lock) else {
+    let Ok(bytes) = generated::read_local(lock, generated::MAX_METADATA) else {
         return LockedConsumerRequirements::default();
     };
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
@@ -992,6 +1053,7 @@ roots = ["shared", "bibliography"]
             trace_report_schema: TRACE_REPORT_SCHEMA.to_string(),
             convergence_report_schema: CONVERGENCE_REPORT_SCHEMA.to_string(),
             progress_schema: PROGRESS_SCHEMA.to_string(),
+            bundle_schema: "pqty.bundle/v1".to_string(),
         };
         assert!(compatible.validate(Path::new("/suite/pqty")).is_ok());
 
@@ -1000,5 +1062,75 @@ roots = ["shared", "bibliography"]
             ..compatible
         };
         assert!(incompatible.validate(Path::new("/suite/pqty")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_helpers_reject_aliased_engine_locks_before_execution() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let client = PqtyClient {
+            manager: root.join("missing-pqty"),
+            trace_adapter: root.join("missing-adapter"),
+            fingerprint: "test".into(),
+            offline: true,
+            cache_home: root.join("home"),
+        };
+        let research = root.join("research.json");
+        let original =
+            br#"{"schema":"pqty.lock/v1","consumer_requirements":{"providers":["private"]}}"#;
+        fs::write(&research, original).unwrap();
+        let lock = root.join("pqty.lock");
+        symlink(&research, &lock).unwrap();
+        assert_eq!(
+            locked_consumer_requirements(&lock),
+            LockedConsumerRequirements::default()
+        );
+        let error = client
+            .environment(root, &lock, &root.join("pqty.env.json"))
+            .unwrap_err();
+        assert!(!matches!(error, crate::TexeError::Spawn { .. }));
+        fs::remove_file(&lock).unwrap();
+        fs::hard_link(&research, &lock).unwrap();
+        assert_eq!(
+            locked_consumer_requirements(&lock),
+            LockedConsumerRequirements::default()
+        );
+        let error = client
+            .environment(root, &lock, &root.join("pqty.env.json"))
+            .unwrap_err();
+        assert!(!matches!(error, crate::TexeError::Spawn { .. }));
+        assert!(!root.join("pqty.env.json").exists());
+        assert_eq!(fs::read(&research).unwrap(), original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_environment_parent_alias_is_rejected_before_helper_execution() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let client = PqtyClient {
+            manager: root.join("missing-pqty"),
+            trace_adapter: root.join("missing-adapter"),
+            fingerprint: "test".into(),
+            offline: true,
+            cache_home: root.join("home"),
+        };
+        let lock = root.join("pqty.lock");
+        fs::write(&lock, br#"{"schema":"pqty.lock/v1"}"#).unwrap();
+        let research = root.join("research");
+        fs::create_dir(&research).unwrap();
+        fs::write(research.join("pqty.env.json"), b"research notes").unwrap();
+        symlink(&research, root.join("derived")).unwrap();
+        let error = client
+            .environment(root, &lock, &root.join("derived/pqty.env.json"))
+            .unwrap_err();
+        assert!(!matches!(error, crate::TexeError::Spawn { .. }));
+        assert_eq!(
+            fs::read(research.join("pqty.env.json")).unwrap(),
+            b"research notes"
+        );
     }
 }

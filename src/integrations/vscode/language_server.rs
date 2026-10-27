@@ -7,6 +7,8 @@ use crate::{TexeError, config::ProjectManifest};
 pub(super) struct Ownership {
     original: Option<String>,
     pub(super) installed: String,
+    #[serde(default)]
+    preserved_user_edits: bool,
     edits: Vec<Edit>,
     #[serde(default)]
     exclusions: Vec<String>,
@@ -29,20 +31,37 @@ pub(super) fn plan(
     root: &Path,
     manifest: &ProjectManifest,
     ownership: Option<Ownership>,
+    preserve_conflicts: bool,
 ) -> Result<(Ownership, String, Vec<String>), TexeError> {
     let original = super::settings::read_optional(&root.join("tex-ls.toml"))?;
     let mut document = parse(original.as_deref().unwrap_or(""))?;
+    let preserved_user_edits = ownership
+        .as_ref()
+        .is_some_and(|owned| original.as_deref() != Some(owned.installed.as_str()));
     let mut ownership = ownership.unwrap_or_else(|| Ownership {
         original,
         ..Ownership::default()
     });
-    update_exclusions(&mut document, manifest, &mut ownership.exclusions)?;
+    ownership.preserved_user_edits |= preserved_user_edits;
+    let mut conflicts = Vec::new();
+    if let Err(error) = update_exclusions(&mut document, manifest, &mut ownership.exclusions) {
+        if !preserve_conflicts {
+            return Err(error);
+        }
+        conflicts.push("tex-ls.toml / extend-exclude".into());
+    }
     if !document.contains_key("build") {
         document["build"] = toml_edit::Item::Table(toml_edit::Table::new());
     }
-    let build = document["build"]
-        .as_table_like_mut()
-        .ok_or_else(|| TexeError::Build("tex-ls.toml build must be a table".into()))?;
+    let Some(build) = document["build"].as_table_like_mut() else {
+        if !preserve_conflicts {
+            return Err(TexeError::Build("tex-ls.toml build must be a table".into()));
+        }
+        conflicts.push("tex-ls.toml / build".into());
+        let proposed = document.to_string();
+        ownership.installed.clone_from(&proposed);
+        return Ok((ownership, proposed, conflicts));
+    };
     let desired = [
         ("root", super::settings::slash_path(&manifest.project.entry)),
         (
@@ -61,13 +80,16 @@ pub(super) fn plan(
                 .into_owned(),
         ),
     ];
-    let mut conflicts = Vec::new();
     for (key, after) in desired {
         let current = build.get(key);
         if current.and_then(toml_edit::Item::as_str) == Some(after.as_str()) {
             continue;
         }
         if current.is_some_and(|item| !item.is_value()) {
+            if preserve_conflicts {
+                conflicts.push(format!("tex-ls.toml / build / {key}"));
+                continue;
+            }
             return Err(TexeError::Build(format!(
                 "tex-ls.toml build.{key} must be a value"
             )));
@@ -80,6 +102,9 @@ pub(super) fn plan(
             })
         {
             conflicts.push(format!("tex-ls.toml / build / {key}"));
+            if preserve_conflicts {
+                continue;
+            }
         }
         // Reuse the value's decoration, including a trailing user comment.
         let mut value = toml_edit::Value::from(after.clone());
@@ -106,7 +131,7 @@ pub(super) fn restore(root: &Path, ownership: &Ownership) -> Result<Option<Strin
     let Some(current) = super::settings::read_optional(&root.join("tex-ls.toml"))? else {
         return Ok(None);
     };
-    if current == ownership.installed {
+    if current == ownership.installed && !ownership.preserved_user_edits {
         return Ok(ownership.original.clone());
     }
     let mut document = parse(&current)?;

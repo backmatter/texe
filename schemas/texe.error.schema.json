@@ -18,6 +18,7 @@
         "code": { "enum": [2, 3, 4, 5, 6, 7, 130] },
         "message": { "type": "string" },
         "action": { "type": "string" },
+        "retry": { "enum": ["source-changed"] },
         "diagnostic": {
           "type": "object",
           "additionalProperties": false,
