@@ -216,15 +216,23 @@ pub(crate) fn read(
 /// Resolve the OS temporary base, then reject aliases below the trusted anchor.
 pub(crate) fn read_local(path: &Path, limit: u64) -> Result<Vec<u8>, TexeError> {
     let absolute = std::path::absolute(path).map_err(|source| io(path, source))?;
-    // macOS and Windows may expose their temporary base through an OS alias.
-    // Resolve that trusted base without following any compiler-created child.
-    let temporary = std::path::absolute(std::env::temp_dir()).map_err(|source| io(path, source))?;
-    if let Ok(relative) = absolute.strip_prefix(&temporary) {
-        let anchor = fs::canonicalize(&temporary).map_err(|source| io(&temporary, source))?;
-        return read(&anchor, &anchor, &anchor.join(relative), limit);
+    if let Some((anchor, physical)) = temporary_path(&absolute)? {
+        return read(&anchor, &anchor, &physical, limit);
     }
     let anchor = absolute.ancestors().last().ok_or_else(|| invalid(path))?;
     read(anchor, anchor, &absolute, limit)
+}
+
+fn temporary_path(
+    path: &Path,
+) -> Result<Option<(std::path::PathBuf, std::path::PathBuf)>, TexeError> {
+    let temporary = std::path::absolute(std::env::temp_dir()).map_err(|source| io(path, source))?;
+    let Ok(relative) = path.strip_prefix(&temporary) else {
+        return Ok(None);
+    };
+    let anchor = fs::canonicalize(&temporary).map_err(|source| io(&temporary, source))?;
+    let physical = anchor.join(relative);
+    Ok(Some((anchor, physical)))
 }
 
 pub(crate) fn text_local(path: &Path, limit: u64) -> Result<String, TexeError> {
@@ -296,6 +304,12 @@ fn parent_directory(
 /// Create and rename through held directory descriptors. A compiler-created
 /// ancestor link cannot redirect either staging or publication outside root.
 pub(crate) fn write(project: &Path, path: &Path, bytes: &[u8]) -> Result<(), TexeError> {
+    if project.parent().is_none() {
+        let absolute = std::path::absolute(path).map_err(|source| io(path, source))?;
+        if let Some((anchor, physical)) = temporary_path(&absolute)? {
+            return write(&anchor, &physical, bytes);
+        }
+    }
     #[cfg(target_os = "linux")]
     {
         use rustix::fs::{AtFlags, Mode, OFlags, openat, renameat, unlinkat};
@@ -344,6 +358,12 @@ pub(crate) fn write(project: &Path, path: &Path, bytes: &[u8]) -> Result<(), Tex
 }
 
 pub(crate) fn remove(project: &Path, path: &Path) -> Result<(), TexeError> {
+    if project.parent().is_none() {
+        let absolute = std::path::absolute(path).map_err(|source| io(path, source))?;
+        if let Some((anchor, physical)) = temporary_path(&absolute)? {
+            return remove(&anchor, &physical);
+        }
+    }
     #[cfg(target_os = "linux")]
     let result = (|| {
         let (directory, name) = parent_directory(project, path, false)?;

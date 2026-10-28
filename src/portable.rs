@@ -262,6 +262,11 @@ pub(crate) fn manifest_for_project(
     root: &Path,
     value: &Value,
 ) -> Result<ProjectManifest, TexeError> {
+    let physical_root = root.canonicalize().map_err(|source| TexeError::Io {
+        path: root.into(),
+        source,
+    })?;
+    let root = physical_root.as_path();
     let mut result = manifest(value)?;
     let path = root.join(crate::config::MANIFEST_NAME);
     match fs::symlink_metadata(&path) {

@@ -171,14 +171,12 @@ pub(crate) fn protected_executable(
             })?
             .join(executable)
     };
-    let project = project_root
-        .canonicalize()
-        .map_err(|source| TexeError::Io {
-            path: project_root.to_owned(),
+    for root in std::iter::once(project_root).chain(source_roots.iter().map(PathBuf::as_path)) {
+        let physical_root = root.canonicalize().map_err(|source| TexeError::Io {
+            path: root.into(),
             source,
         })?;
-    for root in std::iter::once(&project).chain(source_roots) {
-        if lexical.starts_with(root) || resolved.starts_with(root) {
+        if lexical.starts_with(root) || resolved.starts_with(&physical_root) {
             return Err(TexeError::Toolchain(
                 "Protected builds cannot execute build or lookup tools stored in the paper or \
                  its declared sources. Select installed TeX and package tools outside those folders."

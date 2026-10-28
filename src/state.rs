@@ -454,6 +454,17 @@ fn source_change_stamp_path(path: &Path, hasher: &mut Sha256) -> Result<(), Texe
         hasher.update(metadata.ctime().to_le_bytes());
         hasher.update(metadata.ctime_nsec().to_le_bytes());
     }
+    #[cfg(windows)]
+    {
+        use std::hash::{Hash, Hasher};
+        let handle = same_file::Handle::from_path(path).map_err(|source| TexeError::Io {
+            path: path.into(),
+            source,
+        })?;
+        let mut identity = std::collections::hash_map::DefaultHasher::new();
+        handle.hash(&mut identity);
+        hasher.update(identity.finish().to_le_bytes());
+    }
     #[cfg(not(unix))]
     for timestamp in [metadata.modified(), metadata.created()] {
         if let Ok(timestamp) = timestamp
