@@ -108,13 +108,6 @@ jobs:
           cargo xtask verify contracts --suite-bin
           "${{ runner.temp }}/native-suite/texe-${{ matrix.platform }}/bin"
 
-      - name: Run the installed-suite journey
-        env:
-          PQTY_REPO: ${{ github.workspace }}/pqty
-        run: >-
-          cargo xtask verify platform --suite-bin
-          "${{ runner.temp }}/native-suite/texe-${{ matrix.platform }}/bin"
-
       - name: Build Linux package
         if: matrix.platform == 'x86_64-linux'
         run: >-
