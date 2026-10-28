@@ -107,6 +107,21 @@ pub(super) fn ensure(
             |runtime| runtime.format_cache.clone(),
         )
     };
+    // The user-selected runtime cache can have OS aliases such as macOS /var.
+    // Resolve that trusted cache root before adding compiler-controlled paths;
+    // generated paths below it still reject links through the bounded reader.
+    let format_cache = if !is_portable_build(project_root, build_root) && managed.is_some() {
+        fs::create_dir_all(&format_cache).map_err(|source| TexeError::Io {
+            path: format_cache.clone(),
+            source,
+        })?;
+        fs::canonicalize(&format_cache).map_err(|source| TexeError::Io {
+            path: format_cache,
+            source,
+        })?
+    } else {
+        format_cache
+    };
     let target = format_cache
         .join(&toolchain.identity.fingerprint)
         .join(environment_key)

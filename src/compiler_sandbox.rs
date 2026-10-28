@@ -5,29 +5,43 @@
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::fs;
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Output, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::process::Output;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+use std::process::Stdio;
+use std::sync::Mutex;
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+use std::sync::{Arc, OnceLock};
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::TexeError;
 
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 const OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const MEMORY_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 // Shipout guards its 64 MiB live arena with a 32 GiB PROT_NONE reservation.
 // Keep room for retained/rerun arenas without granting more committed memory.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const SHIPOUT_ADDRESS_SPACE_LIMIT: u64 = 128 * 1024 * 1024 * 1024;
 const POLICY_VERSION: u32 = 1;
 const PRIVATE_OUTPUT_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 const PRIVATE_ENTRY_LIMIT: usize = 100_000;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const DISK_RESERVE: u64 = 512 * 1024 * 1024;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const BUDGET_INTERVAL: Duration = Duration::from_millis(100);
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 static GROUPS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static SIGNAL_HANDLER: OnceLock<()> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +221,7 @@ impl Policy {
             }
             // Existing hard links could otherwise turn a permitted output write
             // into an outside source write. Symlinks cannot grant Landlock rights.
+            #[cfg(unix)]
             reject_hardlinks(path)?;
         }
         for path in std::iter::once(&self.project)
@@ -404,6 +419,7 @@ fn budget_for_space(limit: u64, used: u64, free: u64) -> Result<u64, TexeError> 
     Ok(limit.min(used.saturating_add(free.saturating_sub(DISK_RESERVE))))
 }
 
+#[cfg(unix)]
 fn reject_hardlinks(root: &Path) -> Result<(), TexeError> {
     #[cfg(unix)]
     {
@@ -444,6 +460,7 @@ fn reject_hardlinks(root: &Path) -> Result<(), TexeError> {
     Ok(())
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn allowed_environment(key: &OsStr) -> bool {
     let Some(key) = key.to_str() else {
         return false;
@@ -502,6 +519,7 @@ fn allowed_environment(key: &OsStr) -> bool {
     )
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn environment(
     command: &mut std::process::Command,
     supplied: &[(OsString, OsString)],
@@ -547,6 +565,7 @@ fn kill_group(pid: u32) {
 #[cfg(not(target_os = "linux"))]
 fn kill_group(_: u32) {}
 
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 fn collect(mut pipe: impl Read, total: &AtomicUsize, overflow: &AtomicBool) -> Vec<u8> {
     let mut output = Vec::new();
     let mut buffer = [0u8; 8192];
@@ -636,9 +655,9 @@ pub(crate) fn run(
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
         let _ = (tool, args, cwd, supplied_environment, policy);
-        return Err(error(
+        Err(error(
             "this system does not support protected portable compilation",
-        ));
+        ))
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
@@ -764,7 +783,7 @@ pub(crate) fn run(
 }
 
 pub(crate) fn launch(serialized: &str, tool: &Path, args: &[OsString]) -> Result<(), TexeError> {
-    let mut policy: Policy = serde_json::from_str(serialized).map_err(error)?;
+    let policy: Policy = serde_json::from_str(serialized).map_err(error)?;
     policy.validate()?;
     let tool = canonical(tool)?;
     if !policy
@@ -782,6 +801,7 @@ pub(crate) fn launch(serialized: &str, tool: &Path, args: &[OsString]) -> Result
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         use std::os::unix::process::CommandExt;
+        let mut policy = policy;
         policy.private_output_bytes = initial_output_budget(&policy)?;
         // The monitor shares the compiler's private process group and uses a
         // kernel PID descriptor, so even SIGKILL of the parent cannot leave
@@ -1284,7 +1304,9 @@ pub(crate) fn watch_parent(parent: u32, group: u32, serialized: &str) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::{OUTPUT_LIMIT, Policy, collect};
+    #[cfg(unix)]
+    use super::Policy;
+    use super::{OUTPUT_LIMIT, collect};
     use std::io::Read;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

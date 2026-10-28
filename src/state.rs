@@ -688,7 +688,9 @@ fn digest_of(hasher: Sha256) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{generated, source_fingerprint};
+    #[cfg(target_os = "linux")]
+    use super::generated;
+    use super::source_fingerprint;
     use sha2::Digest as _;
     use std::fs;
     use std::path::{Path, PathBuf};

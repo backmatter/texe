@@ -86,7 +86,9 @@ const {
   }
   console.log(`Real VS Code test workspace: ${root}`);
   fs.writeFileSync(path.join(os.tmpdir(), "texe-vscode-latest"), root);
-  const cli = require("@vscode/test-electron").resolveCliArgsFromVSCodeExecutablePath(executable);
+  const cli = process.platform === "win32"
+    ? [executable, path.join(path.dirname(executable), "resources", "app", "out", "cli.js")]
+    : require("@vscode/test-electron").resolveCliArgsFromVSCodeExecutablePath(executable);
   execFileSync(cli[0], [...cli.slice(1), `--user-data-dir=${profile}`, `--extensions-dir=${extensions}`, "--install-extension", "backmatter.tex-ls", "--force"], {
     env: {...environment, ELECTRON_RUN_AS_NODE: "1"}, stdio: "inherit",
   });

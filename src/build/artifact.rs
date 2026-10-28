@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::ffi::OsStr;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use std::fs;
 use std::path::{Path, PathBuf};
 

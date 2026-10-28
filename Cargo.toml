@@ -51,7 +51,7 @@ thiserror = "2"
 toml = "1.1"
 ureq = "3"
 xz2 = "0.1"
-zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "9.0", default-features = false, features = ["deflate-flate2"] }
 jsonc-parser = { version = "0.33.1", features = ["cst", "serde", "serde_json"] }
 unicode-normalization = "0.1"
 toml_edit = "0.22.27"

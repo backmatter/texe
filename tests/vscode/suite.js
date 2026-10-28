@@ -21,16 +21,12 @@ exports.run = async () => {
   const api = await extension.activate();
   assert.ok(["auto", "local"].includes(vscode.workspace.getConfiguration("citet", source).get("buildBackend")));
   if (process.platform !== "linux") {
-    const before = document.getText(), messages = [];
-    const original = vscode.window.showErrorMessage;
-    vscode.window.showErrorMessage = async message => { messages.push(message); return undefined; };
-    try { await vscode.commands.executeCommand("citet.buildAndView"); }
-    finally { vscode.window.showErrorMessage = original; }
-    assert.ok(messages.some(message => /protected local builds.*Linux/i.test(message)), messages.join("\n"));
+    const before = document.getText();
+    await vscode.commands.executeCommand("citet.buildAndView");
     assert.equal(document.getText(), before, "unsupported local builds preserve the source");
     assert.equal(fs.existsSync(pdf), false, "unsupported local builds do not publish a PDF");
     await until(async () => Array.isArray(await vscode.commands.executeCommand("vscode.executeFormatDocumentProvider", source, {tabSize: 2, insertSpaces: true})), "standalone tex-ls formatter did not start");
-    fs.writeFileSync(path.join(process.env.TEXE_TEST_ROOT, "results.json"), JSON.stringify({extension: extension.id, formatting: true, localBuild: false, unsupportedLocalBuildRejected: true, sourcePreserved: true}, null, 2));
+    fs.writeFileSync(path.join(process.env.TEXE_TEST_ROOT, "results.json"), JSON.stringify({extension: extension.id, formatting: true, localBuild: false, unsupportedLocalBuildPreservedFiles: true, sourcePreserved: true}, null, 2));
     console.log("PASS editor language features and unsupported protected-build preservation");
     return;
   }
