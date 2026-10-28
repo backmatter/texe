@@ -231,6 +231,11 @@ fn preflight(
     manifest: &ProjectManifest,
     no_editor: bool,
 ) -> Result<Preflight, TexeError> {
+    let physical_root = root.canonicalize().map_err(|source| TexeError::Io {
+        path: root.into(),
+        source,
+    })?;
+    let root = physical_root.as_path();
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
     let source_path = root.join(&manifest.project.entry);

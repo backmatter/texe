@@ -602,7 +602,8 @@ manager = "custom-pqty"
         for section in ["inputs", "bibliography"] {
             let original = format!(
                 "schema = \"texe.project/v1\"\n[project]\nentry = \"main.tex\"\n[toolchain]\nengine = \"pdflatex\"\n[{section}]\nroots = [{}]\n",
-                serde_json::to_string(&build.join("research")).unwrap()
+                serde_json::to_string(&build.join("research").to_string_lossy().replace('\\', "/"))
+                    .unwrap()
             );
             let path = directory.path().join("texe.toml");
             fs::write(&path, &original).unwrap();

@@ -321,12 +321,19 @@ fn reject_source_output_overlap(
         }
     }
     let outputs = [output.to_owned(), output.with_extension("synctex.gz")];
+    let physical_outputs: Vec<_> = outputs
+        .iter()
+        .filter_map(|path| path.canonicalize().ok())
+        .collect();
     for source in paths {
         let source = root.join(source);
         let resolved = source.canonicalize().ok();
         if outputs
             .iter()
             .any(|output| source == *output || resolved.as_ref() == Some(output))
+            || resolved
+                .as_ref()
+                .is_some_and(|path| physical_outputs.contains(path))
         {
             return Err(TexeError::Build(format!(
                 "The output filename {} is also used as a research input. Use another filename for that input or the paper entry. Sources and the last PDF have been kept.",

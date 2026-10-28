@@ -630,6 +630,13 @@ fn array<'a>(value: &'a serde_json::Value, field: &str) -> &'a [serde_json::Valu
 }
 
 fn read_project_file(project_root: &Path, path: &str) -> Result<Option<Vec<u8>>, TexeError> {
+    let physical_root = project_root
+        .canonicalize()
+        .map_err(|source| TexeError::Io {
+            path: project_root.into(),
+            source,
+        })?;
+    let project_root = physical_root.as_path();
     let Some(path) = project_file(project_root, path) else {
         return Ok(None);
     };

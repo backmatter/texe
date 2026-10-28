@@ -213,9 +213,16 @@ pub(crate) fn read(
     Ok(bytes)
 }
 
-/// Path-only adapters still reject links in the complete absolute path.
+/// Resolve the OS temporary base, then reject aliases below the trusted anchor.
 pub(crate) fn read_local(path: &Path, limit: u64) -> Result<Vec<u8>, TexeError> {
     let absolute = std::path::absolute(path).map_err(|source| io(path, source))?;
+    // macOS and Windows may expose their temporary base through an OS alias.
+    // Resolve that trusted base without following any compiler-created child.
+    let temporary = std::path::absolute(std::env::temp_dir()).map_err(|source| io(path, source))?;
+    if let Ok(relative) = absolute.strip_prefix(&temporary) {
+        let anchor = fs::canonicalize(&temporary).map_err(|source| io(&temporary, source))?;
+        return read(&anchor, &anchor, &anchor.join(relative), limit);
+    }
     let anchor = absolute.ancestors().last().ok_or_else(|| invalid(path))?;
     read(anchor, anchor, &absolute, limit)
 }

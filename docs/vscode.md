@@ -116,9 +116,8 @@ by texe and preserves later user edits. Rerunning setup retires old texe-owned
 Workshop/companion settings and replaces the old companion with Citet. Existing
 third-party extensions are not globally uninstalled.
 
-The CLI keeps Citet 0.1.2 or newer when already installed. Otherwise it asks
-VS Code to install the current Marketplace version. It does not overwrite a
-newer extension with a bundled copy. For an offline editor setup, install the
-platform-specific tex-ls VSIX and the Citet VSIX before running `texe editor`.
-The checked-in Citet VSIX is a test fixture, excluded from the native executable
-and crate. See [fixture provenance](../assets/citet-vscode.md).
+Each `texe editor` setup asks VS Code to install or update `backmatter.citet`
+from the Marketplace. No extension version is pinned or bundled. VS Code installs
+Citet's dependencies from the store and manages their updates. Installing a missing
+extension or updating it requires network access; an already installed extension
+remains usable offline, and texe reports a store failure without blocking the CLI.

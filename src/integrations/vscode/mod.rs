@@ -95,59 +95,24 @@ pub(crate) fn setup_vscode(
     Ok(report)
 }
 
-fn supported_citet_version(version: &str) -> bool {
-    let parts = version
-        .split('.')
-        .map(str::parse::<u64>)
-        .collect::<Result<Vec<_>, _>>();
-    parts.is_ok_and(|parts| parts.len() == 3 && parts.as_slice() >= [0, 1, 2].as_slice())
-}
-
 fn ensure_citet(report: &mut IntegrationReport) {
-    if installed_extension_version("backmatter.citet")
-        .is_some_and(|version| supported_citet_version(&version))
-    {
-        report
-            .messages
-            .push("Citet is available in VS Code; VS Code manages its updates".into());
-        return;
-    }
     match code_command()
-        .args(["--install-extension", "backmatter.citet", "--force"])
+         .args([
+            "--install-extension", "backmatter.citet",
+            "--install-extension", "backmatter.tex-ls", "--force",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
     {
-        Ok(status) if status.success() && installed_extension_version("backmatter.citet").is_some_and(|version| supported_citet_version(&version)) => {
-            report.messages.push("installed Citet and its tex-ls dependency from the VS Code Marketplace".into());
+        Ok(status) if status.success() => {
+            report.messages.push("installed the latest published Citet and tex-ls extensions from the VS Code Marketplace".into());
         }
         result => report.messages.push(format!(
-            "could not install Citet 0.1.2 or newer ({result:?}); install backmatter.citet from Extensions or use `texe build` in a terminal"
+            "could not install the latest Citet extension ({result:?}); install backmatter.citet from Extensions or use `texe build` in a terminal"
         )),
     }
-}
-
-fn installed_extension_version(identifier: &str) -> Option<String> {
-    code_command()
-        .args(["--list-extensions", "--show-versions"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| extension_version_from_list(&output.stdout, identifier))
-}
-
-fn extension_version_from_list(output: &[u8], identifier: &str) -> Option<String> {
-    String::from_utf8_lossy(output)
-        .lines()
-        .find_map(|installed| {
-            let installed = installed.trim();
-            let (name, version) = installed.rsplit_once('@').unwrap_or((installed, ""));
-            name.eq_ignore_ascii_case(identifier)
-                .then(|| version.to_string())
-        })
 }
 
 pub(crate) fn open_vscode(root: &Path) -> Result<IntegrationReport, TexeError> {
@@ -243,17 +208,7 @@ mod tests {
     use std::fs;
 
     use crate::config::ProjectManifest;
-    use crate::integrations::vscode::{extension_version_from_list, open_targets};
-
-    #[test]
-    fn accepts_independently_updated_citet_extensions() {
-        for version in ["0.1.2", "0.1.10", "0.2.0", "1.0.0"] {
-            assert!(super::supported_citet_version(version));
-        }
-        for version in ["0.1.1", "", "0.1", "0.1.2-beta.1", "0.1.2.0"] {
-            assert!(!super::supported_citet_version(version));
-        }
-    }
+    use crate::integrations::vscode::open_targets;
 
     #[test]
     fn launches_vscode_from_a_directory_with_spaces() {
@@ -324,14 +279,5 @@ engine = "pdflatex"
         let targets = open_targets(directory.path(), &manifest());
 
         assert_eq!(targets, [directory.path().join("main.tex")]);
-    }
-
-    #[test]
-    fn existing_extensions_are_detected_without_changing_their_version() {
-        let output = b"publisher.other@1.2.3\njames-yu.latex-workshop@10.9.0\n";
-        assert_eq!(
-            extension_version_from_list(output, "James-Yu.latex-workshop").as_deref(),
-            Some("10.9.0")
-        );
     }
 }

@@ -89,11 +89,11 @@ covering PDF refresh, diagnostics, failure recovery, SyncTeX, build commands,
 and native language formatting. Linux needs a display server or Xvfb. `results.json` lands in the temporary directory the run prints.
 
 The harness downloads the VS Code version pinned in
-[`tests/vscode/run.js`](tests/vscode/run.js), loads the checked-in Citet test
-fixture, and installs its standalone tex-ls dependency. Use `VSCODE_EXECUTABLE`
-for a local Electron executable and `TEX_LS_BINARY` for a local language server.
-The fixture is excluded from native release packages and runtime code. See
-[`assets/citet-vscode.md`](assets/citet-vscode.md).
+[`tests/vscode/run.js`](tests/vscode/run.js), installs the latest published Citet
+and tex-ls extensions from the Marketplace into its isolated extension directory,
+and records their actual versions in its results directory. No extension VSIX or
+version is pinned in this repository. Use `VSCODE_EXECUTABLE` for a local Electron
+executable and `TEX_LS_BINARY` for a local language server when debugging.
 
 ## Pull requests
 

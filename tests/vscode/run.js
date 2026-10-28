@@ -20,7 +20,6 @@ const {
   if (process.env.GITHUB_ENV)
     fs.appendFileSync(process.env.GITHUB_ENV, `TEXE_EDITOR_EVIDENCE=${root}\n`);
   const paper = path.join(root, "paper with spaces");
-  const extension = path.join(root, "extension");
   const extensions = path.join(root, "extensions");
   const profile = path.join(root, "profile");
   for (const dir of [
@@ -30,13 +29,6 @@ const {
     path.join(root, "bin"),
   ])
     fs.mkdirSync(dir, { recursive: true });
-  const { unzipSync } = require("fflate");
-  const files = unzipSync(fs.readFileSync(path.join(repo, "assets/citet-vscode.vsix")));
-  for (const [name, bytes] of Object.entries(files)) {
-    if (!name.startsWith("extension/")) continue;
-    const target = path.join(extension, name.slice("extension/".length));
-    fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, bytes);
-  }
   const suite = process.env.TEXE_TEST_SUITE || path.join(repo, "target/debug");
   for (const name of ["texe", "pqty", "pqty-fls"]) {
     const binary = name + (process.platform === "win32" ? ".exe" : "");
@@ -89,9 +81,17 @@ const {
   const cli = process.platform === "win32"
     ? [executable, path.join(path.dirname(executable), "resources", "app", "out", "cli.js")]
     : require("@vscode/test-electron").resolveCliArgsFromVSCodeExecutablePath(executable);
-  execFileSync(cli[0], [...cli.slice(1), `--user-data-dir=${profile}`, `--extensions-dir=${extensions}`, "--install-extension", "backmatter.tex-ls", "--force"], {
-    env: {...environment, ELECTRON_RUN_AS_NODE: "1"}, stdio: "inherit",
-  });
+  const cliArgs = [...cli.slice(1), `--user-data-dir=${profile}`, `--extensions-dir=${extensions}`];
+  const cliEnv = {...environment, ELECTRON_RUN_AS_NODE: "1"};
+  for (const id of ["backmatter.citet", "backmatter.tex-ls"]) {
+    execFileSync(cli[0], [...cliArgs, "--install-extension", id, "--force"], {env: cliEnv, stdio: "inherit"});
+  }
+  const extension = execFileSync(cli[0], [...cliArgs, "--locate-extension", "backmatter.citet"], {
+    env: cliEnv, encoding: "utf8",
+  }).trim();
+  if (!extension || !fs.statSync(extension).isDirectory()) throw new Error("Marketplace Citet installation was not found");
+  const installed = JSON.parse(fs.readFileSync(path.join(extension, "package.json"), "utf8"));
+  fs.writeFileSync(path.join(root, "marketplace-extension.json"), JSON.stringify({identifier: "backmatter.citet", version: installed.version, path: extension}, null, 2));
   const options = {
     vscodeExecutablePath: executable,
     extensionDevelopmentPath: extension,
