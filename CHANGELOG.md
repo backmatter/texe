@@ -6,6 +6,14 @@ are generated from Conventional Commit subjects; do not edit them by hand.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7](https://github.com/backmatter/texe/compare/v0.1.6...v0.1.7) - 2026-10-28
+
+### Added
+- Ship portable native builds and independent editor updates ([#28](https://github.com/backmatter/texe/pull/28))
+
+### Fixed
+- Update pqty suite to v0.1.2 ([#30](https://github.com/backmatter/texe/pull/30))
+
 ## [0.1.6](https://github.com/backmatter/texe/compare/v0.1.5...v0.1.6) - 2026-09-15
 
 ### Added
