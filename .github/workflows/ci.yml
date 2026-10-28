@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+    types: [opened, synchronize, reopened, ready_for_review]
+
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,7 +18,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  scope:
+    name: Validation scope
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.action != 'edited')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check validation reuse boundaries
+        run: python3 scripts/test_ci_scope.py
+      - name: Verify whether the source already passed all platform checks
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-scope.py ci.yml
+
   rust:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     name: Rust package (${{ matrix.platform }})
     strategy:
       fail-fast: false
@@ -98,6 +123,8 @@ jobs:
         run: cargo doc --workspace --no-deps --locked
 
   vscode-extension:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     name: VS Code companion
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -112,6 +139,8 @@ jobs:
         run: node --test tests/*.test.js
 
   vscode-real:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     name: Real VS Code paper workflow (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -171,7 +200,7 @@ jobs:
             npm test --prefix tests/vscode
           fi
       - name: Retain editor screenshots and results
-        if: always()
+        if: ${{ always() && needs.scope.result != 'skipped' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vscode-workflow-evidence-${{ matrix.os }}
@@ -185,6 +214,8 @@ jobs:
           retention-days: 7
 
   managed-journey:
+    needs: scope
+    if: needs.scope.outputs.full == 'true'
     name: Managed user journey (${{ matrix.platform }})
     strategy:
       fail-fast: false
@@ -250,17 +281,26 @@ jobs:
         run: cargo xtask verify platform
 
   dependency-policy:
+    needs: scope
+    if: always()
     name: Dependency security, licenses, and sources
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
+      - name: Require a valid validation decision
+        shell: bash
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+        run: test "$SCOPE_RESULT" = success
       - name: Check out repository
+        if: needs.scope.outputs.full == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Check dependency policy
+        if: needs.scope.outputs.full == 'true'
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           rust-version: "1.89.0"
