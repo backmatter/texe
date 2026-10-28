@@ -116,6 +116,11 @@ texe never updates itself. To upgrade, run the install command again; it
 replaces the commands in place. With the Debian package or a desktop app,
 upgrade the same way you installed it.
 
+A suite managed in Citet extension storage uses Citet's update check and
+**Update Local Build Tools** command. Citet does not change a PATH installation
+or a tool selected with `citet.texePath`. Editor extensions update through
+VS Code independently of the native suite.
+
 Uninstalling keeps your papers and PDFs. It also keeps the downloaded TeX
 runtimes and caches, so a reinstall does not download them again. Run
 `texe clean --all` first if you want those removed too.

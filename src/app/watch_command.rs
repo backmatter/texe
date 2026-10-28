@@ -32,6 +32,7 @@ pub(super) fn run_watch(
 ) -> Result<(), TexeError> {
     let (stop_sender, stop_receiver) = std::sync::mpsc::channel();
     ctrlc::set_handler(move || {
+        crate::compiler_sandbox::cancel_active();
         let _ = stop_sender.send(());
     })
     .map_err(|error| TexeError::Build(format!("could not listen for Ctrl-C: {error}")))?;

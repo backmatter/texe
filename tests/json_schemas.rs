@@ -77,6 +77,10 @@ fn machine_protocol_schemas_are_closed_and_validate_v1_golden_artifacts() {
 fn every_public_schema_has_a_canonical_raw_github_id() {
     for (filename, text) in [
         (
+            "texe.build-safety.schema.json",
+            include_str!("../schemas/texe.build-safety.schema.json"),
+        ),
+        (
             "texe.build-progress.schema.json",
             include_str!("../schemas/texe.build-progress.schema.json"),
         ),

@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::TexeError;
-use crate::atomic::write as atomic_write;
 use crate::build::process::checked_output;
 use crate::build::warnings::ErrorContext as _;
 use crate::package::PqtyClient;
@@ -57,7 +56,21 @@ pub(super) struct TraceRequest<'a> {
 }
 
 pub(super) fn create(request: &TraceRequest<'_>) -> Result<(), TexeError> {
-    let mut trace = if request.recorder_path.is_file() {
+    let recorder = super::generated::optional(
+        request.project_root,
+        request.output_dir,
+        request.recorder_path,
+        super::generated::MAX_METADATA,
+    )?;
+    let environment = read_environment(request.environment_path)?;
+    super::generated::optional(
+        request.project_root,
+        request.project_root,
+        request.trace_path,
+        super::generated::MAX_METADATA,
+    )?;
+    super::generated::validate_parent(request.project_root, request.trace_path)?;
+    let mut trace = if recorder.is_some() {
         let mut arguments = vec![
             OsString::from("--fls"),
             request.recorder_path.as_os_str().to_os_string(),
@@ -94,7 +107,6 @@ pub(super) fn create(request: &TraceRequest<'_>) -> Result<(), TexeError> {
         .map_err(|error| error.context("could not adapt engine recorder trace"))?;
         read_trace(request.trace_path)?
     } else {
-        let environment = read_environment(request.environment_path)?;
         InputTrace {
             schema: TRACE_SCHEMA.to_string(),
             producer: Some(format!("texe/{}", env!("CARGO_PKG_VERSION"))),
@@ -103,7 +115,14 @@ pub(super) fn create(request: &TraceRequest<'_>) -> Result<(), TexeError> {
         }
     };
 
-    let log = fs::read_to_string(request.log_path).unwrap_or_default();
+    let log = super::generated::optional(
+        request.project_root,
+        request.output_dir,
+        request.log_path,
+        super::generated::MAX_METADATA,
+    )?
+    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    .unwrap_or_default();
     let existing = trace
         .inputs
         .iter()
@@ -132,7 +151,7 @@ pub(super) fn create(request: &TraceRequest<'_>) -> Result<(), TexeError> {
         source,
     })?;
     bytes.push(b'\n');
-    atomic_write(request.trace_path, &bytes)
+    super::generated::write(request.project_root, request.trace_path, &bytes)
 }
 
 struct ClassificationRoot {
@@ -189,7 +208,8 @@ fn add_recorder_root_aliases(
     recorder_path: &Path,
     working_directory: &Path,
 ) {
-    let Ok(contents) = fs::read_to_string(recorder_path) else {
+    let Ok(contents) = super::generated::text_local(recorder_path, super::generated::MAX_METADATA)
+    else {
         return;
     };
     let mut working_directory = absolute_lexical(working_directory, working_directory);
@@ -364,7 +384,8 @@ fn canonical_root(root: &Path) -> Result<PathBuf, TexeError> {
 }
 
 pub(super) fn runtime_provider_requirements(log_path: &Path) -> Vec<String> {
-    let log = fs::read_to_string(log_path).unwrap_or_default();
+    let log =
+        super::generated::text_local(log_path, super::generated::MAX_METADATA).unwrap_or_default();
     let mut providers = BTreeSet::new();
     for line in logical_log_lines(&log) {
         if let Some(provider) = missing_pdftex_type1_provider(line.as_ref()) {
@@ -372,7 +393,10 @@ pub(super) fn runtime_provider_requirements(log_path: &Path) -> Vec<String> {
         }
     }
     let missfont = log_path.with_file_name("missfont.log");
-    for line in fs::read_to_string(missfont).unwrap_or_default().lines() {
+    for line in super::generated::text_local(&missfont, super::generated::MAX_METADATA)
+        .unwrap_or_default()
+        .lines()
+    {
         if let Some(provider) = missing_mktexpk_provider(line) {
             insert_font_provider_requirements(&mut providers, provider);
         }
@@ -393,10 +417,7 @@ fn insert_font_provider_requirements(
 }
 
 fn read_trace(path: &Path) -> Result<InputTrace, TexeError> {
-    let text = fs::read(path).map_err(|source| TexeError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let text = super::generated::read_local(path, super::generated::MAX_METADATA)?;
     let trace: InputTrace = serde_json::from_slice(&text).map_err(|source| TexeError::Json {
         path: path.to_path_buf(),
         source,
@@ -411,10 +432,7 @@ fn read_trace(path: &Path) -> Result<InputTrace, TexeError> {
 }
 
 fn read_environment(path: &Path) -> Result<TraceEnvironment, TexeError> {
-    let text = fs::read(path).map_err(|source| TexeError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let text = super::generated::read_local(path, super::generated::MAX_METADATA)?;
     serde_json::from_slice(&text).map_err(|source| TexeError::Json {
         path: path.to_path_buf(),
         source,

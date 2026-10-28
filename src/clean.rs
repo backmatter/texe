@@ -18,7 +18,9 @@ use crate::config::ProjectManifest;
 use crate::toolchain::{LiveToolchainArtifacts, live_toolchain_artifacts};
 
 /// The `TEXE_HOME` subdirectories a sweep is allowed to touch. Nothing outside
-/// this list is ever a candidate, whatever else the directory holds.
+/// this list is ever a candidate, whatever else the directory holds. Native
+/// offline runtimes and their repair archives are deliberately excluded: their
+/// live identities belong to projects, rather than the embedded recipe catalog.
 const CACHE_DIRECTORIES: &[&str] = &[
     "toolchains",
     "formats",
@@ -97,8 +99,14 @@ pub fn storage_report(
         }
     }
     let home = crate::toolchain::texe_data_home()?;
+    append_shared_storage(&home, &mut report)?;
+    Ok(report)
+}
+
+fn append_shared_storage(home: &Path, report: &mut StorageReport) -> Result<(), TexeError> {
     for (directory, purpose) in [
         ("toolchains", "checksummed LaTeX runtimes"),
+        ("native", "verified offline runtimes and repair archives"),
         ("formats", "generated LaTeX formats"),
         ("components", "checksummed bibliography tools"),
         ("downloads", "verified reusable downloads"),
@@ -118,7 +126,7 @@ pub fn storage_report(
             purpose: purpose.to_string(),
         });
     }
-    Ok(report)
+    Ok(())
 }
 
 /// Remove a project's derived build state.
@@ -142,9 +150,9 @@ pub fn clean_project(
         &manifest.packages.texmf,
         &manifest.packages.lock,
     ];
+    preflight_project_cleanup(project_root, manifest, &targets)?;
     let mut removed = BTreeSet::new();
     for target in targets {
-        reject_symlinked_parent(project_root, target)?;
         let path = project_root.join(target);
         if !path.exists() || !removed.insert(target.clone()) {
             continue;
@@ -179,13 +187,102 @@ pub fn measure_project(
         &manifest.packages.texmf,
         &manifest.packages.lock,
     ];
+    preflight_project_cleanup(project_root, manifest, &targets)?;
     let mut seen = BTreeSet::new();
     for target in targets {
-        reject_symlinked_parent(project_root, target)?;
         let path = project_root.join(target);
         if path.exists() && seen.insert(target.clone()) {
             report.freed_bytes += directory_size(&path)?;
             report.project.push(target.clone());
+        }
+    }
+    Ok(())
+}
+
+/// Validate the complete plan before removing its first path. Private names
+/// alone cannot establish that a path is disposable: a source lookup root can
+/// be an alias into it, and a custom manifest can name recovery metadata.
+fn preflight_project_cleanup(
+    project_root: &Path,
+    manifest: &ProjectManifest,
+    targets: &[&PathBuf],
+) -> Result<(), TexeError> {
+    let protected = [
+        ".texe/recovery",
+        ".texe/editor",
+        ".texe/project",
+        ".texe/runtime",
+        ".texe/descriptors",
+        ".texe/environment.json",
+        ".texe/published.json",
+        ".texe/environment-retention.json",
+    ];
+    let root = fs::canonicalize(project_root).map_err(|source| TexeError::Io {
+        path: project_root.into(),
+        source,
+    })?;
+    let mut resolved_targets = Vec::new();
+    for target in targets {
+        if protected
+            .iter()
+            .any(|private| target.starts_with(private) || Path::new(private).starts_with(target))
+        {
+            return Err(TexeError::Manifest(
+                "refusing to clean recovery or editor metadata; sources and the last PDF have been kept"
+                    .into(),
+            ));
+        }
+        // An environment's owner record is not a build intermediate. Preserve
+        // the container and each environment root even for custom manifests.
+        let environments = Path::new(".texe/environments");
+        if environments.starts_with(target)
+            || (target.starts_with(environments)
+                && (target.components().count() <= 3
+                    || target
+                        .components()
+                        .nth(3)
+                        .is_some_and(|part| part.as_os_str() == ".texe-environment.json")))
+        {
+            return Err(TexeError::Manifest(
+                "refusing to clean environment ownership metadata; sources and the last PDF have been kept"
+                    .into(),
+            ));
+        }
+        reject_symlinked_parent(project_root, target)?;
+        let path = root.join(target);
+        match fs::canonicalize(&path) {
+            Ok(path) => resolved_targets.push(path),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(TexeError::Io { path, source }),
+        }
+    }
+    for (source, is_entry) in std::iter::once((&manifest.project.entry, true)).chain(
+        manifest
+            .inputs
+            .roots
+            .iter()
+            .chain(manifest.bibliography.roots.iter())
+            .map(|source| (source, false)),
+    ) {
+        let path = root.join(source);
+        let resolved = match fs::canonicalize(&path) {
+            Ok(path) => path,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(TexeError::Io { path, source }),
+        };
+        // Searching the whole project is normal and private generated state is
+        // excluded from that source tree. A narrower explicit root can contain
+        // researcher files throughout the tree and must be preserved intact.
+        if !is_entry && resolved == root {
+            continue;
+        }
+        if resolved_targets.iter().any(|target| {
+            resolved.starts_with(target) || (!is_entry && target.starts_with(&resolved))
+        }) {
+            return Err(TexeError::Manifest(format!(
+                "refusing to clean a declared research source path {}; sources and the last PDF have been kept",
+                source.display()
+            )));
         }
     }
     Ok(())
@@ -391,7 +488,10 @@ mod tests {
     use crate::ProjectManifest;
     #[cfg(unix)]
     use crate::clean::owned_cache_entries;
-    use crate::clean::{CACHE_DIRECTORIES, CleanReport, clean_project, retained};
+    use crate::clean::{
+        CACHE_DIRECTORIES, CleanReport, StorageReport, append_shared_storage, clean_project,
+        measure_project, retained,
+    };
     use crate::toolchain::live_toolchain_artifacts;
 
     fn manifest() -> ProjectManifest {
@@ -414,6 +514,34 @@ engine = "pdflatex"
             caches: Vec::new(),
             freed_bytes: 0,
         }
+    }
+
+    #[test]
+    fn storage_accounts_for_native_runtimes_and_repair_archives_without_sweeping_them() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let native = directory.path().join("native");
+        let runtime = native.join("sample/bin/citet-shipout");
+        let archive = native.join(".archives/sample.tar.gz");
+        for path in [&runtime, &archive] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+        }
+        fs::write(&runtime, b"runtime").unwrap();
+        fs::write(&archive, b"compressed runtime").unwrap();
+        let mut report = StorageReport {
+            schema: "texe.storage-report/v1".into(),
+            project: Vec::new(),
+            shared: Vec::new(),
+            total_bytes: 0,
+        };
+        append_shared_storage(directory.path(), &mut report).expect("measure native state");
+        assert_eq!(report.shared.len(), 1);
+        assert_eq!(report.shared[0].path, native);
+        assert_eq!(report.shared[0].bytes, 25);
+        assert_eq!(report.total_bytes, 25);
+        assert!(report.shared[0].purpose.contains("repair archives"));
+        assert!(!CACHE_DIRECTORIES.contains(&"native"));
+        assert_eq!(fs::read(&runtime).unwrap(), b"runtime");
+        assert_eq!(fs::read(&archive).unwrap(), b"compressed runtime");
     }
 
     #[test]
@@ -466,6 +594,150 @@ engine = "pdflatex"
         let error = clean_project(root, &unsafe_manifest, &mut report()).expect_err("unsafe clean");
         assert!(error.to_string().contains("project.build_dir"));
         assert_eq!(fs::read(root.join("main.tex")).expect("source"), b"source");
+    }
+
+    #[test]
+    fn cleanup_preserves_recovery_editor_and_environment_ownership_metadata() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let root = directory.path();
+        for protected in [
+            ".texe/recovery",
+            ".texe/editor",
+            ".texe/project",
+            ".texe/runtime",
+            ".texe/descriptors",
+            ".texe/environment.json",
+            ".texe/published.json",
+            ".texe/environment-retention.json",
+            ".texe/environments",
+            ".texe/environments/owned",
+            ".texe/environments/owned/.texe-environment.json",
+        ] {
+            let mut custom = manifest();
+            custom.project.build_dir = protected.into();
+            custom
+                .validate()
+                .expect("custom manifest is lexically valid");
+            let path = root.join(protected);
+            fs::create_dir_all(&path).expect("protected directory");
+            fs::write(path.join("research-recovery.txt"), b"irreplaceable work")
+                .expect("recovery copy");
+            for measure in [false, true] {
+                let mut result = report();
+                let error = if measure {
+                    measure_project(root, &custom, &mut result)
+                } else {
+                    clean_project(root, &custom, &mut result)
+                }
+                .expect_err("protected metadata is rejected");
+                assert!(error.to_string().contains("metadata"));
+                assert!(result.project.is_empty());
+                assert_eq!(result.freed_bytes, 0);
+                assert_eq!(
+                    fs::read(path.join("research-recovery.txt")).unwrap(),
+                    b"irreplaceable work"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_preflights_all_targets_before_removing_a_declared_source_alias() {
+        use std::os::unix::fs::symlink;
+
+        for (source_kind, target) in [
+            ("entry", ".texe/build/research.tex"),
+            ("inputs", ".texe/texmf"),
+            ("bibliography", ".texe/state"),
+        ] {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            let root = directory.path();
+            for derived in [
+                ".texe/build/output/main.aux",
+                ".texe/texmf/research.tex",
+                ".texe/state/pqty.lock",
+                ".texe/build/research.tex",
+            ] {
+                let path = root.join(derived);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, b"research or derived state").unwrap();
+            }
+            fs::write(root.join("main.pdf"), b"last good PDF").unwrap();
+            fs::write(root.join("texe.lock"), b"pinned lock").unwrap();
+            symlink(root.join(target), root.join("research")).unwrap();
+            let mut custom = manifest();
+            match source_kind {
+                "entry" => custom.project.entry = "research".into(),
+                "inputs" => custom.inputs.roots = vec!["research".into()],
+                _ => custom.bibliography.roots = vec!["research".into()],
+            }
+            for measure in [false, true] {
+                let mut result = report();
+                let error = if measure {
+                    measure_project(root, &custom, &mut result)
+                } else {
+                    clean_project(root, &custom, &mut result)
+                }
+                .expect_err("source alias must not be cleaned");
+                assert!(error.to_string().contains("research source path"));
+                assert!(result.project.is_empty());
+                assert_eq!(result.freed_bytes, 0);
+                assert!(root.join(".texe/build/output/main.aux").is_file());
+                assert!(root.join(".texe/texmf/research.tex").is_file());
+                assert!(root.join(".texe/state/pqty.lock").is_file());
+                assert_eq!(fs::read(root.join("main.pdf")).unwrap(), b"last good PDF");
+                assert_eq!(fs::read(root.join("texe.lock")).unwrap(), b"pinned lock");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_preserves_a_narrow_source_alias_containing_derived_targets() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        fs::create_dir_all(root.join(".texe/build")).unwrap();
+        fs::write(root.join(".texe/build/research.tex"), b"research").unwrap();
+        symlink(root.join(".texe"), root.join("styles")).unwrap();
+        let mut custom = manifest();
+        custom.inputs.roots = vec!["styles".into()];
+        clean_project(root, &custom, &mut report()).expect_err("source tree contains build");
+        assert_eq!(
+            fs::read(root.join("styles/build/research.tex")).unwrap(),
+            b"research"
+        );
+    }
+
+    #[test]
+    fn cleanup_allows_whole_project_lookup_and_owned_environment_intermediates() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let mut custom = manifest();
+        custom.inputs.roots = vec![".".into()];
+        custom.project.build_dir = ".texe/environments/owned/build".into();
+        custom.packages.texmf = ".texe/environments/owned/texmf".into();
+        custom.packages.lock = ".texe/environments/owned/pqty.lock".into();
+        fs::create_dir_all(root.join(&custom.project.build_dir)).unwrap();
+        fs::write(
+            root.join(&custom.project.build_dir).join("main.aux"),
+            b"derived",
+        )
+        .unwrap();
+        let marker = root.join(".texe/environments/owned/.texe-environment.json");
+        fs::write(&marker, b"owned environment").unwrap();
+        fs::write(root.join("main.tex"), b"source").unwrap();
+        let mut measured = report();
+        measure_project(root, &custom, &mut measured).unwrap();
+        assert!(root.join(&custom.project.build_dir).is_dir());
+        let mut removed = report();
+        clean_project(root, &custom, &mut removed).unwrap();
+        assert_eq!(measured.freed_bytes, removed.freed_bytes);
+        assert_eq!(fs::read(marker).unwrap(), b"owned environment");
+        assert_eq!(fs::read(root.join("main.tex")).unwrap(), b"source");
+        assert!(!root.join(&custom.project.build_dir).exists());
     }
 
     #[cfg(unix)]

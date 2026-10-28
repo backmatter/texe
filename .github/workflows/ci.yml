@@ -108,7 +108,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run mocked extension-host tests
+      - name: Check browser viewer protocol
         run: node --test tests/*.test.js
 
   vscode-real:

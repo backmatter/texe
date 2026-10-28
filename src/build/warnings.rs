@@ -6,7 +6,7 @@ use crate::TexeError;
 use crate::build::BuildWarning;
 
 pub(super) fn collect_warnings(log_path: &Path) -> Vec<BuildWarning> {
-    let Ok(log) = fs::read_to_string(log_path) else {
+    let Ok(log) = super::generated::text_local(log_path, super::generated::MAX_METADATA) else {
         return Vec::new();
     };
     let mut warnings = BTreeSet::new();
@@ -46,11 +46,18 @@ pub(super) const fn warning_rank(kind: &str) -> u8 {
 }
 
 pub(super) fn remove_if_file(path: &Path) -> Result<(), TexeError> {
-    if path.is_file() {
-        fs::remove_file(path).map_err(|source| TexeError::Io {
-            path: path.to_path_buf(),
+    if fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() || metadata.file_type().is_symlink())
+    {
+        let absolute = std::path::absolute(path).map_err(|source| TexeError::Io {
+            path: path.into(),
             source,
         })?;
+        let anchor = absolute
+            .ancestors()
+            .last()
+            .ok_or_else(|| TexeError::Build("Invalid compiler output path".into()))?;
+        super::generated::remove(anchor, &absolute)?;
     }
     Ok(())
 }
@@ -62,5 +69,26 @@ pub(super) trait ErrorContext {
 impl ErrorContext for TexeError {
     fn context(self, message: &str) -> Self {
         TexeError::Build(format!("{message}: {self}"))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_linked_log_never_exposes_outside_warning_text() {
+        let fixture = tempfile::tempdir().unwrap();
+        let output = fixture.path().join("output");
+        fs::create_dir(&output).unwrap();
+        let outside = fixture.path().join("outside.txt");
+        fs::write(&outside, b"LaTeX Warning: outside private sentinel\n").unwrap();
+        let log = output.join("main.log");
+        std::os::unix::fs::symlink(&outside, &log).unwrap();
+        assert!(collect_warnings(&log).is_empty());
+        assert_eq!(
+            fs::read(&outside).unwrap(),
+            b"LaTeX Warning: outside private sentinel\n"
+        );
     }
 }

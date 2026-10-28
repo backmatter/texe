@@ -159,7 +159,7 @@ pub(crate) fn verify(selected: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn update(reference: &str, selected: Option<&Path>) -> Result<()> {
+pub(crate) fn update(reference: &str, selected: Option<&Path>, if_newer: bool) -> Result<()> {
     let checkout = match selected {
         Some(path) => path.canonicalize()?,
         None => checkout()?,
@@ -183,6 +183,28 @@ pub(crate) fn update(reference: &str, selected: Option<&Path>) -> Result<()> {
     if reference.starts_with('v') {
         require_equal("pqty tag", reference, &format!("v{version}"))?;
     }
+    if if_newer {
+        let current = read_lock()?;
+        match compare_stable_versions(&version, &current.pqty_version)? {
+            std::cmp::Ordering::Less => {
+                println!(
+                    "pqty {version} is older than the pinned {}; keeping the current suite",
+                    current.pqty_version
+                );
+                return Ok(());
+            }
+            std::cmp::Ordering::Equal => {
+                require_equal(
+                    "already pinned pqty revision",
+                    &current.pqty_revision,
+                    revision,
+                )?;
+                println!("pqty {version} is already pinned");
+                return Ok(());
+            }
+            std::cmp::Ordering::Greater => {}
+        }
+    }
     let capabilities = capabilities(&checkout)?;
     require_equal("pqty capabilities version", &version, &capabilities.version)?;
     let lock = SuiteLock {
@@ -203,6 +225,28 @@ pub(crate) fn update(reference: &str, selected: Option<&Path>) -> Result<()> {
     verify(Some(&checkout))?;
     println!("pinned pqty {version} at {revision}");
     Ok(())
+}
+
+fn compare_stable_versions(candidate: &str, current: &str) -> Result<std::cmp::Ordering> {
+    fn parse(value: &str) -> Result<[u64; 3]> {
+        let parts = value
+            .split('.')
+            .map(|part| {
+                if part.is_empty()
+                    || (part.len() > 1 && part.starts_with('0'))
+                    || !part.bytes().all(|b| b.is_ascii_digit())
+                {
+                    return Err(message(format!("expected a stable version, got {value}")));
+                }
+                part.parse::<u64>()
+                    .map_err(|error| message(error.to_string()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        parts
+            .try_into()
+            .map_err(|_| message(format!("expected a stable version, got {value}")))
+    }
+    Ok(parse(candidate)?.cmp(&parse(current)?))
 }
 
 fn capabilities(checkout: &Path) -> Result<Capabilities> {
@@ -264,6 +308,37 @@ fn require_equal(label: &str, expected: &str, actual: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{SUITE_SCHEMA, SuiteLock};
+
+    #[test]
+    fn automated_updates_order_stable_versions_without_downgrading() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            super::compare_stable_versions("0.1.10", "0.1.9").unwrap(),
+            Ordering::Greater
+        );
+        assert_eq!(
+            super::compare_stable_versions("0.2.0", "0.1.9").unwrap(),
+            Ordering::Greater
+        );
+        assert_eq!(
+            super::compare_stable_versions("0.1.9", "0.1.9").unwrap(),
+            Ordering::Equal
+        );
+        assert_eq!(
+            super::compare_stable_versions("0.1.8", "0.1.9").unwrap(),
+            Ordering::Less
+        );
+        for invalid in [
+            "v0.1.0",
+            "0.1",
+            "0.1.0-beta.1",
+            "00.1.0",
+            "-1.0.0",
+            "0.1.0.0",
+        ] {
+            assert!(super::compare_stable_versions(invalid, "0.1.0").is_err());
+        }
+    }
 
     #[test]
     fn checkout_revision_must_be_a_full_commit_id() {

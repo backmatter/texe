@@ -199,7 +199,10 @@ fn adoption_manifest(
                 accept_defaults: false,
             },
         )?;
-        let provider = if matches!(settings.engine.as_str(), "pdflatex" | "lualatex") {
+        let provider = if matches!(
+            settings.engine.as_str(),
+            "pdflatex" | "lualatex" | "xelatex"
+        ) {
             "managed"
         } else {
             "system"
@@ -228,6 +231,11 @@ fn preflight(
     manifest: &ProjectManifest,
     no_editor: bool,
 ) -> Result<Preflight, TexeError> {
+    let physical_root = root.canonicalize().map_err(|source| TexeError::Io {
+        path: root.into(),
+        source,
+    })?;
+    let root = physical_root.as_path();
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
     let source_path = root.join(&manifest.project.entry);
@@ -338,4 +346,37 @@ pub(super) fn guided(presentation: ux::Presentation) -> Result<(), TexeError> {
         },
         presentation,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn adopts_xelatex_with_a_managed_runtime_without_requiring_a_system_installation() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = "% !TeX program = xelatex\n\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}Research\\end{document}\n";
+        std::fs::write(directory.path().join("main.tex"), source).unwrap();
+        let manifest = super::adoption_manifest(
+            directory.path(),
+            false,
+            None,
+            None,
+            true,
+            true,
+            crate::ux::Presentation::default(),
+        )
+        .unwrap();
+        assert_eq!(manifest.toolchain.engine, "xelatex");
+        assert_eq!(manifest.toolchain.provider, "managed");
+        assert!(
+            super::preflight(directory.path(), &manifest, true)
+                .unwrap()
+                .0
+                .is_empty()
+        );
+        assert!(!directory.path().join("texe.toml").exists());
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("main.tex")).unwrap(),
+            source
+        );
+    }
 }

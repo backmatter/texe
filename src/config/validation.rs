@@ -180,7 +180,9 @@ fn validate_bibliography_roots(roots: &[PathBuf]) -> Result<(), TexeError> {
 fn validate_input_roots(name: &str, roots: &[PathBuf]) -> Result<(), TexeError> {
     let mut paths = BTreeSet::new();
     for (index, root) in roots.iter().enumerate() {
-        validate_portable_project_path(&format!("{name}[{index}]"), root)?;
+        if root != Path::new(".") {
+            validate_portable_project_path(&format!("{name}[{index}]"), root)?;
+        }
         if !paths.insert(root.clone()) {
             return Err(TexeError::Manifest(format!(
                 "{name} contains duplicate path {}",

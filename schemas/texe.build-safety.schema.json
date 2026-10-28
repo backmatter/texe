@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.build-safety.schema.json",
+  "title": "texe protected build safety contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "sourcePublicationGuard", "aggregateOutputBudget"],
+  "properties": {
+    "schema": {"const": "texe.build-safety/v1"},
+    "sourcePublicationGuard": {"const": true},
+    "aggregateOutputBudget": {"const": true}
+  }
+}

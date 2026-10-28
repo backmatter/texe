@@ -25,6 +25,9 @@ cargo xtask pqty check ../pqty
 
 Set `PQTY_REPO` if pqty lives elsewhere.
 
+See [native suite releases](docs/releasing.md) for the automated pqty update
+handoff, protected dependency checks and release recovery.
+
 ## Run the checks
 
 ```sh
@@ -83,14 +86,14 @@ TEXE_TEST_MANAGED=1 TEXE_TEST_SUITE=/absolute/path/to/suite npm test --prefix te
 Omit `TEXE_TEST_MANAGED=1` to use system `pdflatex` and `kpsewhich`. The tests
 run against a temporary VS Code profile, extension directory, and paper,
 covering PDF refresh, diagnostics, failure recovery, SyncTeX, build commands,
-and manifest changes. Linux needs a display server or Xvfb. Screenshots and
-`results.json` land in the temporary directory the run prints.
+and native language formatting. Linux needs a display server or Xvfb. `results.json` lands in the temporary directory the run prints.
 
-The harness downloads the VS Code, LaTeX Workshop, and tex-ls versions pinned in
-[`tests/vscode/run.js`](tests/vscode/run.js). To use local copies, set
-`VSCODE_EXECUTABLE` to an Electron executable and `LATEX_WORKSHOP_PATH` to an
-installed extension directory. Set `TEX_LS_EXTENSION_PATH` to use a local
-tex-ls extension directory.
+The harness downloads the VS Code version pinned in
+[`tests/vscode/run.js`](tests/vscode/run.js), installs the latest published Citet
+and tex-ls extensions from the Marketplace into its isolated extension directory,
+and records their actual versions in its results directory. No extension VSIX or
+version is pinned in this repository. Use `VSCODE_EXECUTABLE` for a local Electron
+executable and `TEX_LS_BINARY` for a local language server when debugging.
 
 ## Pull requests
 

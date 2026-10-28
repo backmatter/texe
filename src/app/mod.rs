@@ -9,7 +9,6 @@ use crate::{TexeError, ux};
 mod adoption;
 mod build_command;
 mod doctor;
-mod editor_bridge;
 mod maintenance;
 mod output;
 mod project;
@@ -78,7 +77,59 @@ fn run(cli: Cli) -> Result<(), TexeError> {
 
 fn run_command(command: Command, presentation: ux::Presentation) -> Result<(), TexeError> {
     match command {
-        Command::EditorBuild { project } => editor_bridge::build(project.as_deref()),
+        Command::SandboxWatch {
+            parent,
+            group,
+            policy,
+        } => crate::compiler_sandbox::watch_parent(parent, group, &policy),
+        Command::SandboxRun {
+            capabilities,
+            policy,
+            executable,
+            arguments,
+        } => {
+            if capabilities {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "schema":"texe.build-safety/v1",
+                        "sourcePublicationGuard":true,
+                        "aggregateOutputBudget":true,
+                    })
+                );
+                Ok(())
+            } else {
+                crate::compiler_sandbox::launch(
+                    &policy.ok_or_else(|| {
+                        TexeError::Usage("a compiler isolation policy is required".into())
+                    })?,
+                    &executable.ok_or_else(|| {
+                        TexeError::Usage("an installed compiler is required".into())
+                    })?,
+                    &arguments,
+                )
+            }
+        }
+        Command::Environment {
+            project,
+            descriptor,
+            bundle,
+            runtime,
+            offline,
+        } => {
+            let report = crate::portable::prepare(
+                &project,
+                &descriptor,
+                &bundle,
+                runtime.as_deref(),
+                offline,
+            )?;
+            if presentation.json {
+                print_json(&report)
+            } else {
+                Ok(())
+            }
+        }
         command @ Command::Adopt { .. } => adoption::run(command, presentation),
         command @ Command::Init { .. } => run_init_command(command, presentation),
         command @ Command::Doctor { .. } => run_doctor_command(command, presentation),
@@ -130,6 +181,7 @@ fn run_editor_command(command: Command, presentation: ux::Presentation) -> Resul
         inspect,
         preview,
         configure_only,
+        owned_only,
         replace_conflicts,
     } = command
     else {
@@ -158,7 +210,11 @@ fn run_editor_command(command: Command, presentation: ux::Presentation) -> Resul
     let report = if remove {
         integrations::remove_vscode(&context.root)?
     } else if configure_only {
-        integrations::configure_vscode(&context.root, replace_conflicts)?
+        if owned_only {
+            integrations::configure_vscode_owned(&context.root)?
+        } else {
+            integrations::configure_vscode(&context.root, replace_conflicts)?
+        }
     } else {
         if replace_conflicts {
             integrations::configure_vscode(&context.root, true)?;
@@ -225,6 +281,7 @@ fn run_clean_command(command: Command, presentation: ux::Presentation) -> Result
 fn run_build_command(command: Command, presentation: ux::Presentation) -> Result<(), TexeError> {
     let Command::Build {
         project,
+        protected,
         frozen,
         force,
         verify_toolchain,
@@ -237,6 +294,7 @@ fn run_build_command(command: Command, presentation: ux::Presentation) -> Result
     run_build(
         project.as_deref(),
         BuildOptions {
+            protected,
             frozen,
             force,
             offline,
@@ -264,6 +322,7 @@ fn run_watch_command(command: Command, presentation: ux::Presentation) -> Result
     run_watch(
         project.as_deref(),
         BuildOptions {
+            protected: false,
             frozen,
             force: false,
             offline,
@@ -333,10 +392,17 @@ mod tests {
 
     #[test]
     fn clap_parses_build_cache_and_verification_flags() {
-        let cli =
-            Cli::try_parse_from(["texe", "build", "--frozen", "--force", "--verify-toolchain"])
-                .expect("build arguments should parse");
+        let cli = Cli::try_parse_from([
+            "texe",
+            "build",
+            "--protected",
+            "--frozen",
+            "--force",
+            "--verify-toolchain",
+        ])
+        .expect("build arguments should parse");
         let Some(Command::Build {
+            protected,
             frozen,
             force,
             verify_toolchain,
@@ -346,6 +412,7 @@ mod tests {
             panic!("expected build command");
         };
         assert!(frozen);
+        assert!(protected);
         assert!(force);
         assert!(verify_toolchain);
 

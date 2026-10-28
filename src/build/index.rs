@@ -15,7 +15,10 @@ use sha2::{Digest as _, Sha256};
 
 use crate::TexeError;
 use crate::build::auxiliary::{self, CachedOutput, OutputCache};
-use crate::build::process::{managed_path, raw_engine_output, raw_output, search_path_from};
+use crate::build::process::{
+    is_portable_build, managed_path, portable_output, raw_engine_output, raw_output,
+    search_path_from,
+};
 use crate::config::ProjectManifest;
 use crate::progress::{PhaseKind, Progress};
 use crate::toolchain::{ResolvedToolchain, resolve_executable};
@@ -121,10 +124,7 @@ fn index_controls(output_dir: &Path) -> Result<Vec<IndexControl>, TexeError> {
     let mut glossary_inputs = BTreeSet::new();
 
     for path in auxiliary {
-        let bytes = fs::read(&path).map_err(|source| TexeError::Io {
-            path: path.clone(),
-            source,
-        })?;
+        let bytes = super::generated::read_local(&path, super::generated::MAX_METADATA)?;
         for line in bytes.split(|byte| *byte == b'\n') {
             let Some(fields) = glossary_fields(line) else {
                 continue;
@@ -272,10 +272,7 @@ fn control_digest(control: &IndexControl) -> Result<String, TexeError> {
     {
         hasher.update(path.as_os_str().as_encoded_bytes());
         hasher.update(b"\0");
-        let bytes = fs::read(path).map_err(|source| TexeError::Io {
-            path: path.clone(),
-            source,
-        })?;
+        let bytes = super::generated::read_local(path, super::generated::MAX_METADATA)?;
         hasher.update(bytes);
         hasher.update(b"\0");
     }
@@ -342,7 +339,22 @@ fn run_makeindex(
         local_name(&control.input)?,
     ]);
     let environment = index_environment(project_root, texmf, output_dir, toolchain, directory);
-    let output = if toolchain.managed.is_some() {
+    let output = if is_portable_build(
+        project_root,
+        &project_root.join(&manifest.project.build_dir),
+    ) {
+        portable_output(
+            project_root,
+            toolchain,
+            &executable,
+            &arguments,
+            directory,
+            &environment,
+            &[project_root.join(&manifest.project.build_dir)],
+            &super::process::source_read_roots(project_root, manifest)?,
+            &[],
+        )?
+    } else if toolchain.managed.is_some() {
         raw_engine_output(&executable, &arguments, directory, &environment)?
     } else {
         raw_output(&executable, &arguments, directory, &environment)?
@@ -350,7 +362,8 @@ fn run_makeindex(
     if output.status.success() {
         return Ok(());
     }
-    let processor_log = fs::read_to_string(&control.log).unwrap_or_default();
+    let processor_log = super::generated::text_local(&control.log, super::generated::MAX_METADATA)
+        .unwrap_or_default();
     let detail = if processor_log.trim().is_empty() {
         format!(
             "{}\n{}",

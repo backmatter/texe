@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 
 use crate::TexeError;
@@ -11,7 +10,8 @@ pub(super) fn engine_failure(
     toolchain: &ResolvedToolchain,
     run: &EngineRun,
 ) -> TexeError {
-    let log = fs::read_to_string(&run.log_path).unwrap_or_default();
+    let log = super::generated::text_local(&run.log_path, super::generated::MAX_METADATA)
+        .unwrap_or_default();
     let process_stderr = String::from_utf8_lossy(&run.stderr);
     let process_stdout = String::from_utf8_lossy(&run.stdout);
     let _ = toolchain;

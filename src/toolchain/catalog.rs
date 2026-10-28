@@ -487,7 +487,7 @@ mod tests {
             .snapshots
             .get("texlive-2026-07-26")
             .expect("dated snapshot");
-        assert_eq!(snapshot.engines.len(), 2);
+        assert_eq!(snapshot.engines.len(), 3);
         assert_eq!(snapshot.platforms.len(), 3);
     }
 
@@ -503,6 +503,6 @@ mod tests {
     #[test]
     fn unknown_snapshots_and_engines_are_rejected() {
         assert!(select_platform("texlive-2099-01-01").is_err());
-        assert!(select("stable", "xelatex").is_err());
+        assert!(select("stable", "latex").is_err());
     }
 }

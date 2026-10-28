@@ -6,7 +6,6 @@ use crate::config::ProjectManifest;
 use crate::integrations::IntegrationReport;
 use crate::ux;
 
-mod bridge;
 mod language_server;
 mod settings;
 
@@ -55,7 +54,7 @@ pub(crate) fn setup_vscode(
             .to_string(),
     );
     report.messages.push(
-        "VS Code may open this new folder in Restricted Mode; choose Trust to enable build-on-save and LaTeX Workshop"
+        "VS Code may open this new folder in Restricted Mode; choose Trust to enable Citet language tools and builds"
             .to_string(),
     );
 
@@ -88,9 +87,7 @@ pub(crate) fn setup_vscode(
         }
     };
     if code_available {
-        ensure_tex_ls(&mut report);
-        ensure_latex_workshop(&mut report);
-        ensure_layout_companion(&mut report);
+        ensure_citet(&mut report);
     }
     if open && code_available {
         report.messages.extend(open_vscode(root)?.messages);
@@ -98,147 +95,28 @@ pub(crate) fn setup_vscode(
     Ok(report)
 }
 
-fn ensure_tex_ls(report: &mut IntegrationReport) {
-    if let Some(version) = installed_extension_version("backmatter.tex-ls") {
-        report.messages.push(format!(
-            "kept tex-ls {version}; texe requires tex-ls 0.1.2 or newer"
-        ));
-        return;
-    }
+fn ensure_citet(report: &mut IntegrationReport) {
     match code_command()
-        .args(["--install-extension", "backmatter.tex-ls"])
+         .args([
+            "--install-extension", "backmatter.citet",
+            "--install-extension", "backmatter.tex-ls", "--force",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
     {
-        Ok(status) if status.success() => report
-            .messages
-            .push("installed tex-ls for completion, navigation, and formatting".into()),
-        _ => report.messages.push(
-            "could not install tex-ls; install backmatter.tex-ls 0.1.2 or newer from Extensions"
-                .into(),
-        ),
-    }
-}
-
-fn ensure_latex_workshop(report: &mut IntegrationReport) {
-    if installed_extension_version("James-Yu.latex-workshop").is_some() {
-        report
-            .messages
-            .push("kept the installed LaTeX Workshop extension unchanged".to_string());
-        return;
-    }
-    match code_command()
-        .args(["--install-extension", "James-Yu.latex-workshop"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        Ok(status) if status.success() => report
-            .messages
-            .push("installed the LaTeX Workshop extension".to_string()),
-        Ok(status) => report.messages.push(format!(
-            "VS Code extension installation returned {status}; install LaTeX Workshop from Extensions"
-        )),
-        Err(source) => report.messages.push(format!(
-            "could not install LaTeX Workshop ({source}); install it from Extensions"
-        )),
-    }
-}
-
-fn ensure_layout_companion(report: &mut IntegrationReport) {
-    let layout_version = installed_extension_version("backmatter.texe-paper-layout");
-    let same_version = layout_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
-    if same_version
-        && installed_extension_path("backmatter.texe-paper-layout")
-            .is_some_and(|path| bridge::matches_installed(&path).unwrap_or(false))
-    {
-        report
-            .messages
-            .push("texe's VS Code companion is available in VS Code".to_string());
-        return;
-    }
-    let action = if same_version {
-        "refreshed"
-    } else if layout_version.is_some() {
-        "updated"
-    } else {
-        "installed"
-    };
-    let extension = match bridge::path() {
-        Ok(extension) => extension,
-        Err(error) => {
-            report.messages.push(format!(
-                "could not prepare texe's VS Code companion ({error}); run `texe build` in a terminal until the companion is installed"
-            ));
-            return;
+        Ok(status) if status.success() => {
+            report.messages.push("installed the latest published Citet and tex-ls extensions from the VS Code Marketplace".into());
         }
-    };
-    match code_command()
-        .arg("--install-extension")
-        .arg(&extension)
-        // This is texe's own versioned companion, not the third-party LaTeX
-        // Workshop extension.
-        .arg("--force")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        Ok(status) if status.success() => report.messages.push(format!(
-            "{action} texe's VS Code companion for VS Code"
-        )),
-        Ok(status) => report.messages.push(format!(
-            "could not install texe's VS Code companion ({status}); run `texe build` in a terminal until the companion is installed"
-        )),
-        Err(source) => report.messages.push(format!(
-            "could not install texe's VS Code companion ({source}); run `texe build` in a terminal until the companion is installed"
+        result => report.messages.push(format!(
+            "could not install the latest Citet extension ({result:?}); install backmatter.citet from Extensions or use `texe build` in a terminal"
         )),
     }
-}
-
-fn installed_extension_path(identifier: &str) -> Option<PathBuf> {
-    let output = code_command()
-        .args(["--locate-extension", identifier])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())?;
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(PathBuf::from)
-        .filter(|path| path.is_dir())
-}
-
-fn installed_extension_version(identifier: &str) -> Option<String> {
-    code_command()
-        .args(["--list-extensions", "--show-versions"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| extension_version_from_list(&output.stdout, identifier))
-}
-
-fn extension_version_from_list(output: &[u8], identifier: &str) -> Option<String> {
-    String::from_utf8_lossy(output)
-        .lines()
-        .find_map(|installed| {
-            let installed = installed.trim();
-            let (name, version) = installed.rsplit_once('@').unwrap_or((installed, ""));
-            name.eq_ignore_ascii_case(identifier)
-                .then(|| version.to_string())
-        })
 }
 
 pub(crate) fn open_vscode(root: &Path) -> Result<IntegrationReport, TexeError> {
-    let manifest = ProjectManifest::load(&root.join("texe.toml"))?;
+    let manifest = settings::project_manifest(root)?;
     let targets = open_targets(root, &manifest);
     let source = &targets[0];
     let pdf = targets.get(1);
@@ -291,9 +169,7 @@ fn open_targets(root: &Path, manifest: &ProjectManifest) -> Vec<PathBuf> {
     let pdf = root.join(stem).with_extension("pdf");
     let mut targets = vec![source];
     if pdf.is_file() {
-        // LaTeX Workshop registers its internal viewer as VS Code's default
-        // custom editor for PDF files. Listing the PDF last makes it the
-        // visible tab while leaving the source ready to edit.
+        // Citet opens the project PDF beside the source after activation.
         targets.push(pdf);
     }
     targets
@@ -306,6 +182,13 @@ pub(crate) fn configure_vscode(root: &Path, replace: bool) -> Result<Integration
     settings::configure(root, replace)?;
     Ok(IntegrationReport {
         messages: vec!["updated texe's VS Code settings".into()],
+    })
+}
+
+pub(crate) fn configure_vscode_owned(root: &Path) -> Result<IntegrationReport, TexeError> {
+    settings::configure_owned(root)?;
+    Ok(IntegrationReport {
+        messages: vec!["updated texe-owned VS Code settings; preserved user overrides".into()],
     })
 }
 
@@ -325,7 +208,7 @@ mod tests {
     use std::fs;
 
     use crate::config::ProjectManifest;
-    use crate::integrations::vscode::{extension_version_from_list, open_targets};
+    use crate::integrations::vscode::open_targets;
 
     #[test]
     fn launches_vscode_from_a_directory_with_spaces() {
@@ -396,14 +279,5 @@ engine = "pdflatex"
         let targets = open_targets(directory.path(), &manifest());
 
         assert_eq!(targets, [directory.path().join("main.tex")]);
-    }
-
-    #[test]
-    fn existing_extensions_are_detected_without_changing_their_version() {
-        let output = b"publisher.other@1.2.3\njames-yu.latex-workshop@10.9.0\n";
-        assert_eq!(
-            extension_version_from_list(output, "James-Yu.latex-workshop").as_deref(),
-            Some("10.9.0")
-        );
     }
 }

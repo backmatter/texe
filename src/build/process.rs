@@ -1,12 +1,102 @@
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead as _, Read as _};
 use std::path::Path;
-#[cfg(windows)]
 use std::path::PathBuf;
 use std::process::{Output, Stdio};
 use std::thread;
 
 use crate::TexeError;
+
+thread_local! {
+    static PROTECTED_INVOCATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The build pipeline is synchronous on its calling thread. Scope an explicit
+/// protected invocation across its engine, format and auxiliary helper calls.
+pub(crate) struct ProtectionScope(bool);
+
+impl ProtectionScope {
+    pub(crate) fn enter(protected: bool) -> Self {
+        Self(PROTECTED_INVOCATION.with(|state| state.replace(state.get() || protected)))
+    }
+}
+
+impl Drop for ProtectionScope {
+    fn drop(&mut self) {
+        PROTECTED_INVOCATION.with(|state| state.set(self.0));
+    }
+}
+
+pub(crate) fn protection_requested() -> bool {
+    PROTECTED_INVOCATION.with(std::cell::Cell::get)
+}
+
+/// Portable projects execute source interpreters with a read-only source tree.
+/// Standalone manifests retain their explicit tool and shell-escape choices.
+pub(super) fn is_portable_build(root: &Path, build_root: &Path) -> bool {
+    if protection_requested() {
+        return build_root.starts_with(root.join(".texe")) && build_root != root.join(".texe");
+    }
+    let Ok(relative) = build_root.strip_prefix(root.join(".texe/environments")) else {
+        return false;
+    };
+    let parts = relative.components().collect::<Vec<_>>();
+    parts.len() == 2
+        && parts[1].as_os_str() == "build"
+        && parts[0].as_os_str().to_str().is_some_and(|id| {
+            id.len() == 64
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        })
+}
+
+pub(super) fn source_read_roots(
+    root: &Path,
+    manifest: &crate::config::ProjectManifest,
+) -> Result<Vec<PathBuf>, TexeError> {
+    let mut sources = Vec::new();
+    for source in std::iter::once(&manifest.project.entry)
+        .chain(manifest.inputs.roots.iter())
+        .chain(manifest.bibliography.roots.iter())
+    {
+        let source = root.join(source);
+        let resolved = source.canonicalize().map_err(|error| TexeError::Io {
+            path: source,
+            source: error,
+        })?;
+        if !resolved.starts_with(root) {
+            sources.push(resolved);
+        }
+    }
+    Ok(sources)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn portable_output(
+    root: &Path,
+    toolchain: &crate::toolchain::ResolvedToolchain,
+    tool: &Path,
+    arguments: &[OsString],
+    cwd: &Path,
+    environment: &[(OsString, OsString)],
+    writes: &[PathBuf],
+    extra_reads: &[PathBuf],
+    extra_executes: &[PathBuf],
+) -> Result<Output, TexeError> {
+    let mut reads = extra_reads.to_vec();
+    let mut executes = extra_executes.to_vec();
+    if let Some(runtime) = &toolchain.managed {
+        reads.push(runtime.root.clone());
+        executes.push(runtime.binary_dir.clone());
+    }
+    if let Some(parent) = tool.parent() {
+        reads.push(parent.to_owned());
+        executes.push(parent.to_owned());
+    }
+    let policy = crate::compiler_sandbox::Policy::new(root, writes, &reads, &executes)?;
+    crate::compiler_sandbox::run(tool, arguments, cwd, environment, &policy)
+}
 
 pub(crate) fn checked_output(
     tool: &Path,

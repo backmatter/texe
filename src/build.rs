@@ -1,5 +1,6 @@
 mod bibliography;
 mod format;
+pub(crate) mod generated;
 mod index;
 pub(crate) mod process;
 mod synctex;
@@ -56,8 +57,11 @@ impl AuxiliaryPassBudget {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)] // These are independent public CLI flags.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BuildOptions {
+    /// Keep researcher sources read-only throughout compiler execution.
+    pub protected: bool,
     /// Require the existing package lock and forbid convergence.
     pub frozen: bool,
     /// Rebuild even when nothing a rebuild would read has changed.
@@ -128,6 +132,92 @@ struct EngineRun {
     fls_path: PathBuf,
 }
 
+/// Resolve only derived paths in memory, then reject source aliases before the
+/// protected caller creates a project lock, package tree or output directory.
+pub(crate) fn protected_manifest(
+    root: &Path,
+    manifest: &ProjectManifest,
+) -> Result<ProjectManifest, TexeError> {
+    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        return Err(TexeError::Build(
+            "Protected local builds currently require Linux x86-64 with Landlock V3. Sources and the last PDF have been kept.".into(),
+        ));
+    }
+    let mut effective = manifest.clone();
+    if !effective.project.build_dir.starts_with(".texe") {
+        effective.project.build_dir = ".texe/protected-build".into();
+    }
+    if !effective.packages.lock.starts_with(".texe") {
+        effective.packages.lock = ".texe/protected-state/pqty.lock".into();
+    }
+    if !effective.packages.texmf.starts_with(".texe") {
+        effective.packages.texmf = ".texe/protected-texmf".into();
+    }
+    effective.validate()?;
+    let portable = crate::portable::active(root)?.is_some();
+    let reserved = [
+        ".texe/recovery",
+        ".texe/editor",
+        ".texe/project",
+        ".texe/runtime",
+        ".texe/descriptors",
+        ".texe/environment.json",
+        ".texe/published.json",
+        ".texe/environment-retention.json",
+    ];
+    for path in [
+        &effective.project.build_dir,
+        &effective.packages.texmf,
+        &effective.packages.lock,
+    ]
+    .into_iter()
+    .chain(effective.packages.store.iter())
+    {
+        if reserved
+            .iter()
+            .any(|private| path.starts_with(private) || Path::new(private).starts_with(path))
+            || (!portable && path.starts_with(".texe/environments"))
+        {
+            return Err(TexeError::Build(
+                "Build paths cannot overlap recovery or editor metadata. Sources and the last PDF have been kept.".into(),
+            ));
+        }
+    }
+    let derived = [
+        root.join(&effective.project.build_dir),
+        root.join(&effective.packages.texmf),
+        root.join(&effective.packages.lock),
+        root.join(".texe/project"),
+    ];
+    for (position, path) in derived.iter().enumerate() {
+        if position == 2 {
+            generated::optional(root, root, path, generated::MAX_METADATA)?;
+        } else {
+            generated::validate_parent(root, &path.join(".protected-path-check"))?;
+        }
+    }
+    for source in std::iter::once(&effective.project.entry)
+        .chain(effective.inputs.roots.iter())
+        .chain(effective.bibliography.roots.iter())
+    {
+        let lexical = root.join(source);
+        let resolved = lexical.canonicalize().map_err(|source| TexeError::Io {
+            path: lexical.clone(),
+            source,
+        })?;
+        if derived
+            .iter()
+            .any(|private| lexical.starts_with(private) || resolved.starts_with(private))
+        {
+            return Err(TexeError::Build(
+                "Research source paths cannot use private build state. Sources and the last PDF have been kept.".into(),
+            ));
+        }
+    }
+    Ok(effective)
+}
+
+#[allow(clippy::too_many_lines)]
 pub fn build_project(
     project_root: &Path,
     manifest: &ProjectManifest,
@@ -136,6 +226,38 @@ pub fn build_project(
     options: BuildOptions,
     progress: Progress,
 ) -> Result<BuildReport, TexeError> {
+    let _protection = process::ProtectionScope::enter(options.protected);
+    let effective;
+    let manifest = if options.protected {
+        effective = protected_manifest(project_root, manifest)?;
+        &effective
+    } else {
+        manifest
+    };
+    let portable = crate::portable::active(project_root)?;
+    if let Some(descriptor) = &portable {
+        if crate::portable::manifest_for_project(project_root, descriptor)? != *manifest {
+            return Err(TexeError::Build(
+                "The build environment changed; retry this build".into(),
+            ));
+        }
+        if matches!(descriptor["engine"].as_str(), Some("shipout" | "tectonic")) {
+            return crate::portable::native::build(
+                project_root,
+                manifest,
+                toolchain,
+                tools,
+                descriptor,
+                options,
+                &progress,
+                true,
+            );
+        }
+    }
+    let options = BuildOptions {
+        frozen: options.frozen || portable.is_some(),
+        ..options
+    };
     let started = Instant::now();
     let context = BuildContext::new(project_root, manifest, toolchain, tools, progress)?;
     // Held for the whole build, including the fast path: the check reads the
@@ -145,14 +267,30 @@ pub fn build_project(
     let unmanaged_commands = manifest.uses_unmanaged_commands();
     let cacheable = manifest.toolchain.provider == "managed"
         && !manifest.toolchain.shell_escape
-        && !unmanaged_commands;
+        && !unmanaged_commands
+        && (!options.protected || process::source_read_roots(project_root, manifest)?.is_empty());
     if cacheable
         && !options.force
-        && let Some(report) = context.current_build()?
+        && let Some(mut report) = context.current_build()
     {
+        if let Some(environment) = &portable {
+            report.environment_fingerprint = environment["id"].as_str().unwrap().into();
+        }
         return Ok(report);
     }
     context.progress.announce_rebuild();
+    // A save during compilation must not associate its new bytes with a PDF
+    // the engine already rendered from the earlier source.
+    let protected_publication = portable.is_some() || options.protected;
+    let rendered_sources = if protected_publication {
+        Some(capture_render_sources(project_root, manifest)?)
+    } else if cacheable {
+        state::source_fingerprint(project_root, manifest)
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let mut state = context.prepare(options.frozen)?;
     if !options.frozen && context.discovery_required(&state) {
         context.discover_packages(&mut state)?;
@@ -165,8 +303,40 @@ pub fn build_project(
     );
     let project_lock =
         project_lock_bytes(&context.lock, &toolchain.identity, context.timestamp.locked)?;
-    let published = publish_artifact(project_root, &internal_artifact, &project_lock)?;
-    if let Err(error) = context.record_build(&published, &state.environment.fingerprint) {
+    let publish = || {
+        if protected_publication {
+            artifact::publish_artifact_at(
+                project_root,
+                &internal_artifact,
+                &project_lock,
+                &context.build_root.join("texe.lock"),
+            )
+        } else {
+            publish_artifact(project_root, &internal_artifact, &project_lock)
+        }
+    };
+    let published = if protected_publication {
+        match publish_if_sources_unchanged(
+            project_root,
+            manifest,
+            rendered_sources.as_deref().unwrap(),
+            publish,
+        ) {
+            Ok(published) => published,
+            Err(error) => {
+                let _ =
+                    generated::remove(project_root, &context.build_root.join(state::STATE_NAME));
+                return Err(error);
+            }
+        }
+    } else {
+        publish()?
+    };
+    if let Err(error) = context.record_build(
+        &published,
+        &state.environment.fingerprint,
+        rendered_sources.as_deref(),
+    ) {
         eprintln!("texe: warning: could not save build cache: {error}");
     }
     let auxiliary_cache = auxiliary::AuxiliaryCache::from_entries(
@@ -183,7 +353,11 @@ pub fn build_project(
         artifact: published.artifact,
         engine_passes: state.engine_passes,
         convergence_rounds: state.convergence_rounds,
-        environment_fingerprint: state.environment.fingerprint,
+        environment_fingerprint: portable
+            .as_ref()
+            .map_or(state.environment.fingerprint, |v| {
+                v["id"].as_str().unwrap().into()
+            }),
         bibliography_runs: state.bibliography.runs(),
         index_runs: state.index.runs(),
         cached: false,
@@ -248,6 +422,16 @@ impl<'a> BuildContext<'a> {
         let texmf = project_root.join(&manifest.packages.texmf);
         let discovery_dir = build_root.join("discovery");
         let output_dir = build_root.join("output");
+        if process::is_portable_build(project_root, &build_root) {
+            for directory in [&discovery_dir, &output_dir, &texmf] {
+                crate::portable::private_directory(
+                    project_root,
+                    directory.strip_prefix(project_root).map_err(|_| {
+                        TexeError::Build("Private build state is outside the project".into())
+                    })?,
+                )?;
+            }
+        }
         for directory in [&discovery_dir, &output_dir] {
             fs::create_dir_all(directory).map_err(|source| TexeError::Io {
                 path: directory.clone(),
@@ -278,27 +462,25 @@ impl<'a> BuildContext<'a> {
     /// since it finished. `texe build` sits in an editing loop, where a build
     /// with no edits behind it should not repeat a package scan, a
     /// materialization, and two engine passes to arrive at the same bytes.
-    fn current_build(&self) -> Result<Option<BuildReport>, TexeError> {
-        let Some(recorded) = state::read(&self.state_path) else {
-            return Ok(None);
-        };
-        let Some(fingerprint) = state::build_fingerprint(
+    fn current_build(&self) -> Option<BuildReport> {
+        let recorded = state::read(&self.state_path)?;
+        let fingerprint = state::build_fingerprint(
             self.project_root,
             self.manifest,
             &self.toolchain.identity,
             self.tools.fingerprint(),
             self.timestamp.effective,
-        )?
-        else {
-            return Ok(None);
-        };
+        )
+        .ok()
+        .flatten()?;
         if recorded.fingerprint != fingerprint {
-            return Ok(None);
+            return None;
         }
-        let Some(artifact) = state::verify_outputs(self.project_root, &recorded.outputs) else {
-            return Ok(None);
-        };
-        Ok(Some(BuildReport {
+        let artifact = state::verify_outputs(self.project_root, &recorded.outputs)?;
+        if artifact.file_stem() != self.manifest.project.entry.file_stem() {
+            return None;
+        }
+        Some(BuildReport {
             schema: "texe.build-report/v1".to_string(),
             engine: self.toolchain.engine.clone(),
             artifact,
@@ -311,13 +493,28 @@ impl<'a> BuildContext<'a> {
             duration_millis: 0,
             warning_count: 0,
             warnings: Vec::new(),
-        }))
+        })
     }
 
     /// Record what this build read and produced, so the next one can decide in
     /// a few file reads whether it has anything to do. Written after the
     /// composite lock, which the fingerprint covers.
     fn record_build(
+        &self,
+        published: &PublishedBuild,
+        environment_fingerprint: &str,
+        rendered_sources: Option<&str>,
+    ) -> Result<(), TexeError> {
+        record_if_sources_unchanged(
+            self.project_root,
+            self.manifest,
+            &self.state_path,
+            rendered_sources,
+            || self.record_unchanged_build(published, environment_fingerprint),
+        )
+    }
+
+    fn record_unchanged_build(
         &self,
         published: &PublishedBuild,
         environment_fingerprint: &str,
@@ -342,12 +539,20 @@ impl<'a> BuildContext<'a> {
     }
 
     fn prepare(&self, frozen: bool) -> Result<BuildState, TexeError> {
-        restore_package_lock(
-            self.project_root,
-            &self.lock,
-            &self.toolchain.identity,
-            frozen,
-        )?;
+        if let Some(descriptor) = crate::portable::active(self.project_root)? {
+            crate::portable::restore_package_lock_from_descriptor(
+                self.project_root,
+                self.manifest,
+                &descriptor,
+            )?;
+        } else {
+            restore_package_lock(
+                self.project_root,
+                &self.lock,
+                &self.toolchain.identity,
+                frozen,
+            )?;
+        }
         if frozen {
             self.tools.ensure_lock(&EnsureLockRequest {
                 project_root: self.project_root,
@@ -808,5 +1013,113 @@ impl<'a> BuildContext<'a> {
     }
 }
 
+pub(crate) fn capture_render_sources(
+    root: &Path,
+    manifest: &ProjectManifest,
+) -> Result<String, TexeError> {
+    state::source_fingerprint(root, manifest)?.ok_or_else(|| TexeError::Build(
+        "The saved paper exceeds the source verification limit. Sources and the last PDF have been kept.".into(),
+    ))
+}
+
+pub(crate) fn verify_render_sources(
+    root: &Path,
+    manifest: &ProjectManifest,
+    expected: &str,
+) -> Result<(), TexeError> {
+    match state::source_fingerprint(root, manifest) {
+        Ok(Some(current)) if current == expected => Ok(()),
+        _ => Err(TexeError::SourcesChanged),
+    }
+}
+
+pub(crate) fn publish_if_sources_unchanged<T>(
+    root: &Path,
+    manifest: &ProjectManifest,
+    expected: &str,
+    publish: impl FnOnce() -> Result<T, TexeError>,
+) -> Result<T, TexeError> {
+    verify_render_sources(root, manifest, expected)?;
+    publish()
+}
+
+fn record_if_sources_unchanged(
+    root: &Path,
+    manifest: &ProjectManifest,
+    state_path: &Path,
+    rendered_sources: Option<&str>,
+    record: impl FnOnce() -> Result<(), TexeError>,
+) -> Result<(), TexeError> {
+    let current_sources = state::source_fingerprint(root, manifest).ok().flatten();
+    if rendered_sources.is_none() || current_sources.as_deref() != rendered_sources {
+        // Removing the previous record also prevents the queued retry from
+        // reusing a prior fingerprint after an edit that happens to yield the
+        // same PDF bytes. Failure to establish a snapshot is a safe cache miss.
+        generated::remove(root, state_path)?;
+        return Ok(());
+    }
+    let result = record();
+    let current_sources = state::source_fingerprint(root, manifest).ok().flatten();
+    if current_sources.as_deref() != rendered_sources {
+        generated::remove(root, state_path)?;
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn materialize_portable_generated(
+    output_dir: &Path,
+    manifest: &ProjectManifest,
+) -> Result<(), TexeError> {
+    engine::write_generated_inputs(output_dir, &manifest.project.generated)
+}
+
+pub(crate) fn prepare_portable(
+    root: &Path,
+    manifest: &ProjectManifest,
+    toolchain: &ResolvedToolchain,
+    tools: &PqtyClient,
+    descriptor: &serde_json::Value,
+    progress: &Progress,
+) -> Result<(), TexeError> {
+    crate::portable::private_directory(root, &manifest.project.build_dir)?;
+    crate::portable::private_directory(root, &manifest.packages.texmf)?;
+    crate::portable::restore_package_lock_from_descriptor(root, manifest, descriptor)?;
+    let lock = root.join(&manifest.packages.lock);
+    let texmf = root.join(&manifest.packages.texmf);
+    let build_root = root.join(&manifest.project.build_dir);
+    std::fs::create_dir_all(&build_root).map_err(|source| TexeError::Io {
+        path: build_root.clone(),
+        source,
+    })?;
+    tools.install(root, manifest, toolchain, &lock, &texmf, progress)?;
+    let environment = tools.environment(root, &lock, &build_root.join("pqty.env.json"))?;
+    if environment.fingerprint != descriptor["packageFingerprint"].as_str().unwrap_or("") {
+        return Err(TexeError::Build(
+            "Portable environment fingerprint mismatch".into(),
+        ));
+    }
+    if !matches!(toolchain.engine.as_str(), "shipout" | "tectonic") {
+        format::ensure(
+            root,
+            toolchain,
+            &texmf,
+            &environment,
+            &build_root,
+            true,
+            progress,
+        )?;
+    }
+    Ok(())
+}
+
+pub(crate) fn publish_native(
+    root: &Path,
+    output: &Path,
+    lock: &[u8],
+    lock_path: &Path,
+) -> Result<PathBuf, TexeError> {
+    Ok(artifact::publish_artifact_at(root, output, lock, lock_path)?.artifact)
+}

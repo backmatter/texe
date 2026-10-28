@@ -5,7 +5,7 @@ const { execFileSync, spawn } = require("node:child_process");
 const {
   runTests,
   downloadAndUnzipVSCode,
-  resolveCliArgsFromVSCodeExecutablePath,
+  runVSCodeCommand,
 } = require("@vscode/test-electron");
 
 (async () => {
@@ -16,11 +16,11 @@ const {
     fs.mkdtempSync(path.join(os.tmpdir(), "texe-vscode-"));
   // Windows TEMP can use DOS 8.3 names, and macOS /var can be an alias.
   // Give the editor the same canonical directory that the TeX engine records.
+  fs.mkdirSync(scratch, { recursive: true });
   const root = fs.realpathSync.native(scratch);
   if (process.env.GITHUB_ENV)
     fs.appendFileSync(process.env.GITHUB_ENV, `TEXE_EDITOR_EVIDENCE=${root}\n`);
   const paper = path.join(root, "paper with spaces");
-  const extension = path.join(root, "extension");
   const extensions = path.join(root, "extensions");
   const profile = path.join(root, "profile");
   for (const dir of [
@@ -30,14 +30,6 @@ const {
     path.join(root, "bin"),
   ])
     fs.mkdirSync(dir, { recursive: true });
-  fs.cpSync(path.join(repo, "assets/vscode-extension"), extension, {
-    recursive: true,
-  });
-  const pkg = path.join(extension, "package.json");
-  fs.writeFileSync(
-    pkg,
-    fs.readFileSync(pkg, "utf8").replace("@VERSION@", "0.1.2"),
-  );
   const suite = process.env.TEXE_TEST_SUITE || path.join(repo, "target/debug");
   for (const name of ["texe", "pqty", "pqty-fls"]) {
     const binary = name + (process.platform === "win32" ? ".exe" : "");
@@ -62,9 +54,9 @@ const {
     ...process.env,
     TEXE_HOME: path.join(root, "texe-home"),
     XDG_CACHE_HOME: path.join(root, "cache"),
-    PATH: path.join(root, "bin") + path.delimiter + process.env.PATH,
+    PATH: process.env.TEXE_TEST_DOWNLOAD_TOOLS === "1" ? process.env.PATH : path.join(root, "bin") + path.delimiter + process.env.PATH,
   };
-  execFileSync(texe, ["editor", "--project", paper, "--configure-only"], {
+  execFileSync(texe, ["editor", "--project", paper, "--configure-only", "--replace-conflicts"], {
     env: environment,
   });
   fs.writeFileSync(
@@ -79,59 +71,28 @@ const {
   );
   const executable =
     process.env.VSCODE_EXECUTABLE || (await downloadAndUnzipVSCode("1.126.0"));
-  const dependencies = [
-    ["James-Yu.latex-workshop", "10.17.1", process.env.LATEX_WORKSHOP_PATH],
-    ["backmatter.tex-ls", "0.1.2", process.env.TEX_LS_EXTENSION_PATH],
-  ];
-  // Stage local extensions before the CLI creates its extension index.
-  for (const [identifier, version, local] of dependencies) {
-    if (local) {
-      fs.cpSync(
-        local,
-        path.join(extensions, `${identifier.toLowerCase()}-${version}`),
-        { recursive: true },
-      );
-    }
-  }
-  for (const [identifier, version, local] of dependencies) {
-    if (local) continue;
-    const [cli, ...args] = resolveCliArgsFromVSCodeExecutablePath(executable);
-    // Windows .cmd launchers cannot be spawned directly. Run VS Code's CLI
-    // through its Electron executable without introducing shell quoting.
-    const windows = process.platform === "win32";
-    const installation = path.dirname(executable);
-    const cliScript = windows
-      ? [
-          installation,
-          ...fs
-            .readdirSync(installation)
-            .map((name) => path.join(installation, name)),
-        ]
-          .map((directory) => path.join(directory, "resources/app/out/cli.js"))
-          .find((candidate) => fs.existsSync(candidate))
-      : undefined;
-    if (windows && !cliScript)
-      throw new Error("Cannot locate VS Code's Windows CLI script");
-    execFileSync(
-      windows ? executable : cli,
-      [
-        ...(windows ? [cliScript] : []),
-        ...args,
-        `--user-data-dir=${profile}`,
-        `--extensions-dir=${extensions}`,
-        "--install-extension",
-        `${identifier}@${version}`,
-      ],
-      {
-        stdio: "inherit",
-        env: windows
-          ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
-          : process.env,
-      },
-    );
+  if (process.env.TEXE_TEST_DOWNLOAD_TOOLS === "1" || process.env.TEX_LS_BINARY) {
+    const settings = JSON.parse(fs.readFileSync(path.join(paper, ".vscode/settings.json")));
+    if (process.env.TEXE_TEST_DOWNLOAD_TOOLS === "1") settings["citet.texePath"] = "";
+    if (process.env.TEX_LS_BINARY) settings["tex-ls.server.path"] = process.env.TEX_LS_BINARY;
+    fs.writeFileSync(path.join(paper, ".vscode/settings.json"), JSON.stringify(settings, null, 2));
   }
   console.log(`Real VS Code test workspace: ${root}`);
   fs.writeFileSync(path.join(os.tmpdir(), "texe-vscode-latest"), root);
+  // Use the supported launcher; Windows releases can change their internal
+  // CLI entry point, and .cmd launchers require a shell on current Node.
+  const cliArgs = [`--user-data-dir=${profile}`, `--extensions-dir=${extensions}`];
+  const cliOptions = {version: "1.126.0", spawn: {env: environment}};
+  for (const id of ["backmatter.citet", "backmatter.tex-ls"]) {
+    const result = await runVSCodeCommand([...cliArgs, "--install-extension", id, "--force"], cliOptions);
+    process.stdout.write(result.stdout);
+    process.stderr.write(result.stderr);
+  }
+  const located = await runVSCodeCommand([...cliArgs, "--locate-extension", "backmatter.citet"], cliOptions);
+  const extension = located.stdout.trim();
+  if (!extension || !fs.statSync(extension).isDirectory()) throw new Error("Marketplace Citet installation was not found");
+  const installed = JSON.parse(fs.readFileSync(path.join(extension, "package.json"), "utf8"));
+  fs.writeFileSync(path.join(root, "marketplace-extension.json"), JSON.stringify({identifier: "backmatter.citet", version: installed.version, path: extension}, null, 2));
   const options = {
     vscodeExecutablePath: executable,
     extensionDevelopmentPath: extension,
@@ -145,7 +106,6 @@ const {
       "--skip-welcome",
       "--skip-release-notes",
       "--disable-gpu",
-      "--remote-debugging-port=9337",
     ],
   };
   if (process.platform === "win32") {

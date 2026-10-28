@@ -156,6 +156,9 @@ fn package_round_trip(journey: &Journey, project: &Path) -> Result<()> {
     // Rename instead of changing permissions on the immutable store object.
     fs::rename(&object, store.join("original-object"))?;
     fs::write(&object, b"corrupt object")?;
+    // A valid copied tree may be reused without consulting the store. Request
+    // a new destination to exercise actual corrupt-object materialization.
+    let uncached = project.join("uncached-packages");
     let failure = pqty(
         journey,
         project,
@@ -166,7 +169,7 @@ fn package_round_trip(journey: &Journey, project: &Path) -> Result<()> {
             "--store",
             path(&store)?,
             "--out",
-            path(&tree)?,
+            path(&uncached)?,
         ],
     )?;
     require(
@@ -174,7 +177,9 @@ fn package_round_trip(journey: &Journey, project: &Path) -> Result<()> {
         "corrupt offline store was accepted",
     )?;
     require(
-        fs::read(tree.join(package_path))? == package_bytes && fs::read(&lock)? == locked,
+        fs::read(tree.join(package_path))? == package_bytes
+            && fs::read(&lock)? == locked
+            && !uncached.join(package_path).exists(),
         "failed install replaced the working tree or lock",
     )?;
     require(
