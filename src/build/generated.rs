@@ -122,6 +122,12 @@ fn io(path: &Path, source: std::io::Error) -> TexeError {
 
 /// Reject aliases in every existing directory component before parent writes.
 pub(crate) fn validate_parent(root: &Path, path: &Path) -> Result<(), TexeError> {
+    if root.parent().is_none() {
+        let absolute = std::path::absolute(path).map_err(|source| io(path, source))?;
+        if let Some((anchor, physical)) = temporary_path(&absolute)? {
+            return validate_parent(&anchor, &physical);
+        }
+    }
     let relative = path.strip_prefix(root).map_err(|_| invalid(path))?;
     if relative.as_os_str().is_empty()
         || !relative

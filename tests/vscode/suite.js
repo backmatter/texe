@@ -17,15 +17,27 @@ exports.run = async () => {
   const extension = vscode.extensions.getExtension("backmatter.citet");
   assert.ok(extension, "unified extension is available");
   assert.equal(vscode.extensions.getExtension("James-Yu.latex-workshop"), undefined);
-  assert.ok(vscode.extensions.getExtension("backmatter.tex-ls"));
+  const languageExtension = vscode.extensions.getExtension("backmatter.tex-ls");
+  assert.ok(languageExtension);
+  await languageExtension.activate();
   const api = await extension.activate();
   assert.ok(["auto", "local"].includes(vscode.workspace.getConfiguration("citet", source).get("buildBackend")));
+  // The standalone tex-ls extension supplies formatting.
+  const probe = vscode.Uri.file(path.join(root, ".texe", "editor", "language-probe.tex"));
+  fs.mkdirSync(path.dirname(probe.fsPath), { recursive: true });
+  fs.writeFileSync(probe.fsPath, "\\begin{itemize}\n\\item hello world\n\\end{itemize}\n");
+  const probeDocument = await vscode.workspace.openTextDocument(probe);
+  const probeEditor = await vscode.window.showTextDocument(probeDocument, vscode.ViewColumn.One);
+  probeEditor.options = { tabSize: 2, insertSpaces: true };
+  await until(async () => { await vscode.commands.executeCommand("editor.action.formatDocument"); return probeDocument.getText().includes("  \\item hello world"); }, "native LSP did not format the document");
+  await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+  fs.unlinkSync(probe.fsPath);
+  await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
   if (process.platform !== "linux") {
     const before = document.getText();
     await vscode.commands.executeCommand("citet.buildAndView");
     assert.equal(document.getText(), before, "unsupported local builds preserve the source");
     assert.equal(fs.existsSync(pdf), false, "unsupported local builds do not publish a PDF");
-    await until(async () => Array.isArray(await vscode.commands.executeCommand("vscode.executeFormatDocumentProvider", source, {tabSize: 2, insertSpaces: true})), "standalone tex-ls formatter did not start");
     fs.writeFileSync(path.join(process.env.TEXE_TEST_ROOT, "results.json"), JSON.stringify({extension: extension.id, formatting: true, localBuild: false, unsupportedLocalBuildPreservedFiles: true, sourcePreserved: true}, null, 2));
     console.log("PASS editor language features and unsupported protected-build preservation");
     return;
@@ -44,16 +56,6 @@ exports.run = async () => {
   const inverse = await state.target.backend.pdfToSource(mapped.page, mapped.x + 10, mapped.y + mapped.height / 2);
   assert.equal(fs.realpathSync(inverse.filePath), fs.realpathSync(source.fsPath));
   assert.ok(inverse.line >= 2 && inverse.line <= 4);
-  // The standalone tex-ls extension supplies formatting.
-  const probe = vscode.Uri.file(path.join(root, ".texe", "editor", "language-probe.tex"));
-  fs.mkdirSync(path.dirname(probe.fsPath), { recursive: true });
-  fs.writeFileSync(probe.fsPath, "\\begin{itemize}\n\\item hello world\n\\end{itemize}\n");
-  const probeDocument = await vscode.workspace.openTextDocument(probe);
-  const probeEditor = await vscode.window.showTextDocument(probeDocument, vscode.ViewColumn.One);
-  probeEditor.options = { tabSize: 2, insertSpaces: true };
-  await until(async () => { await vscode.commands.executeCommand("editor.action.formatDocument"); return probeDocument.getText().includes("  \\item hello world"); }, "native LSP did not format the document");
-  await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
-  fs.unlinkSync(probe.fsPath);
   const liveEditor = await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
   const before = fs.readFileSync(pdf);
   await liveEditor.edit((edit) => edit.insert(new vscode.Position(2, 0), "\\anUndefinedCommandForCutover\n"));

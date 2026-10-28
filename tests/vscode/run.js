@@ -5,6 +5,7 @@ const { execFileSync, spawn } = require("node:child_process");
 const {
   runTests,
   downloadAndUnzipVSCode,
+  runVSCodeCommand,
 } = require("@vscode/test-electron");
 
 (async () => {
@@ -78,17 +79,17 @@ const {
   }
   console.log(`Real VS Code test workspace: ${root}`);
   fs.writeFileSync(path.join(os.tmpdir(), "texe-vscode-latest"), root);
-  const cli = process.platform === "win32"
-    ? [executable, path.join(path.dirname(executable), "resources", "app", "out", "cli.js")]
-    : require("@vscode/test-electron").resolveCliArgsFromVSCodeExecutablePath(executable);
-  const cliArgs = [...cli.slice(1), `--user-data-dir=${profile}`, `--extensions-dir=${extensions}`];
-  const cliEnv = {...environment, ELECTRON_RUN_AS_NODE: "1"};
+  // Use the supported launcher; Windows releases can change their internal
+  // CLI entry point, and .cmd launchers require a shell on current Node.
+  const cliArgs = [`--user-data-dir=${profile}`, `--extensions-dir=${extensions}`];
+  const cliOptions = {version: "1.126.0", spawn: {env: environment}};
   for (const id of ["backmatter.citet", "backmatter.tex-ls"]) {
-    execFileSync(cli[0], [...cliArgs, "--install-extension", id, "--force"], {env: cliEnv, stdio: "inherit"});
+    const result = await runVSCodeCommand([...cliArgs, "--install-extension", id, "--force"], cliOptions);
+    process.stdout.write(result.stdout);
+    process.stderr.write(result.stderr);
   }
-  const extension = execFileSync(cli[0], [...cliArgs, "--locate-extension", "backmatter.citet"], {
-    env: cliEnv, encoding: "utf8",
-  }).trim();
+  const located = await runVSCodeCommand([...cliArgs, "--locate-extension", "backmatter.citet"], cliOptions);
+  const extension = located.stdout.trim();
   if (!extension || !fs.statSync(extension).isDirectory()) throw new Error("Marketplace Citet installation was not found");
   const installed = JSON.parse(fs.readFileSync(path.join(extension, "package.json"), "utf8"));
   fs.writeFileSync(path.join(root, "marketplace-extension.json"), JSON.stringify({identifier: "backmatter.citet", version: installed.version, path: extension}, null, 2));

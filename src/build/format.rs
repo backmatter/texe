@@ -1,3 +1,4 @@
+use sha2::{Digest as _, Sha256};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -122,10 +123,11 @@ pub(super) fn ensure(
     } else {
         format_cache
     };
-    let target = format_cache
-        .join(&toolchain.identity.fingerprint)
-        .join(environment_key)
-        .join(recipe.name);
+    let target = format_cache.join(format_cache_key(
+        &toolchain.identity.fingerprint,
+        environment_key,
+        recipe.name,
+    ));
     let format = ManagedFormat {
         root: target.clone(),
         formats: target.join("formats"),
@@ -173,6 +175,17 @@ pub(super) fn ensure(
     Ok(Some(format))
 }
 
+// One content-addressed directory retains the complete identity without
+// multiplying path length with nested hashes that Windows TeX cannot open.
+fn format_cache_key(toolchain: &str, environment: &str, recipe: &str) -> String {
+    let mut hash = Sha256::new();
+    for value in [toolchain, environment, recipe] {
+        hash.update(value.as_bytes());
+        hash.update([0]);
+    }
+    hex::encode(hash.finalize())
+}
+
 fn environment_cache_key(fingerprint: &str) -> Result<&str, TexeError> {
     let key = fingerprint.strip_prefix("sha256:").unwrap_or(fingerprint);
     if key.is_empty()
@@ -205,7 +218,7 @@ fn prepare_format_build<'a>(
         path: parent.to_path_buf(),
         source,
     })?;
-    let staging = parent.join(format!(".{}.{}.tmp", recipe.name, std::process::id()));
+    let staging = format_staging_path(&target, recipe.name);
     if target.starts_with(project_root.join(".texe/environments"))
         || super::process::protection_requested()
     {
@@ -651,6 +664,15 @@ fn collect_named_files(
     Ok(())
 }
 
+fn format_staging_path(target: &Path, format_name: &str) -> PathBuf {
+    target.with_file_name(format!(
+        ".{}.{}.{}.tmp",
+        format_name,
+        target.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    ))
+}
+
 fn remove_format_staging(path: &Path, format_name: &str) -> Result<(), TexeError> {
     let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
     if !name.starts_with(&format!(".{format_name}."))
@@ -671,6 +693,31 @@ fn remove_format_staging(path: &Path, format_name: &str) -> Result<(), TexeError
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn format_cache_keys_are_bounded_and_separate_each_identity_component() {
+        let inputs = [
+            ("runtime-a", "packages-a", "pdflatex"),
+            ("runtime-b", "packages-a", "pdflatex"),
+            ("runtime-a", "packages-b", "pdflatex"),
+            ("runtime-a", "packages-a", "lualatex"),
+            ("a", "bc", "pdflatex"),
+            ("ab", "c", "pdflatex"),
+        ];
+        let keys: std::collections::BTreeSet<_> = inputs
+            .iter()
+            .map(|(runtime, packages, recipe)| super::format_cache_key(runtime, packages, recipe))
+            .collect();
+        assert_eq!(keys.len(), inputs.len());
+        assert!(
+            keys.iter()
+                .all(|key| key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        );
+        let staging: std::collections::BTreeSet<_> = keys
+            .iter()
+            .map(|key| super::format_staging_path(Path::new(key), "pdflatex"))
+            .collect();
+        assert_eq!(staging.len(), keys.len());
+    }
     use std::ffi::OsString;
     use std::fs;
     use std::path::Path;
@@ -750,16 +797,17 @@ mod tests {
                 .join("a".repeat(64))
                 .join("build");
             let cache = build.join("formats");
-            let target = cache.join("test-toolchain/test-packages/pdflatex");
+            let target = cache.join(super::format_cache_key(
+                "test-toolchain",
+                "test-packages",
+                "pdflatex",
+            ));
             let link = match alias {
                 "cache" => cache,
                 "target" => target.clone(),
                 "formats" => target.join("formats"),
                 "format-file" => target.join("formats/pdflatex.fmt"),
-                "staging" => target
-                    .parent()
-                    .unwrap()
-                    .join(format!(".pdflatex.{}.tmp", std::process::id())),
+                "staging" => super::format_staging_path(&target, "pdflatex"),
                 _ => unreachable!(),
             };
             fs::create_dir_all(link.parent().unwrap()).unwrap();

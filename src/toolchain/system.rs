@@ -415,7 +415,7 @@ roots = ["shared"]
         );
         assert_eq!(
             super::protected_manifest_executable(&root, &manifest, &installed_tool).unwrap(),
-            installed_tool
+            installed_tool.canonicalize().unwrap()
         );
         manifest.packages.manager = paper_tool.to_string_lossy().into_owned();
         manifest.packages.trace_adapter = installed_tool.to_string_lossy().into_owned();
