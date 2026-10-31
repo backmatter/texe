@@ -213,12 +213,6 @@ pub(crate) enum Command {
         /// Accept a disclosed first-build download without prompting.
         #[arg(short = 'y', long)]
         yes: bool,
-        /// Filesystem polling interval in milliseconds.
-        #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(50..=60_000))]
-        poll_ms: u64,
-        /// Wait for this many milliseconds without input changes before rebuilding.
-        #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(50..=60_000))]
-        debounce_ms: u64,
         /// Open a loopback-only browser viewer and refresh it after successful builds.
         #[arg(long)]
         view: bool,

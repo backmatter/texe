@@ -4,36 +4,24 @@ use crate::app::build_command::{BuildOutcome, execute_build, present_build_repor
 use crate::app::output::print_json_line;
 use crate::app::project::load_project;
 use crate::build::{self, BuildOptions};
+use crate::watch::WatchSignal;
 use crate::{TexeError, ux, viewer, watch};
-
-#[derive(Clone, Copy)]
-pub(super) struct WatchTiming {
-    pub(super) poll: std::time::Duration,
-    pub(super) debounce: std::time::Duration,
-}
-
-impl Default for WatchTiming {
-    fn default() -> Self {
-        Self {
-            poll: std::time::Duration::from_millis(250),
-            debounce: std::time::Duration::from_millis(250),
-        }
-    }
-}
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 pub(super) fn run_watch(
     project: Option<&Path>,
     options: BuildOptions,
     verify_toolchain: bool,
     presentation: ux::Presentation,
-    timing: WatchTiming,
     accept_downloads: bool,
     view: bool,
 ) -> Result<(), TexeError> {
-    let (stop_sender, stop_receiver) = std::sync::mpsc::channel();
+    build::shipout::keep_engine_warm();
+    let (signal_sender, signals) = std::sync::mpsc::channel();
+    let stop_sender = signal_sender.clone();
     ctrlc::set_handler(move || {
         crate::compiler_sandbox::cancel_active();
-        let _ = stop_sender.send(());
+        let _ = stop_sender.send(WatchSignal::Stop);
     })
     .map_err(|error| TexeError::Build(format!("could not listen for Ctrl-C: {error}")))?;
 
@@ -63,9 +51,9 @@ pub(super) fn run_watch(
         }
     }
 
+    let _watcher = watch::watch_files(&root, signal_sender)?;
     let mut build_number = 1_u64;
-    let mut changes =
-        watch::PendingChanges::new(watch::ProjectSnapshot::capture(&root, &manifest)?);
+    let mut baseline = watch::ProjectSnapshot::capture(&root, &manifest)?;
     if let Some(viewer) = &viewer {
         viewer.notify_building();
     }
@@ -78,7 +66,7 @@ pub(super) fn run_watch(
         accept_downloads,
         false,
     );
-    if watch_interrupted(&stop_receiver)? {
+    if watch_interrupted(&signals)? {
         return finish_watch(presentation);
     }
     present_watch_attempt(
@@ -90,15 +78,16 @@ pub(super) fn run_watch(
     )?;
 
     loop {
-        if wait_for_watch_tick(&stop_receiver, timing.poll)? {
-            return finish_watch(presentation);
-        }
+        // Compare before blocking: a save during that build is already
+        // pending, and its events may have been drained with the others.
         let observed = watch::ProjectSnapshot::capture(&root, &manifest)?;
-        let Some(changed_paths) =
-            changes.observe(observed, std::time::Instant::now(), timing.debounce)
-        else {
+        let changed_paths = baseline.changes_since(&observed);
+        if changed_paths.is_empty() {
+            if wait_for_file_event(&signals)? {
+                return finish_watch(presentation);
+            }
             continue;
-        };
+        }
         if let Ok(context) = load_project(project) {
             manifest = context.manifest;
             let next_pdf = published_pdf(&root, &manifest.project.entry);
@@ -110,7 +99,7 @@ pub(super) fn run_watch(
             }
         }
         build_number += 1;
-        changes = watch::PendingChanges::new(watch::ProjectSnapshot::capture(&root, &manifest)?);
+        baseline = watch::ProjectSnapshot::capture(&root, &manifest)?;
         if let Some(viewer) = &viewer {
             viewer.notify_building();
         }
@@ -123,33 +112,38 @@ pub(super) fn run_watch(
             true,
             false,
         );
-        if watch_interrupted(&stop_receiver)? {
+        if watch_interrupted(&signals)? {
             return finish_watch(presentation);
         }
         present_watch_attempt(build_number, result, &pdf, viewer.as_ref(), presentation)?;
     }
 }
 
-fn wait_for_watch_tick(
-    stop: &std::sync::mpsc::Receiver<()>,
-    duration: std::time::Duration,
-) -> Result<bool, TexeError> {
-    match stop.recv_timeout(duration) {
-        Ok(()) => Ok(true),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(false),
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(TexeError::Build(
-            "watch interrupt handler stopped unexpectedly".to_string(),
+/// Block until the filesystem reports activity. Returns whether to stop.
+fn wait_for_file_event(signals: &Receiver<WatchSignal>) -> Result<bool, TexeError> {
+    match signals.recv() {
+        Ok(WatchSignal::Stop) => Ok(true),
+        // One save is many events; a snapshot answers for all of them.
+        Ok(WatchSignal::FilesChanged) => watch_interrupted(signals),
+        Err(_) => Err(TexeError::Build(
+            "watch event source stopped unexpectedly".to_string(),
         )),
     }
 }
 
-fn watch_interrupted(stop: &std::sync::mpsc::Receiver<()>) -> Result<bool, TexeError> {
-    match stop.try_recv() {
-        Ok(()) => Ok(true),
-        Err(std::sync::mpsc::TryRecvError::Empty) => Ok(false),
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(TexeError::Build(
-            "watch interrupt handler stopped unexpectedly".to_string(),
-        )),
+/// Drain queued signals, reporting whether one asked to stop.
+fn watch_interrupted(signals: &Receiver<WatchSignal>) -> Result<bool, TexeError> {
+    loop {
+        match signals.try_recv() {
+            Ok(WatchSignal::Stop) => return Ok(true),
+            Ok(WatchSignal::FilesChanged) => {}
+            Err(TryRecvError::Empty) => return Ok(false),
+            Err(TryRecvError::Disconnected) => {
+                return Err(TexeError::Build(
+                    "watch event source stopped unexpectedly".to_string(),
+                ));
+            }
+        }
     }
 }
 

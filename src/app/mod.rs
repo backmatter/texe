@@ -312,8 +312,6 @@ fn run_watch_command(command: Command, presentation: ux::Presentation) -> Result
         verify_toolchain,
         offline,
         yes,
-        poll_ms,
-        debounce_ms,
         view,
     } = command
     else {
@@ -329,10 +327,6 @@ fn run_watch_command(command: Command, presentation: ux::Presentation) -> Result
         },
         verify_toolchain,
         presentation,
-        watch_command::WatchTiming {
-            poll: std::time::Duration::from_millis(poll_ms),
-            debounce: std::time::Duration::from_millis(debounce_ms),
-        },
         yes,
         view,
     )

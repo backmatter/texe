@@ -24,6 +24,7 @@ pub(crate) struct SuiteLock {
     pqty_trace_report_schema: String,
     pqty_convergence_report_schema: String,
     pqty_progress_schema: String,
+    pqty_bundle_schema: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +38,9 @@ struct Capabilities {
     trace_report_schema: String,
     convergence_report_schema: String,
     progress_schema: String,
+    bundle_schema: String,
+    #[serde(rename = "install_reuse_matching_tree", default)]
+    _install_reuse_matching_tree: bool,
 }
 
 pub(crate) fn checkout() -> Result<PathBuf> {
@@ -150,6 +154,11 @@ pub(crate) fn verify(selected: Option<&Path>) -> Result<()> {
         &lock.pqty_progress_schema,
         &capabilities.progress_schema,
     )?;
+    require_equal(
+        "pqty bundle schema",
+        &lock.pqty_bundle_schema,
+        &capabilities.bundle_schema,
+    )?;
     let digest = source_digest(&checkout)?;
     require_equal("pqty source digest", &lock.pqty_source_sha256, &digest)?;
     println!(
@@ -219,6 +228,7 @@ pub(crate) fn update(reference: &str, selected: Option<&Path>, if_newer: bool) -
         pqty_trace_report_schema: capabilities.trace_report_schema,
         pqty_convergence_report_schema: capabilities.convergence_report_schema,
         pqty_progress_schema: capabilities.progress_schema,
+        pqty_bundle_schema: capabilities.bundle_schema,
     };
     let path = repo_root()?.join("suite.lock.toml");
     fs::write(&path, toml::to_string_pretty(&lock)?)?;
@@ -370,6 +380,7 @@ pqty_trace_schema = "pqty.trace/v1"
 pqty_trace_report_schema = "pqty.trace-report/v1"
 pqty_convergence_report_schema = "pqty.convergence-report/v1"
 pqty_progress_schema = "pqty.progress/v1"
+pqty_bundle_schema = "pqty.bundle/v1"
 "#
         );
         assert!(toml::from_str::<SuiteLock>(&complete).is_ok());

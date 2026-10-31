@@ -165,7 +165,7 @@ impl BuildContext<'_> {
         })
     }
 
-    fn materialize_generated_inputs(&self, output_dir: &Path) -> Result<(), TexeError> {
+    pub(super) fn materialize_generated_inputs(&self, output_dir: &Path) -> Result<(), TexeError> {
         write_generated_inputs(output_dir, &self.manifest.project.generated)
     }
 }

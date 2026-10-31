@@ -359,3 +359,86 @@ else:
         "a compiler helper survived parent cancellation"
     );
 }
+
+/// A compiler is untrusted input's interpreter, so `--protected` has to hold for
+/// a Shipout found on `PATH` too. This one attempts what a hostile document could
+/// and leaves a mark where it may, so the test cannot pass by never running it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn protected_system_shipout_cannot_write_project_sources_or_see_home() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    let fixture = tempfile::tempdir().unwrap();
+    let project = fixture.path().join("project");
+    let tools = fixture.path().join("tools");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&tools).unwrap();
+    let source = b"research source\n";
+    fs::write(project.join("main.tex"), source).unwrap();
+    fs::write(
+        project.join("texe.toml"),
+        "schema = \"texe.project/v1\"\n[project]\nentry = \"main.tex\"\n\
+         [toolchain]\nprovider = \"system\"\nengine = \"shipout\"\n\
+         [packages]\nremote = false\n",
+    )
+    .unwrap();
+    let escaped = fixture.path().join("escaped");
+    let ran = project.join(".texe/build/ran");
+    let package_manager = r#"#!/usr/bin/python3
+import json, pathlib, sys
+arguments = sys.argv[1:]
+if "capabilities" in arguments:
+    print(json.dumps({
+        "schema": "pqty.capabilities/v1", "version": "0.0.0", "lock_schema": "pqty.lock/v1",
+        "environment_schema": "pqty.env/v1", "trace_schema": "pqty.trace/v1",
+        "trace_report_schema": "pqty.trace-report/v1",
+        "convergence_report_schema": "pqty.convergence-report/v1",
+        "progress_schema": "pqty.progress/v1", "bundle_schema": "pqty.bundle/v1",
+    }))
+elif "lock" in arguments:
+    pathlib.Path(arguments[arguments.index("--output") + 1]).write_text('{"schema":"pqty.lock/v1"}')
+elif "env" in arguments:
+    print(json.dumps({"schema": "pqty.env/v1", "fingerprint": "sha256:" + "a" * 64}))
+"#;
+    // Plain sh: the sandbox's system-call filter also refuses interpreters it
+    // does not know, which would stop this before it tried anything.
+    let shipout = format!(
+        "#!/bin/sh\n\
+         [ \"$1\" = --version ] && {{ echo 'shipout 0.0.0'; exit 0; }}\n\
+         echo \"$HOME\" > {ran}\n\
+         echo overwritten > {source}\n\
+         echo escaped > {escaped}\n\
+         exit 1\n",
+        ran = ran.display(),
+        source = project.join("main.tex").display(),
+        escaped = escaped.display(),
+    );
+    for (name, body) in [
+        ("pqty", package_manager),
+        ("pqty-fls", "#!/bin/sh\nexit 0\n"),
+        ("kpsewhich", "#!/bin/sh\nexit 0\n"),
+        ("shipout", shipout.as_str()),
+    ] {
+        fs::write(tools.join(name), body).unwrap();
+        fs::set_permissions(tools.join(name), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_texe"))
+        .args(["build", "--protected", "--offline"])
+        .current_dir(&project)
+        .env("PATH", format!("{}:/usr/bin:/bin", tools.display()))
+        .env("TEXE_HOME", fixture.path().join("home"))
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(ran.exists(), "the compiler never started: {stderr}");
+    assert_eq!(fs::read(project.join("main.tex")).unwrap(), source);
+    assert!(!escaped.exists(), "the compiler wrote outside its sandbox");
+    let home = fs::read_to_string(&ran).unwrap();
+    assert!(
+        !home.contains(&std::env::var("HOME").unwrap_or_else(|_| "\0".into())),
+        "the compiler saw {home}"
+    );
+}

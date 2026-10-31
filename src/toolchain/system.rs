@@ -36,6 +36,9 @@ impl ToolchainProvider for SystemToolchainProvider {
                 request.adapter
             )));
         }
+        if request.engine == "shipout" {
+            return resolve_shipout(project_root, request, verification, offline);
+        }
         let mut engine_executable = resolve_executable(project_root, &request.engine)?;
         let mut kpsewhich_executable = resolve_executable(project_root, &request.kpsewhich)?;
         if crate::build::process::protection_requested() {
@@ -88,6 +91,42 @@ impl ToolchainProvider for SystemToolchainProvider {
             offline,
         })
     }
+}
+
+/// Shipout carries its own kernel, fonts, and format, so unlike a TeX Live
+/// engine it has no kpathsea tree to discover.
+fn resolve_shipout(
+    project_root: &Path,
+    request: &ToolchainConfig,
+    verification: VerificationPolicy,
+    offline: bool,
+) -> Result<ResolvedToolchain, TexeError> {
+    let engine_executable = resolve_executable(project_root, &request.engine)?;
+    let version = executable_version(&engine_executable)?;
+    let mut hasher = Sha256::new();
+    hasher.update(engine_executable.as_os_str().as_encoded_bytes());
+    hasher.update(version.as_bytes());
+    Ok(ResolvedToolchain {
+        provider: request.provider.clone(),
+        engine: request.engine.clone(),
+        engine_executable,
+        kpsewhich_executable: PathBuf::new(),
+        texmf_dist: PathBuf::new(),
+        engine_roots: Vec::new(),
+        identity: ToolchainIdentity {
+            provider: "system".to_string(),
+            engine: request.engine.clone(),
+            channel: "system".to_string(),
+            target: format!("{}-{}", env::consts::ARCH, env::consts::OS),
+            fingerprint: hex::encode(hasher.finalize()),
+            registry_url: None,
+            registry_metadata_digest: None,
+            artifacts: Vec::new(),
+        },
+        managed: None,
+        verification,
+        offline,
+    })
 }
 
 fn system_font_roots() -> Vec<PathBuf> {

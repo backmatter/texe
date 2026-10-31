@@ -3,6 +3,7 @@ mod format;
 pub(crate) mod generated;
 mod index;
 pub(crate) mod process;
+pub(crate) mod shipout;
 mod synctex;
 mod trace;
 
@@ -59,6 +60,7 @@ impl AuxiliaryPassBudget {
 
 #[allow(clippy::struct_excessive_bools)] // These are independent public CLI flags.
 #[derive(Debug, Clone, Copy, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct BuildOptions {
     /// Keep researcher sources read-only throughout compiler execution.
     pub protected: bool,
@@ -278,6 +280,31 @@ pub fn build_project(
         }
         return Ok(report);
     }
+    if toolchain.engine == "shipout"
+        && let Some((prepared, passes)) = context.warm_edit()?
+        && let Some(artifact) = find_artifact(&context.output_dir, &manifest.project.entry)
+    {
+        let published = publish_artifact(project_root, &artifact, prepared.project_lock())?;
+        let warnings = collect_warnings(
+            &context
+                .output_dir
+                .join(format!("{}.log", job_stem(&manifest.project.entry)?)),
+        );
+        return Ok(BuildReport {
+            schema: "texe.build-report/v1".to_string(),
+            engine: toolchain.engine.clone(),
+            artifact: published.artifact,
+            engine_passes: passes,
+            convergence_rounds: 0,
+            environment_fingerprint: prepared.environment_fingerprint().to_string(),
+            bibliography_runs: 0,
+            index_runs: 0,
+            cached: false,
+            duration_millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            warning_count: warnings.len(),
+            warnings,
+        });
+    }
     context.progress.announce_rebuild();
     // A save during compilation must not associate its new bytes with a PDF
     // the engine already rendered from the earlier source.
@@ -292,10 +319,14 @@ pub fn build_project(
         None
     };
     let mut state = context.prepare(options.frozen)?;
-    if !options.frozen && context.discovery_required(&state) {
-        context.discover_packages(&mut state)?;
-    }
-    let internal_artifact = context.frozen_build(&mut state, options.frozen)?;
+    let internal_artifact = if toolchain.engine == "shipout" {
+        context.shipout_build(&mut state, options.frozen)?
+    } else {
+        if !options.frozen && context.discovery_required(&state) {
+            context.discover_packages(&mut state)?;
+        }
+        context.frozen_build(&mut state, options.frozen)?
+    };
     let warnings = collect_warnings(
         &context
             .output_dir
@@ -338,6 +369,9 @@ pub fn build_project(
         rendered_sources.as_deref(),
     ) {
         eprintln!("texe: warning: could not save build cache: {error}");
+    }
+    if toolchain.engine == "shipout" {
+        context.record_prepared_build(&state.environment.fingerprint, &project_lock);
     }
     let auxiliary_cache = auxiliary::AuxiliaryCache::from_entries(
         &state.auxiliary_cache_key,

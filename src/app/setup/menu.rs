@@ -120,7 +120,6 @@ fn run_project_menu(
             BuildOptions::default(),
             false,
             presentation,
-            crate::app::watch_command::WatchTiming::default(),
             false,
             true,
         ),
