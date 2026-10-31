@@ -31,6 +31,7 @@ pub struct PqtyClient {
     fingerprint: String,
     offline: bool,
     cache_home: PathBuf,
+    install_reuse_matching_tree: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -46,6 +47,8 @@ struct Capabilities {
     progress_schema: String,
     #[serde(default)]
     bundle_schema: String,
+    #[serde(default)]
+    install_reuse_matching_tree: bool,
 }
 
 impl Capabilities {
@@ -142,6 +145,7 @@ impl PqtyClient {
             trace_adapter,
             offline,
             cache_home: crate::toolchain::texe_data_home()?,
+            install_reuse_matching_tree: capabilities.install_reuse_matching_tree,
         };
         Ok(client)
     }
@@ -322,6 +326,10 @@ impl PqtyClient {
             OsString::from("--link"),
             OsString::from(&manifest.packages.link),
         ];
+        // Shipout's edit loop installs on every rebuild; the tree is texe's own.
+        if toolchain.engine == "shipout" && self.install_reuse_matching_tree {
+            arguments.push(OsString::from("--reuse-matching-tree"));
+        }
         append_registry_transport_argument(&mut arguments, toolchain);
         append_store_argument(&mut arguments, project_root, manifest);
         self.checked_output_with_progress(&arguments, project_root, progress)
@@ -1000,6 +1008,7 @@ mod tests {
             fingerprint: "sha256:test".to_string(),
             offline: false,
             cache_home: PathBuf::from("/managed/texe"),
+            install_reuse_matching_tree: false,
         };
 
         assert_eq!(
@@ -1045,6 +1054,7 @@ roots = ["shared", "bibliography"]
     #[test]
     fn capabilities_require_every_consumed_schema() {
         let compatible = Capabilities {
+            install_reuse_matching_tree: false,
             schema: CAPABILITIES_SCHEMA.to_string(),
             version: "0.1.0".to_string(),
             lock_schema: LOCK_SCHEMA.to_string(),
@@ -1058,6 +1068,7 @@ roots = ["shared", "bibliography"]
         assert!(compatible.validate(Path::new("/suite/pqty")).is_ok());
 
         let incompatible = Capabilities {
+            install_reuse_matching_tree: false,
             trace_schema: "pqty.trace/v2".to_string(),
             ..compatible
         };
@@ -1076,6 +1087,7 @@ roots = ["shared", "bibliography"]
             fingerprint: "test".into(),
             offline: true,
             cache_home: root.join("home"),
+            install_reuse_matching_tree: false,
         };
         let research = root.join("research.json");
         let original =
@@ -1117,6 +1129,7 @@ roots = ["shared", "bibliography"]
             fingerprint: "test".into(),
             offline: true,
             cache_home: root.join("home"),
+            install_reuse_matching_tree: false,
         };
         let lock = root.join("pqty.lock");
         fs::write(&lock, br#"{"schema":"pqty.lock/v1"}"#).unwrap();

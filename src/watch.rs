@@ -1,13 +1,16 @@
-//! Polling project watcher used by `texe watch`.
+//! Project change detection for `texe watch`.
 //!
-//! Polling is deliberately small and dependency-free. A snapshot is metadata
-//! only and excludes derived state. Baselines are captured before builds so
-//! saves during compilation remain pending for the next build.
+//! The operating system reports file events; a snapshot then decides whether
+//! any input really changed. Snapshots are metadata only and exclude derived
+//! state, so a build's own outputs wake the loop without rebuilding. Baselines
+//! are captured before builds, so saves during compilation stay pending.
+#![allow(clippy::trivially_copy_pass_by_ref)]
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::sync::mpsc::Sender;
+use std::time::UNIX_EPOCH;
 
 use crate::TexeError;
 use crate::config::ProjectManifest;
@@ -63,38 +66,50 @@ impl ProjectSnapshot {
     }
 }
 
-/// Track a continuous quiet period, restarting it whenever inputs change.
-pub(crate) struct PendingChanges {
-    baseline: ProjectSnapshot,
-    latest: ProjectSnapshot,
-    changed_at: Option<Instant>,
+/// What wakes the watch loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WatchSignal {
+    /// The filesystem reported activity under the project.
+    FilesChanged,
+    /// The user asked to stop.
+    Stop,
 }
 
-impl PendingChanges {
-    pub(crate) fn new(snapshot: ProjectSnapshot) -> Self {
-        Self {
-            baseline: snapshot.clone(),
-            latest: snapshot,
-            changed_at: None,
+/// Forward file events under `root` to `signals` until the result is dropped.
+pub(crate) fn watch_files(
+    root: &Path,
+    signals: Sender<WatchSignal>,
+) -> Result<notify::RecommendedWatcher, TexeError> {
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        // The receiver goes away only as the watch ends.
+        if event.is_ok_and(|event| file_settled(&event.kind)) {
+            let _ = signals.send(WatchSignal::FilesChanged);
         }
-    }
+    })
+    .map_err(|error| TexeError::Build(format!("could not watch the project: {error}")))?;
+    notify::Watcher::watch(&mut watcher, root, notify::RecursiveMode::Recursive).map_err(
+        |error| {
+            TexeError::Build(format!(
+                "could not watch {}: {error}. On Linux, raising \
+                 fs.inotify.max_user_watches may help",
+                root.display()
+            ))
+        },
+    )?;
+    Ok(watcher)
+}
 
-    pub(crate) fn observe(
-        &mut self,
-        snapshot: ProjectSnapshot,
-        now: Instant,
-        quiet_period: Duration,
-    ) -> Option<Vec<PathBuf>> {
-        if snapshot != self.latest {
-            self.changed_at = Some(now);
-            self.latest = snapshot;
-        }
-        if self.latest == self.baseline {
-            self.changed_at = None;
-        }
-        self.changed_at
-            .filter(|changed_at| now.duration_since(*changed_at) >= quiet_period)
-            .map(|_| self.baseline.changes_since(&self.latest))
+/// Whether an event means a file reached a state worth reading. Saving often
+/// truncates and then writes, so on platforms that report it, wait for the
+/// writer to close the file instead of building from partial contents.
+fn file_settled(kind: &notify::EventKind) -> bool {
+    use notify::EventKind::{Access, Modify};
+    use notify::event::{AccessKind, AccessMode, ModifyKind};
+    match kind {
+        Access(AccessKind::Close(AccessMode::Write)) => true,
+        Access(_) => false,
+        Modify(ModifyKind::Data(_) | ModifyKind::Any) => !cfg!(target_os = "linux"),
+        _ => true,
     }
 }
 
@@ -196,89 +211,35 @@ engine = "pdflatex"
 
     #[test]
     fn saves_during_a_build_remain_pending_but_its_outputs_do_not() {
-        use super::PendingChanges;
-        use std::time::{Duration, Instant};
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         fs::write(root.join("main.tex"), "before build").unwrap();
-        let mut changes = PendingChanges::new(ProjectSnapshot::capture(root, &manifest()).unwrap());
+        let baseline = ProjectSnapshot::capture(root, &manifest()).unwrap();
         fs::create_dir_all(root.join(".texe/editor")).unwrap();
         fs::write(root.join("texe.lock"), "new lock").unwrap();
         fs::write(root.join("main.pdf"), "published PDF").unwrap();
         fs::write(root.join(".texe/editor/build-bridge.json"), "bridge").unwrap();
-        let now = Instant::now();
-        let quiet = Duration::from_millis(250);
-        assert!(
-            changes
-                .observe(
-                    ProjectSnapshot::capture(root, &manifest()).unwrap(),
-                    now,
-                    quiet
-                )
-                .is_none()
-        );
+        let outputs = ProjectSnapshot::capture(root, &manifest()).unwrap();
+        assert!(baseline.changes_since(&outputs).is_empty());
         fs::write(root.join("main.tex"), "saved during compilation").unwrap();
         let saved = ProjectSnapshot::capture(root, &manifest()).unwrap();
-        assert!(changes.observe(saved.clone(), now, quiet).is_none());
         assert_eq!(
-            changes.observe(saved, now + quiet, quiet),
-            Some(vec![PathBuf::from("main.tex")])
+            baseline.changes_since(&saved),
+            vec![PathBuf::from("main.tex")]
         );
     }
 
     #[test]
-    fn continuous_edits_restart_the_quiet_period_without_a_retry_limit() {
-        use super::PendingChanges;
-        use std::time::{Duration, Instant};
-
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let root = directory.path();
-        fs::write(root.join("main.tex"), b"source").expect("source");
-        let baseline = ProjectSnapshot::capture(root, &manifest()).expect("snapshot");
-        let mut changes = PendingChanges::new(baseline.clone());
-        let start = Instant::now();
-        let quiet = Duration::from_millis(250);
-        assert!(changes.observe(baseline.clone(), start, quiet).is_none());
-        let mut latest = baseline;
-        for tick in 1..=12 {
-            fs::write(root.join("main.tex"), "x".repeat(tick)).expect("edit");
-            latest = ProjectSnapshot::capture(root, &manifest()).expect("snapshot");
-            assert!(
-                changes
-                    .observe(
-                        latest.clone(),
-                        start + Duration::from_millis(tick as u64 * 100),
-                        quiet
-                    )
-                    .is_none()
-            );
-        }
-        assert!(
-            changes
-                .observe(latest.clone(), start + Duration::from_millis(1449), quiet)
-                .is_none()
-        );
-        assert_eq!(
-            changes.observe(latest, start + Duration::from_millis(1450), quiet),
-            Some(vec![PathBuf::from("main.tex")])
-        );
-    }
-
-    #[test]
-    fn reverted_changes_cancel_a_pending_rebuild() {
-        use super::PendingChanges;
-        use std::time::{Duration, Instant};
-
+    fn a_temporary_file_that_vanishes_leaves_nothing_to_rebuild() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let root = directory.path();
         let baseline = ProjectSnapshot::capture(root, &manifest()).expect("snapshot");
-        let mut changes = PendingChanges::new(baseline.clone());
         fs::write(root.join("temporary.tex"), b"source").expect("temporary file");
         let edited = ProjectSnapshot::capture(root, &manifest()).expect("snapshot");
-        let start = Instant::now();
-        let quiet = Duration::from_millis(250);
-        assert!(changes.observe(edited, start, quiet).is_none());
-        assert!(changes.observe(baseline, start + quiet, quiet).is_none());
+        assert!(!baseline.changes_since(&edited).is_empty());
+        fs::remove_file(root.join("temporary.tex")).expect("remove");
+        let restored = ProjectSnapshot::capture(root, &manifest()).expect("snapshot");
+        assert!(baseline.changes_since(&restored).is_empty());
     }
 
     #[test]

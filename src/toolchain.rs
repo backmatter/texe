@@ -33,6 +33,8 @@ pub(crate) fn locked_format_bootstrap_providers(
     let recipe_engine = match engine {
         "pdflatex" | "xelatex" => "pdflatex",
         "lualatex" => "lualatex",
+        // Shipout's kernel and format ship with the compiler.
+        "shipout" => return Ok(&[]),
         _ => {
             return Err(TexeError::Toolchain(format!(
                 "remote packages require a locked format, but engine `{engine}` has no format \

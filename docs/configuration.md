@@ -51,6 +51,21 @@ engine = "xelatex"
 The system provider is outside texe's reproducibility guarantee: host
 executables, formats, packages, and fonts can all affect the output.
 
+To build with [Shipout](https://github.com/backmatter/shipout), put the
+`shipout` executable on your `PATH` and select it:
+
+```toml
+[toolchain]
+provider = "system"
+engine = "shipout"
+```
+
+Shipout carries its own LaTeX kernel and base fonts, so it needs no TeX
+installation. It runs the passes, BibTeX, and index stages a document needs
+itself. Packages still come from `texe.lock`. `texe watch` keeps one Shipout
+process running, so an edit resumes from the engine state just before the
+change instead of starting over.
+
 ## Project inputs
 
 Declare additional project folders that contain classes, styles, images, or

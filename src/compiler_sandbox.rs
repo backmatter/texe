@@ -116,7 +116,7 @@ pub(crate) fn font_environment(
     ])
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn system_read_paths() -> Result<Vec<(PathBuf, bool)>, TexeError> {
     // Landlock adds permissions. Granting /usr would also regrant all excluded
     // fonts, so partition only the ancestors of ambient font directories.
@@ -603,12 +603,13 @@ fn process_group_resident_bytes(group: u32) -> Result<u64, TexeError> {
         let stat = match fs::read_to_string(&path) {
             Ok(stat) => stat,
             // Unrelated users' processes can be hidden, and exited processes
-            // disappear during enumeration. Our group retains the caller's UID.
+            // disappear during enumeration, which reads as ESRCH once the file
+            // is open. Our group retains the caller's UID.
             Err(source)
                 if matches!(
                     source.kind(),
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-                ) =>
+                ) || source.raw_os_error() == Some(libc::ESRCH) =>
             {
                 continue;
             }

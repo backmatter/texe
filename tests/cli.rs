@@ -190,8 +190,6 @@ fn watch_is_a_first_class_cli_workflow() {
     let output = texe(Path::new("."), &["watch", "--help"]);
     assert_success(&output);
     let help = String::from_utf8_lossy(&output.stdout);
-    assert!(help.contains("--poll-ms"));
-    assert!(help.contains("--debounce-ms"));
     assert!(help.contains("--frozen"));
 }
 
@@ -328,16 +326,6 @@ fn help_describes_the_paper_workflow_in_user_language() {
         "{help}"
     );
     assert!(!help.contains("developer environment"), "{help}");
-}
-
-#[test]
-fn watch_rejects_out_of_range_debounce_before_loading_a_project() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    for value in ["0", "49", "60001", "invalid"] {
-        let output = texe(directory.path(), &["watch", "--debounce-ms", value]);
-        assert_eq!(output.status.code(), Some(2));
-        assert!(String::from_utf8_lossy(&output.stderr).contains("--debounce-ms"));
-    }
 }
 
 #[test]
