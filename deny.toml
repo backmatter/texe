@@ -32,7 +32,8 @@ allow = [
   "Unlicense",
   "Zlib",
 ]
-exceptions = []
+# A public-domain dedication, for the crate behind `texe watch`.
+exceptions = [{ allow = ["CC0-1.0"], crate = "notify" }]
 
 [sources]
 unknown-registry = "deny"
