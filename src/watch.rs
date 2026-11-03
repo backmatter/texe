@@ -220,7 +220,11 @@ engine = "pdflatex"
         fs::write(root.join("main.pdf"), "published PDF").unwrap();
         fs::write(root.join(".texe/editor/build-bridge.json"), "bridge").unwrap();
         let outputs = ProjectSnapshot::capture(root, &manifest()).unwrap();
-        assert!(baseline.changes_since(&outputs).is_empty());
+        assert!(
+            baseline.changes_since(&outputs).is_empty(),
+            "{:?}",
+            baseline.changes_since(&outputs)
+        );
         fs::write(root.join("main.tex"), "saved during compilation").unwrap();
         let saved = ProjectSnapshot::capture(root, &manifest()).unwrap();
         assert_eq!(
@@ -236,10 +240,18 @@ engine = "pdflatex"
         let baseline = ProjectSnapshot::capture(root, &manifest()).expect("snapshot");
         fs::write(root.join("temporary.tex"), b"source").expect("temporary file");
         let edited = ProjectSnapshot::capture(root, &manifest()).expect("snapshot");
-        assert!(!baseline.changes_since(&edited).is_empty());
+        assert!(
+            !baseline.changes_since(&edited).is_empty(),
+            "{:?}",
+            baseline.changes_since(&edited)
+        );
         fs::remove_file(root.join("temporary.tex")).expect("remove");
         let restored = ProjectSnapshot::capture(root, &manifest()).expect("snapshot");
-        assert!(baseline.changes_since(&restored).is_empty());
+        assert!(
+            baseline.changes_since(&restored).is_empty(),
+            "{:?}",
+            baseline.changes_since(&restored)
+        );
     }
 
     #[test]

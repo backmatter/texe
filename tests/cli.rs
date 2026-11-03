@@ -202,7 +202,7 @@ fn redirected_bare_texe_never_prompts_and_gives_a_scriptable_next_step() {
         String::from_utf8_lossy(&output.stdout).trim_end(),
         fixture(include_str!("fixtures/transcripts/bare-redirected.txt"))
     );
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     assert!(!directory.path().join("texe.toml").exists());
 }
 
@@ -211,7 +211,7 @@ fn bare_json_is_machine_readable_and_never_enters_the_wizard() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let output = texe(directory.path(), &["--json"]);
     assert_success(&output);
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     let report: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("bare JSON report");
     assert_eq!(report["schema"], "texe.bare-report/v1");
@@ -224,7 +224,7 @@ fn json_errors_keep_stdout_machine_readable_and_share_the_human_category() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let json = texe(directory.path(), &["doctor", "--json"]);
     assert_eq!(json.status.code(), Some(3));
-    assert!(json.stderr.is_empty());
+    assert_eq!(json.stderr, [] as [u8; 0]);
     let envelope: serde_json::Value =
         serde_json::from_slice(&json.stdout).expect("versioned JSON error");
     assert_eq!(envelope["schema"], "texe.error/v1");
@@ -237,7 +237,7 @@ fn json_errors_keep_stdout_machine_readable_and_share_the_human_category() {
 
     let human = texe(directory.path(), &["doctor"]);
     assert_eq!(human.status.code(), Some(3));
-    assert!(human.stdout.is_empty());
+    assert_eq!(human.stdout, [] as [u8; 0]);
     let canonical = directory
         .path()
         .canonicalize()
@@ -256,7 +256,7 @@ fn protected_build_safety_capabilities_are_machine_readable_without_running_a_co
     let directory = tempfile::tempdir().unwrap();
     let result = texe(directory.path(), &["__sandbox-run", "--capabilities"]);
     assert!(result.status.success());
-    assert!(result.stderr.is_empty());
+    assert_eq!(result.stderr, [] as [u8; 0]);
     let capabilities: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(
         capabilities,
@@ -288,7 +288,7 @@ fn quiet_init_has_no_success_output_but_still_creates_the_project() {
         String::from_utf8_lossy(&output.stdout).trim(),
         fixture(include_str!("fixtures/transcripts/init-quiet.txt"))
     );
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     assert!(directory.path().join("paper/texe.toml").is_file());
 }
 
@@ -297,7 +297,7 @@ fn invalid_json_command_returns_the_versioned_usage_envelope() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let output = texe(directory.path(), &["--json", "not-a-command"]);
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
     let envelope: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("JSON usage error");
     assert_eq!(envelope["schema"], "texe.error/v1");

@@ -349,13 +349,25 @@ engine = "pdflatex"
         .expect("manifest parses");
         manifest.validate().expect("manifest validates");
         assert_eq!(manifest.project.build_dir, Path::new(".texe/build"));
-        assert!(manifest.project.generated.is_empty());
-        assert!(manifest.inputs.roots.is_empty());
+        assert!(
+            manifest.project.generated.is_empty(),
+            "{:?}",
+            manifest.project.generated
+        );
+        assert!(
+            manifest.inputs.roots.is_empty(),
+            "{:?}",
+            manifest.inputs.roots
+        );
         assert_eq!(manifest.toolchain.provider, "managed");
         assert_eq!(manifest.toolchain.channel, "stable");
         assert_eq!(manifest.bibliography.bibtex, "bibtex");
         assert_eq!(manifest.bibliography.biber, "biber");
-        assert!(manifest.bibliography.roots.is_empty());
+        assert!(
+            manifest.bibliography.roots.is_empty(),
+            "{:?}",
+            manifest.bibliography.roots
+        );
         assert_eq!(manifest.index.makeindex, "makeindex");
         assert!(!manifest.toolchain.shell_escape);
         assert!(!manifest.toolchain.allow_unmanaged_commands);
@@ -671,7 +683,7 @@ roots = ["vendor/natbib"]
         .expect("settings resolve");
         assert_eq!(settings.entry, Path::new("paper.tex"));
         assert_eq!(settings.engine, "xelatex");
-        assert!(prompts.is_empty());
+        assert!(prompts.is_empty(), "{prompts:?}");
     }
 
     #[test]
