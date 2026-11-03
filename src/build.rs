@@ -60,7 +60,6 @@ impl AuxiliaryPassBudget {
 
 #[allow(clippy::struct_excessive_bools)] // These are independent public CLI flags.
 #[derive(Debug, Clone, Copy, Default)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct BuildOptions {
     /// Keep researcher sources read-only throughout compiler execution.
     pub protected: bool,

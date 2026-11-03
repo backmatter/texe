@@ -85,7 +85,11 @@ mod tests {
         fs::write(&outside, b"LaTeX Warning: outside private sentinel\n").unwrap();
         let log = output.join("main.log");
         std::os::unix::fs::symlink(&outside, &log).unwrap();
-        assert!(collect_warnings(&log).is_empty());
+        assert!(
+            collect_warnings(&log).is_empty(),
+            "{:?}",
+            collect_warnings(&log)
+        );
         assert_eq!(
             fs::read(&outside).unwrap(),
             b"LaTeX Warning: outside private sentinel\n"

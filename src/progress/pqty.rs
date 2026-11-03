@@ -120,14 +120,13 @@ impl DownloadPlanObservation {
     }
 
     fn sample(&self) -> Option<PackagePlanSample> {
-        Some(PackagePlanSample {
+        (self.plans > 0).then_some(PackagePlanSample {
             items_total: self.items_total,
             items_cached: self.items_cached,
             bytes_total: self.bytes_total?,
             bytes_cached: self.bytes_cached?,
             bytes_to_download: self.bytes_to_download?,
         })
-        .filter(|_| self.plans > 0)
     }
 }
 

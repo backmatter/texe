@@ -579,7 +579,7 @@ engine = "pdflatex"
         let directory = tempfile::tempdir().expect("temporary directory");
         let mut report = report();
         clean_project(directory.path(), &manifest(), &mut report).expect("clean");
-        assert!(report.project.is_empty());
+        assert!(report.project.is_empty(), "{:?}", report.project);
         assert_eq!(report.freed_bytes, 0);
     }
 
@@ -631,7 +631,7 @@ engine = "pdflatex"
                 }
                 .expect_err("protected metadata is rejected");
                 assert!(error.to_string().contains("metadata"));
-                assert!(result.project.is_empty());
+                assert!(result.project.is_empty(), "{:?}", result.project);
                 assert_eq!(result.freed_bytes, 0);
                 assert_eq!(
                     fs::read(path.join("research-recovery.txt")).unwrap(),
@@ -681,7 +681,7 @@ engine = "pdflatex"
                 }
                 .expect_err("source alias must not be cleaned");
                 assert!(error.to_string().contains("research source path"));
-                assert!(result.project.is_empty());
+                assert!(result.project.is_empty(), "{:?}", result.project);
                 assert_eq!(result.freed_bytes, 0);
                 assert!(root.join(".texe/build/output/main.aux").is_file());
                 assert!(root.join(".texe/texmf/research.tex").is_file());

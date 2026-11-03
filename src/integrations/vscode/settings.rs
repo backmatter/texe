@@ -66,6 +66,9 @@ fn parse(text: &str) -> Result<jsonc_parser::cst::CstRootNode, TexeError> {
         allow_single_quoted_strings: false,
         allow_hexadecimal_numbers: false,
         allow_unary_plus_numbers: false,
+        allow_bare_decimal_point_numbers: false,
+        allow_non_finite_numbers: false,
+        allow_extended_string_escapes: false,
     };
     let root = jsonc_parser::cst::CstRootNode::parse(text, &options)
         .map_err(|error| TexeError::Build(format!("invalid VS Code settings: {error}")))?;
@@ -650,12 +653,8 @@ mod tests {
         let source = "\\documentclass{article}\n\\begin{document}Research\\end{document}\n";
         fs::write(root.join("main.tex"), source).unwrap();
         let initial = write_portable_environment(root, "main.tex");
-        assert!(
-            super::preview(root).unwrap()["conflicts"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
+        let conflicts = super::preview(root).unwrap()["conflicts"].clone();
+        assert!(conflicts.as_array().unwrap().is_empty(), "{conflicts:?}");
         configure(root, false).unwrap();
         assert!(!root.join("texe.toml").exists());
         let language_path = root.join("tex-ls.toml");

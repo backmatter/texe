@@ -190,6 +190,6 @@ mod tests {
         assert_eq!(total, MAX_EXPANDED_BYTES);
         line.clear();
         assert!(read_line(&mut input, &mut line, &mut total).is_err());
-        assert!(line.is_empty());
+        assert!(line.is_empty(), "{line:?}");
     }
 }

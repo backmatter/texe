@@ -604,7 +604,7 @@ mod tests {
         assert_eq!(format_duration(Duration::from_millis(400)), "<1s");
         assert_eq!(format_duration(Duration::from_secs(9)), "9s");
         assert_eq!(format_duration(Duration::from_secs(125)), "2m 05s");
-        assert_eq!(format_duration(Duration::from_secs(62 * 60)), "1h 02m");
+        assert_eq!(format_duration(Duration::from_mins(62)), "1h 02m");
     }
 
     #[test]
@@ -614,7 +614,7 @@ mod tests {
         unrelated_incremental.incremental = true;
         let inner = ProgressInner {
             started: now
-                .checked_sub(Duration::from_secs(2 * 60))
+                .checked_sub(Duration::from_mins(2))
                 .expect("representable earlier instant"),
             engine: "pdflatex".to_string(),
             frozen: false,
@@ -948,9 +948,17 @@ mod tests {
         let mut progress = PlainProgress::default();
         let mut transcript = progress.update(PhaseKind::Toolchain);
         transcript.extend(progress.update(PhaseKind::Package));
-        assert!(progress.update(PhaseKind::Format).is_empty());
+        assert!(
+            progress.update(PhaseKind::Format).is_empty(),
+            "{:?}",
+            progress.update(PhaseKind::Format)
+        );
         transcript.extend(progress.update(PhaseKind::EngineDiscovery));
-        assert!(progress.update(PhaseKind::Package).is_empty());
+        assert!(
+            progress.update(PhaseKind::Package).is_empty(),
+            "{:?}",
+            progress.update(PhaseKind::Package)
+        );
         transcript.extend(progress.update(PhaseKind::EngineFinal));
         transcript.extend(progress.complete());
         let expected = include_str!("../tests/fixtures/transcripts/build-redirected-stages.txt")

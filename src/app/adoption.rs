@@ -367,12 +367,10 @@ mod tests {
         .unwrap();
         assert_eq!(manifest.toolchain.engine, "xelatex");
         assert_eq!(manifest.toolchain.provider, "managed");
-        assert!(
-            super::preflight(directory.path(), &manifest, true)
-                .unwrap()
-                .0
-                .is_empty()
-        );
+        let issues = super::preflight(directory.path(), &manifest, true)
+            .unwrap()
+            .0;
+        assert!(issues.is_empty(), "{issues:?}");
         assert!(!directory.path().join("texe.toml").exists());
         assert_eq!(
             std::fs::read_to_string(directory.path().join("main.tex")).unwrap(),

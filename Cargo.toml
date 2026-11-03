@@ -6,7 +6,7 @@ resolver = "3"
 name = "texe"
 version = "0.1.7"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.99"
 license = "MIT"
 description = "Create, build, and work on a LaTeX paper"
 readme = "README.md"
@@ -36,9 +36,9 @@ include = [
 ]
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
-cliclack = "0.5.5"
-ctrlc = { version = "3.4", features = ["termination"] }
+clap = { version = "4.6", features = ["derive"] }
+cliclack = "0.5.7"
+ctrlc = { version = "3.5", features = ["termination"] }
 crc32fast = "1.5"
 flate2 = "1.1"
 serde = { version = "1", features = ["derive"] }
@@ -52,10 +52,10 @@ thiserror = "2"
 toml = "1.1"
 ureq = "3"
 xz2 = "0.1"
-zip = { version = "9.0", default-features = false, features = ["deflate-flate2"] }
-jsonc-parser = { version = "0.33.1", features = ["cst", "serde", "serde_json"] }
+zip = { version = "9.3", default-features = false, features = ["deflate-flate2"] }
+jsonc-parser = { version = "0.34.0", features = ["cst", "serde", "serde_json"] }
 unicode-normalization = "0.1"
-toml_edit = "0.22.27"
+toml_edit = "0.25.17"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4.7"
@@ -67,7 +67,7 @@ seccompiler = "0.5"
 same-file = "1.0"
 
 [dev-dependencies]
-jsonschema = { version = "0.49", default-features = false }
+jsonschema = { version = "0.60", default-features = false }
 tempfile = "3"
 
 [lints.rust]
