@@ -63,6 +63,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # No users yet: every release stays on 0.1.x (release-plz would move a
+      # breaking change to 0.2.0).
+      - name: Keep releases on 0.1.x
+        run: grep -Eq '^version = "0\.1\.[0-9]+"' Cargo.toml || { echo "::error::The version must stay on 0.1.x"; exit 1; }
 
       - name: Show pinned toolchain
         run: rustup show active-toolchain
