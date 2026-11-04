@@ -242,7 +242,7 @@ pub fn build_project(
                 "The build environment changed; retry this build".into(),
             ));
         }
-        if matches!(descriptor["engine"].as_str(), Some("shipout" | "tectonic")) {
+        if descriptor["engine"] == "shipout" {
             return crate::portable::native::build(
                 project_root,
                 manifest,
@@ -1134,7 +1134,7 @@ pub(crate) fn prepare_portable(
             "Portable environment fingerprint mismatch".into(),
         ));
     }
-    if !matches!(toolchain.engine.as_str(), "shipout" | "tectonic") {
+    if toolchain.engine != "shipout" {
         format::ensure(
             root,
             toolchain,

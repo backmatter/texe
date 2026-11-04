@@ -476,8 +476,6 @@ fn allowed_environment(key: &OsStr) -> bool {
             | "FORCE_SOURCE_DATE"
             | "LD_LIBRARY_PATH"
             | "SHIPOUT_ASSETS_ROOT"
-            | "TECTONIC_CACHE_DIR"
-            | "TECTONIC_UNTRUSTED_MODE"
             | "PAR_GLOBAL_TMPDIR"
             | "PAR_GLOBAL_TEMP"
             | "FONTCONFIG_PATH"
@@ -541,7 +539,6 @@ fn environment(
     command.env("openin_any", "p");
     command.env("openout_any", "p");
     command.env("shell_escape", "f");
-    command.env("TECTONIC_UNTRUSTED_MODE", "1");
 }
 
 pub(crate) fn cancel_active() {
