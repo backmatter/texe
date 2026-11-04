@@ -306,7 +306,9 @@ binary, policy, pids = sys.argv[1:]
 code = "import os,pathlib,sys,time; pid=os.fork(); pathlib.Path(sys.argv[1]).write_text(str(os.getpid())+','+str(pid)) if pid else None; time.sleep(60)"
 child = subprocess.Popen([binary, '__sandbox-run', '--policy', policy, '--executable', '/usr/bin/python3', '--', '-c', code, pids], process_group=0, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for _ in range(200):
-    if pathlib.Path(pids).exists():
+    content = pathlib.Path(pids).read_text() if pathlib.Path(pids).exists() else ""
+    ids = content.split(',')
+    if len(ids) == 2 and all(value.isdigit() for value in ids):
         print('ready', flush=True)
         time.sleep(60)
         break
