@@ -246,3 +246,72 @@ fn warning_summary(count: usize) -> String {
         count => format!("{count} warnings"),
     }
 }
+
+pub(super) fn run_fetch(
+    project: Option<&Path>,
+    frozen: bool,
+    offline: bool,
+    presentation: ux::Presentation,
+) -> Result<(), TexeError> {
+    // Fetch never executes a source interpreter or project-supplied helper.
+    let _protection = build::process::ProtectionScope::enter(true);
+    let context = load_project(project)?;
+    let root = &context.root;
+    if !root.join(crate::lockfile::LOCK_NAME).is_file() {
+        return Err(TexeError::Build(
+            "texe fetch requires texe.lock; run `texe build` to resolve the Paper first".into(),
+        ));
+    }
+    crate::portable::private_directory(root, Path::new(".texe/project"))?;
+    let _guard = crate::guard::BuildGuard::acquire(&root.join(".texe/project"))?;
+    let original_lock = crate::build::generated::read(
+        root,
+        root,
+        &root.join(crate::lockfile::LOCK_NAME),
+        crate::build::generated::MAX_METADATA,
+    )?;
+    let (toolchain, tools) = resolve_components(&context, verification_policy(true), offline)?;
+    let progress = Progress::new(
+        progress::history_path(root)?,
+        &context.manifest.toolchain.engine,
+        true,
+        context.manifest.toolchain.max_passes,
+        !presentation.quiet,
+        presentation.verbose,
+        ProgressLayout::Standalone,
+    )
+    .with_machine_output(presentation.json);
+    let lock = root.join(&context.manifest.packages.lock);
+    crate::lockfile::restore_package_lock(root, &lock, &toolchain.identity, frozen)?;
+    tools.install(
+        root,
+        &context.manifest,
+        &toolchain,
+        &lock,
+        &root.join(&context.manifest.packages.texmf),
+        &progress,
+    )?;
+    let bytes = crate::lockfile::project_lock_bytes(
+        root,
+        &lock,
+        &toolchain.identity,
+        crate::lockfile::read_source_date_epoch(root)
+            .ok_or_else(|| TexeError::Build("texe.lock has no build timestamp".into()))?,
+    )?;
+    if crate::build::generated::read(
+        root,
+        root,
+        &root.join(crate::lockfile::LOCK_NAME),
+        crate::build::generated::MAX_METADATA,
+    )? != original_lock
+    {
+        return Err(TexeError::SourcesChanged);
+    }
+    crate::build::generated::write(root, &root.join(crate::lockfile::LOCK_NAME), &bytes)?;
+    if presentation.json {
+        print_json(
+            &serde_json::json!({"schema": "texe.fetch-report/v1", "lock": root.join(crate::lockfile::LOCK_NAME)}),
+        )?;
+    }
+    Ok(())
+}

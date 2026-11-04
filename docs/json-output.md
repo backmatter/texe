@@ -13,6 +13,7 @@ validated against these schemas in CI.
 | Result | Schema identifier | JSON Schema |
 | --- | --- | --- |
 | Project manifest | `texe.project/v1` | [`texe.project.schema.json`](../schemas/texe.project.schema.json) |
+| Fetch report | `texe.fetch-report/v1` | [`texe.fetch-report.schema.json`](../schemas/texe.fetch-report.schema.json) |
 | Project lock | `texe.lock/v1` | [`texe.lock.schema.json`](../schemas/texe.lock.schema.json) |
 | Build | `texe.build-report/v1` | [`texe.build-report.schema.json`](../schemas/texe.build-report.schema.json) |
 | Build progress (stderr) | `texe.build-progress/v1` | [`texe.build-progress.schema.json`](../schemas/texe.build-progress.schema.json) |

@@ -119,10 +119,6 @@ pub fn build_fingerprint(
         project_root
             .join(&manifest.project.build_dir)
             .join(LOCK_NAME)
-    } else if crate::build::process::protection_requested() {
-        project_root
-            .join(&manifest.project.build_dir)
-            .join(LOCK_NAME)
     } else {
         project_root.join(LOCK_NAME)
     };
@@ -804,34 +800,25 @@ engine = "pdflatex"
     }
 
     #[test]
-    fn protected_local_cache_uses_private_lock_and_current_unlocked_sources() {
+    fn protected_local_cache_uses_paper_lock_and_current_unlocked_sources() {
         let fixture = project();
         let root = fixture.path();
-        let private_lock = root.join(".texe/build/texe.lock");
-        fs::create_dir_all(private_lock.parent().unwrap()).unwrap();
-        let original_lock = fs::read(root.join(LOCK_NAME)).unwrap();
-        fs::write(&private_lock, &original_lock).unwrap();
         let standalone = fingerprint(root);
         {
             let _protection = crate::build::process::ProtectionScope::enter(true);
             let original = fingerprint(root);
             assert_ne!(original, standalone);
-            fs::write(
-                root.join(LOCK_NAME),
-                b"researcher root lock stays untouched",
-            )
-            .unwrap();
-            assert_eq!(fingerprint(root), original);
+            let mut lock: serde_json::Value =
+                serde_json::from_slice(&fs::read(root.join(LOCK_NAME)).unwrap()).unwrap();
+            lock["runtimes"] = serde_json::json!({"linux-x64": identity()});
+            fs::write(root.join(LOCK_NAME), serde_json::to_vec(&lock).unwrap()).unwrap();
+            assert_ne!(fingerprint(root), original);
             fs::write(root.join("new-input.tex"), b"newly included research").unwrap();
             let new_input = fingerprint(root);
             assert_ne!(new_input, original);
             fs::write(root.join("new-input.tex"), b"edited new research").unwrap();
             assert_ne!(fingerprint(root), new_input);
         }
-        assert_eq!(
-            fs::read(root.join(LOCK_NAME)).unwrap(),
-            b"researcher root lock stays untouched"
-        );
     }
 
     #[test]

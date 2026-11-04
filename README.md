@@ -67,8 +67,15 @@ Setup writes `texe.toml`. Commit it together with `texe.lock` to pin both the
 configuration and the exact tools and packages. `.texe/` holds generated files;
 do not commit it.
 
-Managed builds run pdfLaTeX or LuaLaTeX on Linux x86-64, Windows x86-64, and
-Apple Silicon macOS.
+The lock contains one exact pqty package closure, including archive and file
+hashes, and a `runtimes` map keyed by target. Each entry records the verified
+runtime fingerprint and binary artifact hashes for that target. A non-frozen
+build on a new target adds its runtime without changing the package closure;
+`--frozen` requires that target's identity to already be present. Package changes
+invalidate other targets' runtime entries until they have been verified again.
+
+Managed builds support pdfLaTeX, XeLaTeX, and LuaLaTeX. The recipe lists the
+available engines and artifacts for each supported target.
 
 ## Documentation
 

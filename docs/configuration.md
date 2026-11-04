@@ -151,3 +151,19 @@ disables the no-op build cache, and ends the reproducibility guarantee.
 ## What to commit
 
 Commit `texe.toml` and `texe.lock`. Everything below `.texe/` is generated.
+Protected builds also publish the Paper lock at the project root; compilers
+cannot modify it.
+
+`texe.lock` keeps one exact pqty package selection and a `runtimes` map keyed by
+portable target names (for example, `linux-x64` and `macos-arm64`). An unlocked
+target is added by a non-frozen build using the existing packages. A frozen
+build requires an identity for the current target and checks its fingerprint
+and artifact hashes. Changing packages clears other targets' identities until
+they have been verified against the new selection.
+
+Run `texe fetch --project .` to restore and verify the locked archives and
+materialize their package tree without executing TeX. It requires an existing
+Paper lock, keeps its package selection, and can add the current target's
+verified runtime identity. Use `--frozen` to require that identity already,
+and `--offline` to use populated caches only. A Paper without a lock needs an
+initial `texe build` to discover and resolve its dependencies.
