@@ -483,15 +483,18 @@ fn run_bibliography_processor(
         } else {
             None
         };
-    let private_cache = (protected && !hosted).then(|| {
+    let private_cache = protected.then(|| {
         project_root
             .join(&manifest.project.build_dir)
             .join("biber-cache")
     });
-    let par_cache = executable
-        .par_cache
-        .as_ref()
-        .map(|cache| private_cache.as_ref().unwrap_or(cache));
+    let par_cache = executable.par_cache.as_ref().map(|cache| {
+        if hosted {
+            cache
+        } else {
+            private_cache.as_ref().unwrap_or(cache)
+        }
+    });
     if let Some(cache) = par_cache {
         if protected && !hosted {
             crate::portable::private_directory(
@@ -560,6 +563,18 @@ fn run_bibliography_processor(
                 )));
             }
             crate::compiler_sandbox::prepare_biber_native_libraries(project_root, cache)?;
+            #[cfg(unix)]
+            if hosted {
+                let view = private_cache
+                    .as_ref()
+                    .ok_or_else(|| TexeError::Build("Missing bibliography cache view".into()))?;
+                prepare_hosted_biber_view(project_root, cache, view)?;
+                for (name, value) in &mut environment {
+                    if matches!(name.to_str(), Some("PAR_GLOBAL_TEMP" | "PAR_GLOBAL_TMPDIR")) {
+                        view.as_os_str().clone_into(value);
+                    }
+                }
+            }
         }
         let reads = executable
             .library_dir
@@ -893,6 +908,42 @@ fn managed_bibliography_path(
             "managed bibliography path cannot be represented in PATH: {error}"
         ))
     })
+}
+
+/// PAR opens inc.lock for writing even when its entire runtime is present.
+/// The job owns that lock; executable links still resolve to trusted cache bytes.
+#[cfg(unix)]
+fn prepare_hosted_biber_view(project: &Path, cache: &Path, view: &Path) -> Result<(), TexeError> {
+    super::generated::validate_parent(project, view)?;
+    if view.exists() {
+        fs::remove_dir_all(view).map_err(|source| TexeError::Io {
+            path: view.into(),
+            source,
+        })?;
+    }
+    crate::portable::private_directory(
+        project,
+        view.strip_prefix(project)
+            .map_err(|_| TexeError::Build("Invalid bibliography cache view".into()))?,
+    )?;
+    for entry in fs::read_dir(cache).map_err(|source| TexeError::Io {
+        path: cache.into(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| TexeError::Io {
+            path: cache.into(),
+            source,
+        })?;
+        if entry.file_name() == "inc.lock" {
+            continue;
+        }
+        let target = view.join(entry.file_name());
+        std::os::unix::fs::symlink(entry.path(), &target).map_err(|source| TexeError::Io {
+            path: target,
+            source,
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
