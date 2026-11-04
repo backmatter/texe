@@ -6,6 +6,20 @@ are generated from Conventional Commit subjects; do not edit them by hand.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/backmatter/texe/compare/v0.1.8...v0.2.0) - 2026-11-04
+
+### Added
+- Support hosted builds from authoritative Paper locks ([#43](https://github.com/backmatter/texe/pull/43))
+- *(build)* Add portable target locks and verified package fetching
+
+### Fixed
+- *(fonts)* Prevent Type 1 faces shadowing Unicode native fonts ([#45](https://github.com/backmatter/texe/pull/45))
+- *(build)* Discover missing resources and generate locked language formats ([#46](https://github.com/backmatter/texe/pull/46))
+- *(toolchain)* Keep verification writes outside runtime payloads ([#44](https://github.com/backmatter/texe/pull/44))
+
+### Refactor
+- [**breaking**] Remove the Tectonic engine ([#40](https://github.com/backmatter/texe/pull/40))
+
 ## [0.1.8](https://github.com/backmatter/texe/compare/v0.1.7...v0.1.8) - 2026-11-04
 
 ### Added
