@@ -4,43 +4,92 @@
   "title": "texe project lock v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "generated_with", "source_date_epoch", "toolchain", "packages"],
+  "required": [
+    "schema",
+    "generated_with",
+    "source_date_epoch",
+    "runtimes",
+    "packages"
+  ],
   "properties": {
-    "schema": { "const": "texe.lock/v1" },
-    "generated_with": { "type": "string" },
+    "schema": {
+      "const": "texe.lock/v1"
+    },
+    "generated_with": {
+      "type": "string"
+    },
     "source_date_epoch": {
       "type": "integer",
       "minimum": 0,
       "description": "Build timestamp handed to the engine as SOURCE_DATE_EPOCH so a locked project renders identical bytes on every machine. Written by every current texe release."
     },
-    "toolchain": {
+    "packages": {
+      "$ref": "https://raw.githubusercontent.com/backmatter/pqty/main/schemas/pqty.lock.schema.json"
+    },
+    "runtimes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(linux-(x64|arm64)|macos-(x64|arm64)|windows-x64)$": {
+          "$ref": "#/$defs/runtime"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "engine", "channel", "target", "fingerprint"],
+      "required": [
+        "provider",
+        "engine",
+        "channel",
+        "target",
+        "fingerprint"
+      ],
       "properties": {
-        "provider": { "type": "string" },
-        "engine": { "type": "string" },
-        "channel": { "type": "string" },
-        "target": { "type": "string" },
-        "fingerprint": { "type": "string" },
-        "registry_url": { "type": "string" },
-        "registry_metadata_digest": { "type": "string" },
+        "provider": {
+          "type": "string"
+        },
+        "engine": {
+          "type": "string"
+        },
+        "channel": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "registry_url": {
+          "type": "string"
+        },
+        "registry_metadata_digest": {
+          "type": "string"
+        },
         "artifacts": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["provider", "sha512"],
+            "required": [
+              "provider",
+              "sha512"
+            ],
             "properties": {
-              "provider": { "type": "string" },
-              "sha512": { "type": "string" }
+              "provider": {
+                "type": "string"
+              },
+              "sha512": {
+                "type": "string"
+              }
             }
           }
         }
       }
-    },
-    "packages": {
-      "$ref": "https://raw.githubusercontent.com/backmatter/pqty/main/schemas/pqty.lock.schema.json"
     }
   }
 }

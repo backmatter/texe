@@ -259,6 +259,18 @@ pub fn build_project(
         frozen: options.frozen || portable.is_some(),
         ..options
     };
+    let adding_target = if portable.is_some() {
+        false
+    } else {
+        crate::lockfile::adding_target(project_root, &toolchain.identity, options.frozen)?
+    };
+    let frozen_packages = options.frozen || adding_target;
+    let original_project_lock = generated::optional(
+        project_root,
+        project_root,
+        &project_root.join(crate::lockfile::LOCK_NAME),
+        generated::MAX_METADATA,
+    )?;
     let started = Instant::now();
     let context = BuildContext::new(project_root, manifest, toolchain, tools, progress)?;
     // Held for the whole build, including the fast path: the check reads the
@@ -317,24 +329,38 @@ pub fn build_project(
     } else {
         None
     };
-    let mut state = context.prepare(options.frozen)?;
+    let mut state = context.prepare(options.frozen, frozen_packages)?;
     let internal_artifact = if toolchain.engine == "shipout" {
-        context.shipout_build(&mut state, options.frozen)?
+        context.shipout_build(&mut state, frozen_packages)?
     } else {
-        if !options.frozen && context.discovery_required(&state) {
+        if !frozen_packages && context.discovery_required(&state) {
             context.discover_packages(&mut state)?;
         }
-        context.frozen_build(&mut state, options.frozen)?
+        context.frozen_build(&mut state, frozen_packages)?
     };
     let warnings = collect_warnings(
         &context
             .output_dir
             .join(format!("{}.log", job_stem(&manifest.project.entry)?)),
     );
-    let project_lock =
-        project_lock_bytes(&context.lock, &toolchain.identity, context.timestamp.locked)?;
+    let project_lock = project_lock_bytes(
+        project_root,
+        &context.lock,
+        &toolchain.identity,
+        context.timestamp.locked,
+    )?;
     let publish = || {
-        if protected_publication {
+        if portable.is_none()
+            && generated::optional(
+                project_root,
+                project_root,
+                &project_root.join(crate::lockfile::LOCK_NAME),
+                generated::MAX_METADATA,
+            )? != original_project_lock
+        {
+            return Err(TexeError::SourcesChanged);
+        }
+        if portable.is_some() {
             artifact::publish_artifact_at(
                 project_root,
                 &internal_artifact,
@@ -571,7 +597,7 @@ impl<'a> BuildContext<'a> {
         )
     }
 
-    fn prepare(&self, frozen: bool) -> Result<BuildState, TexeError> {
+    fn prepare(&self, frozen: bool, frozen_packages: bool) -> Result<BuildState, TexeError> {
         if let Some(descriptor) = crate::portable::active(self.project_root)? {
             crate::portable::restore_package_lock_from_descriptor(
                 self.project_root,
@@ -586,7 +612,7 @@ impl<'a> BuildContext<'a> {
                 frozen,
             )?;
         }
-        if frozen {
+        if frozen_packages {
             self.tools.ensure_lock(&EnsureLockRequest {
                 project_root: self.project_root,
                 manifest: self.manifest,

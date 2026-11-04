@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/backmatter/texe/main/schemas/texe.fetch-report.schema.json",
+  "title": "texe fetch report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "lock"
+  ],
+  "properties": {
+    "schema": {
+      "const": "texe.fetch-report/v1"
+    },
+    "lock": {
+      "type": "string"
+    }
+  }
+}

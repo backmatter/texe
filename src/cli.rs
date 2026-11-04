@@ -195,6 +195,18 @@ pub(crate) enum Command {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// Fetch and verify only the packages in the Paper lock, without executing TeX.
+    Fetch {
+        /// Project directory or texe.toml.
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// Require this target's existing runtime identity.
+        #[arg(long)]
+        frozen: bool,
+        /// Require populated caches without accessing the network.
+        #[arg(long)]
+        offline: bool,
+    },
     /// Rebuild whenever project inputs change.
     Watch {
         /// Project directory or texe.toml. Searches ancestors when omitted.

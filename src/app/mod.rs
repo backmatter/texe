@@ -134,6 +134,11 @@ fn run_command(command: Command, presentation: ux::Presentation) -> Result<(), T
         command @ Command::Init { .. } => run_init_command(command, presentation),
         command @ Command::Doctor { .. } => run_doctor_command(command, presentation),
         command @ Command::Clean { .. } => run_clean_command(command, presentation),
+        Command::Fetch {
+            project,
+            frozen,
+            offline,
+        } => build_command::run_fetch(project.as_deref(), frozen, offline, presentation),
         command @ Command::Build { .. } => run_build_command(command, presentation),
         command @ Command::Watch { .. } => run_watch_command(command, presentation),
         command @ Command::Editor { .. } => run_editor_command(command, presentation),
