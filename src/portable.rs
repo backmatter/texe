@@ -111,7 +111,7 @@ pub(crate) fn validate(value: &Value) -> Result<(), TexeError> {
     }
     if !matches!(
         text(value, "engine")?,
-        "pdflatex" | "xelatex" | "lualatex" | "shipout" | "tectonic"
+        "pdflatex" | "xelatex" | "lualatex" | "shipout"
     ) {
         return Err(error("Unsupported environment engine"));
     }
@@ -239,7 +239,7 @@ pub(crate) fn manifest(value: &Value) -> Result<ProjectManifest, TexeError> {
     let path = directory.to_string_lossy().replace('\\', "/");
     let engine = text(value, "engine")?;
     let channel = text(&value["profile"], "runtimeRecipe")?;
-    let provider = if matches!(engine, "shipout" | "tectonic") {
+    let provider = if engine == "shipout" {
         "portable"
     } else {
         "managed"
@@ -405,7 +405,7 @@ pub(crate) fn prepare(
             "Environment package lock differs from the verified bundle",
         ));
     }
-    let toolchain = if matches!(text(&value, "engine")?, "shipout" | "tectonic") {
+    let toolchain = if text(&value, "engine")? == "shipout" {
         native::install(&value, runtime, VerificationPolicy::Interval)?;
         native::resolve(
             &root,
@@ -433,14 +433,12 @@ pub(crate) fn prepare(
         ProgressLayout::Standalone,
     );
     crate::build::prepare_portable(&root, &manifest, &toolchain, &tools, &value, &progress)?;
-    if requires_biber(&value) {
-        if let Some(runtime) = &toolchain.managed {
-            crate::toolchain::ensure_managed_biber(runtime)?;
-        } else {
-            native::prepared_biber(&value, toolchain.verification, offline)?;
-        }
+    if requires_biber(&value)
+        && let Some(runtime) = &toolchain.managed
+    {
+        crate::toolchain::ensure_managed_biber(runtime)?;
     }
-    if matches!(text(&value, "engine")?, "shipout" | "tectonic") {
+    if text(&value, "engine")? == "shipout" {
         native::build(
             &root,
             &manifest,
@@ -534,6 +532,29 @@ mod tests {
         )
         .into();
         value
+    }
+
+    #[test]
+    fn portable_environments_accept_only_supported_engines() {
+        for engine in ["pdflatex", "xelatex", "lualatex", "shipout", "unknown"] {
+            let mut value = descriptor();
+            value["engine"] = engine.into();
+            value.as_object_mut().unwrap().remove("id");
+            value["id"] = format!(
+                "sha256:{}",
+                super::digest(&serde_json::to_vec(&value).unwrap())
+            )
+            .into();
+            let result = super::validate(&value);
+            if engine == "unknown" {
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    super::error("Unsupported environment engine").to_string()
+                );
+            } else {
+                result.unwrap();
+            }
+        }
     }
 
     #[test]

@@ -83,8 +83,8 @@ offline once prepared. Adding a missing dependency while online refreshes the
 environment and retries the build. Protected local compilation currently
 requires Linux x64 with Landlock V3; unsupported platforms stop before running
 the source. Standalone managed adoption supports pdfLaTeX, XeLaTeX and LuaLaTeX;
-prepared Citet environments also support Shipout and Tectonic. Shipout Biber
-papers require another engine.
+prepared Citet environments also support Shipout. Shipout Biber papers require
+another engine.
 
 Protected builds bound the process group's resident memory to 2 GiB and private
 compiler output to 4 GiB and 100,000 entries. The output budget also adapts to
