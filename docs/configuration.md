@@ -48,6 +48,13 @@ provider = "system"
 engine = "xelatex"
 ```
 
+Protected builds expose locked fonts to native family lookup through a private
+Fontconfig configuration. Type 1 faces are excluded from that lookup: duplicate
+legacy faces can shadow OpenType fonts with the same name and lack their Unicode
+glyphs. Type 1 metrics and outlines remain available to TeX through its usual
+locked font maps. This does not pin ambient native font libraries or promise
+identical shaping across different library versions.
+
 The system provider is outside texe's reproducibility guarantee: host
 executables, formats, packages, and fonts can all affect the output.
 
