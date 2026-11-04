@@ -524,11 +524,13 @@ mod tests {
     use crate::toolchain::component::{
         biber_artifact_identities, runtime_file_identities, verify_managed_component,
     };
-    use crate::toolchain::managed::{record_verification, unix_time, verify_installed_runtime};
+    use crate::toolchain::managed::{
+        record_verification, unix_time, verification_stamp_path, verify_installed_runtime,
+    };
     use crate::toolchain::{
         COMPONENT_MARKER, ComponentMarker, READY_MARKER, RuntimeMarker, ToolchainIdentity,
-        VERIFICATION_INTERVAL_SECONDS, VERIFICATION_SCHEMA, VERIFIED_MARKER, VerificationPolicy,
-        VerificationStamp, managed_identity, resolve_executable,
+        VERIFICATION_INTERVAL_SECONDS, VERIFICATION_SCHEMA, VerificationPolicy, VerificationStamp,
+        managed_identity, resolve_executable,
     };
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     use std::io::Write as _;
@@ -689,7 +691,7 @@ mod tests {
         let identity = installed_runtime(root);
         verify_installed_runtime(root, &identity, VerificationPolicy::Deep)
             .expect("untampered runtime");
-        assert!(root.join(VERIFIED_MARKER).is_file());
+        assert!(verification_stamp_path(root).expect("stamp path").is_file());
 
         // The stamp is what the interval policy trusts; the deep check and an
         // expired stamp both still read the files.
@@ -704,7 +706,7 @@ mod tests {
             verified_at: unix_time().expect("clock") - VERIFICATION_INTERVAL_SECONDS - 1,
         };
         fs::write(
-            root.join(VERIFIED_MARKER),
+            verification_stamp_path(root).expect("stamp path"),
             serde_json::to_vec(&stamp).expect("stamp JSON"),
         )
         .expect("expired stamp");
@@ -718,10 +720,30 @@ mod tests {
         let identity = installed_runtime(root);
         let before = runtime_file_identities(root).expect("file identities");
         record_verification(root, &identity.fingerprint);
-        assert!(root.join(VERIFIED_MARKER).is_file());
+        assert!(verification_stamp_path(root).expect("stamp path").is_file());
         assert_eq!(before, runtime_file_identities(root).expect("identities"));
         verify_installed_runtime(root, &identity, VerificationPolicy::Deep)
             .expect("stamped runtime still verifies");
+    }
+
+    #[test]
+    fn concurrent_stamp_temporary_does_not_change_payload_verification() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let root = directory.path().join("runtime");
+        fs::create_dir(&root).expect("runtime directory");
+        let identity = installed_runtime(&root);
+        record_verification(&root, &identity.fingerprint);
+        let stamp = verification_stamp_path(&root).expect("stamp path");
+        let temporary = stamp.with_file_name(".runtime.json.texe-1.2.3.tmp");
+        fs::write(&temporary, fs::read(&stamp).expect("stamp")).expect("pending stamp");
+        verify_installed_runtime(&root, &identity, VerificationPolicy::Deep)
+            .expect("concurrent metadata writer does not affect payload");
+        // An arbitrary temporary file *inside* the runtime remains a failure.
+        fs::write(root.join("unexpected.tmp"), b"untrusted").expect("extra file");
+        assert!(verify_installed_runtime(&root, &identity, VerificationPolicy::Deep).is_err());
+        fs::remove_file(root.join("unexpected.tmp")).expect("remove extra file");
+        fs::write(root.join("bin/pdftex"), b"tampered").expect("changed binary");
+        assert!(verify_installed_runtime(&root, &identity, VerificationPolicy::Deep).is_err());
     }
 
     #[test]
