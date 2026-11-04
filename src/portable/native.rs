@@ -748,7 +748,6 @@ pub(crate) fn resolve(
             registry_metadata_digest: None,
             artifacts: vec![],
         },
-        auxiliary: None,
         managed: None,
         verification,
         offline,

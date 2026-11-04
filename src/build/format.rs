@@ -92,6 +92,10 @@ pub(super) fn ensure(
     packages_remote: bool,
     progress: &Progress,
 ) -> Result<Option<ManagedFormat>, TexeError> {
+    // Shipout carries a sealed format and implements its own auxiliary stages.
+    if toolchain.engine == "shipout" {
+        return Ok(None);
+    }
     let managed = toolchain.managed.as_ref();
     if managed.is_none() && !packages_remote {
         return Ok(None);
@@ -837,7 +841,6 @@ mod tests {
                     registry_metadata_digest: None,
                     artifacts: Vec::new(),
                 },
-                auxiliary: None,
                 managed: None,
                 verification: VerificationPolicy::Deep,
                 offline: true,

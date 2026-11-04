@@ -385,7 +385,6 @@ entry = "main.tex"
 [toolchain]
 provider = "system"
 engine = "shipout"
-allow_unmanaged_commands = true
 [packages]
 remote = false
 manager = {}

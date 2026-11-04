@@ -287,7 +287,7 @@ fn persistent_control_digest(
 ) -> Result<String, TexeError> {
     let mut hasher = Sha256::new();
     hasher.update(control_digest(control)?.as_bytes());
-    if toolchain.auxiliary_runtime().is_none() && manifest.index.makeindex == "makeindex" {
+    if toolchain.managed.is_none() && manifest.index.makeindex == "makeindex" {
         let executable = resolve_makeindex(project_root, manifest, toolchain)?;
         hasher.update(auxiliary::required_file_digest(&executable)?.as_bytes());
     }
@@ -354,7 +354,7 @@ fn run_makeindex(
             &super::process::source_read_roots(project_root, manifest)?,
             &[],
         )?
-    } else if toolchain.auxiliary_runtime().is_some() {
+    } else if toolchain.managed.is_some() {
         raw_engine_output(&executable, &arguments, directory, &environment)?
     } else {
         raw_output(&executable, &arguments, directory, &environment)?
@@ -386,7 +386,7 @@ fn resolve_makeindex(
     manifest: &ProjectManifest,
     toolchain: &ResolvedToolchain,
 ) -> Result<PathBuf, TexeError> {
-    if let Some(managed) = toolchain.auxiliary_runtime()
+    if let Some(managed) = &toolchain.managed
         && manifest.index.makeindex == "makeindex"
     {
         return Ok(managed.binary_dir.join("makeindex"));
@@ -405,7 +405,8 @@ fn index_environment(
     let mut roots = vec![project_root, output_dir, package_styles.as_path()];
     // Own the managed path for the duration of search-path construction.
     let managed_styles = toolchain
-        .auxiliary_runtime()
+        .managed
+        .as_ref()
         .map(|managed| managed.root.join("texmf-dist/makeindex"));
     if let Some(styles) = managed_styles.as_deref() {
         roots.push(styles);
@@ -414,7 +415,7 @@ fn index_environment(
         OsString::from("INDEXSTYLE"),
         search_path_from(&roots, working_directory),
     )];
-    if let Some(managed) = toolchain.auxiliary_runtime() {
+    if let Some(managed) = &toolchain.managed {
         environment.push((OsString::from("PATH"), managed_path(&managed.binary_dir)));
     }
     environment

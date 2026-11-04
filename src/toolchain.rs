@@ -130,19 +130,10 @@ pub struct ResolvedToolchain {
     pub identity: ToolchainIdentity,
     #[serde(skip)]
     pub managed: Option<ManagedRuntime>,
-    /// Verified auxiliary tools for engines that carry their own typesetter.
-    #[serde(skip)]
-    pub auxiliary: Option<ManagedRuntime>,
     #[serde(skip)]
     pub(crate) verification: VerificationPolicy,
     #[serde(skip)]
     pub(crate) offline: bool,
-}
-
-impl ResolvedToolchain {
-    pub(crate) fn auxiliary_runtime(&self) -> Option<&ManagedRuntime> {
-        self.managed.as_ref().or(self.auxiliary.as_ref())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -288,7 +279,6 @@ impl ToolchainProvider for ManagedToolchainProvider {
             texmf_dist,
             engine_roots: vec![root.clone()],
             identity,
-            auxiliary: None,
             managed: Some(ManagedRuntime {
                 snapshot: selection.snapshot.snapshot.clone(),
                 binary_dir,

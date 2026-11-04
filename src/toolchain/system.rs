@@ -11,8 +11,8 @@ use crate::config::ToolchainConfig;
 use crate::toolchain::catalog;
 use crate::toolchain::component::biber_artifact_identities;
 use crate::toolchain::{
-    ManagedToolchainProvider, ResolvedToolchain, ToolchainArtifactIdentity, ToolchainIdentity,
-    ToolchainProvider, VerificationPolicy,
+    ResolvedToolchain, ToolchainArtifactIdentity, ToolchainIdentity, ToolchainProvider,
+    VerificationPolicy,
 };
 
 #[derive(Debug, Default)]
@@ -88,7 +88,6 @@ impl ToolchainProvider for SystemToolchainProvider {
                 registry_metadata_digest: None,
                 artifacts: biber_artifact_identities(biber_selection),
             },
-            auxiliary: None,
             managed: None,
             verification,
             offline,
@@ -148,24 +147,25 @@ fn resolve_shipout(
         .or_else(|| {
             runtime_root.and_then(|root| std::fs::read_to_string(root.join("runtime.sha256")).ok())
         });
-    let binary = executable_digest(&canonical)?;
+    let mut file = std::fs::File::open(&canonical).map_err(|source| TexeError::Io {
+        path: canonical.clone(),
+        source,
+    })?;
+    let mut binary = Sha512::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let size = file.read(&mut buffer).map_err(|source| TexeError::Io {
+            path: canonical.clone(),
+            source,
+        })?;
+        if size == 0 {
+            break;
+        }
+        binary.update(&buffer[..size]);
+    }
+    let binary = hex::encode(binary.finalize());
     let selection = catalog::select_platform(&request.channel)?;
-    // Shipout owns its typesetter; its bibliography and index tools still
-    // come from the same verified runtime recipe on every machine.
-    let auxiliary = shipout_auxiliary(project_root, request, verification, offline)?;
-    let mut artifacts = Vec::new();
-    if let Some(auxiliary) = &auxiliary {
-        roots.extend(auxiliary.engine_roots.iter().cloned());
-        artifacts.clone_from(&auxiliary.identity.artifacts);
-    }
-    artifacts.push(ToolchainArtifactIdentity {
-        provider: "shipout".into(),
-        sha512: format!("sha512:{binary}"),
-    });
     let mut hasher = Sha256::new();
-    if let Some(auxiliary) = &auxiliary {
-        hasher.update(auxiliary.identity.fingerprint.as_bytes());
-    }
     hasher.update(binary.as_bytes());
     hasher.update(version.as_bytes());
     if let Some(digest) = archive_digest {
@@ -189,50 +189,15 @@ fn resolve_shipout(
                 "sha256:{}",
                 selection.snapshot.registry_sha256
             )),
-            artifacts,
+            artifacts: vec![ToolchainArtifactIdentity {
+                provider: "shipout".into(),
+                sha512: format!("sha512:{binary}"),
+            }],
         },
-        auxiliary: auxiliary.and_then(|runtime| runtime.managed),
         managed: None,
         verification,
         offline,
     })
-}
-
-fn executable_digest(canonical: &Path) -> Result<String, TexeError> {
-    let mut file = std::fs::File::open(canonical).map_err(|source| TexeError::Io {
-        path: canonical.to_owned(),
-        source,
-    })?;
-    let mut binary = Sha512::new();
-    let mut buffer = [0_u8; 16 * 1024];
-    loop {
-        let size = file.read(&mut buffer).map_err(|source| TexeError::Io {
-            path: canonical.to_owned(),
-            source,
-        })?;
-        if size == 0 {
-            break;
-        }
-        binary.update(&buffer[..size]);
-    }
-    Ok(hex::encode(binary.finalize()))
-}
-
-fn shipout_auxiliary(
-    root: &Path,
-    request: &ToolchainConfig,
-    verification: VerificationPolicy,
-    offline: bool,
-) -> Result<Option<ResolvedToolchain>, TexeError> {
-    if request.allow_unmanaged_commands {
-        return Ok(None);
-    }
-    let mut request = request.clone();
-    request.provider = "managed".into();
-    request.engine = "pdflatex".into();
-    ManagedToolchainProvider
-        .resolve(root, &request, verification, offline)
-        .map(Some)
 }
 
 fn system_font_roots() -> Vec<PathBuf> {
