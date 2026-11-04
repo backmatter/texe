@@ -216,6 +216,7 @@ fn system_toolchain() -> ResolvedToolchain {
             registry_metadata_digest: None,
             artifacts: Vec::new(),
         },
+        auxiliary: None,
         managed: None,
         verification: crate::toolchain::VerificationPolicy::Interval,
         offline: false,

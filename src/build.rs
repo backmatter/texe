@@ -157,6 +157,7 @@ pub(crate) fn protected_manifest(
     effective.validate()?;
     if std::env::var_os("TEXE_HOSTED").is_some() {
         if effective.uses_unmanaged_commands()
+            || effective.toolchain.allow_unmanaged_commands
             || effective.toolchain.shell_escape
             || !(effective.toolchain.provider == "managed"
                 || (effective.toolchain.provider == "system"

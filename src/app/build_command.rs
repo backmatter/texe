@@ -305,7 +305,7 @@ pub(super) fn run_fetch(
         closure
             .iter()
             .any(|package| package["provider"] == "biblatex")
-    }) && let Some(runtime) = &toolchain.managed
+    }) && let Some(runtime) = toolchain.auxiliary_runtime()
     {
         crate::toolchain::ensure_managed_biber(runtime)?;
     }

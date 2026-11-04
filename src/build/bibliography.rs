@@ -271,7 +271,7 @@ fn persistent_control_digest(
 ) -> Result<String, TexeError> {
     let mut hasher = Sha256::new();
     hasher.update(bibliography_control_digest(control, context.output_dir)?.as_bytes());
-    if context.toolchain.managed.is_none()
+    if context.toolchain.auxiliary_runtime().is_none()
         && control.processor == BibliographyProcessor::Bibtex
         && context.manifest.bibliography.bibtex == "bibtex"
     {
@@ -451,7 +451,7 @@ fn run_bibliography_processor(
     }
     let mut environment =
         bibliography_environment(project_root, manifest, texmf, toolchain, directory);
-    if let Some(managed) = &toolchain.managed
+    if let Some(managed) = toolchain.auxiliary_runtime()
         && let Some((_, path)) = environment
             .iter_mut()
             .find(|(name, _)| name == OsStr::new("PATH"))
@@ -556,7 +556,7 @@ fn run_bibliography_processor(
         )?
     } else if executable.par_cache.is_some() {
         raw_bundled_biber_output(&executable.path, &arguments, directory, &environment)?
-    } else if toolchain.managed.is_some() {
+    } else if toolchain.auxiliary_runtime().is_some() {
         raw_engine_output(&executable.path, &arguments, directory, &environment)?
     } else {
         raw_output(&executable.path, &arguments, directory, &environment)?
@@ -783,7 +783,7 @@ fn resolve_bibliography_executable(
     configured: &str,
 ) -> Result<BibliographyExecutable, TexeError> {
     if processor == BibliographyProcessor::Biber && configured == "biber" {
-        let biber = if let Some(managed) = &toolchain.managed {
+        let biber = if let Some(managed) = toolchain.auxiliary_runtime() {
             ensure_managed_biber(managed)?
         } else {
             ensure_bundled_biber(toolchain.verification, toolchain.offline)?
@@ -794,7 +794,7 @@ fn resolve_bibliography_executable(
             par_cache: Some(biber.cache_dir),
         });
     }
-    if let Some(managed) = &toolchain.managed
+    if let Some(managed) = toolchain.auxiliary_runtime()
         && processor == BibliographyProcessor::Bibtex
         && configured == "bibtex"
     {
@@ -840,7 +840,7 @@ fn bibliography_environment(
         (OsString::from("BIBINPUTS"), bibliography_inputs),
         (OsString::from("BSTINPUTS"), style_inputs),
     ];
-    if let Some(managed) = &toolchain.managed {
+    if let Some(managed) = toolchain.auxiliary_runtime() {
         environment.push((OsString::from("PATH"), managed_path(&managed.binary_dir)));
     }
     environment
@@ -956,6 +956,7 @@ mod tests {
                 registry_metadata_digest: None,
                 artifacts: Vec::new(),
             },
+            auxiliary: None,
             managed: None,
             verification: crate::toolchain::VerificationPolicy::Interval,
             offline: false,

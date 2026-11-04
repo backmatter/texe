@@ -837,6 +837,7 @@ mod tests {
                     registry_metadata_digest: None,
                     artifacts: Vec::new(),
                 },
+                auxiliary: None,
                 managed: None,
                 verification: VerificationPolicy::Deep,
                 offline: true,
