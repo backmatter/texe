@@ -35,7 +35,6 @@ pub struct PqtyClient {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 struct Capabilities {
     schema: String,
     version: String,

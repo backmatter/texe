@@ -12,8 +12,8 @@ After a pqty release, pin it by hand and open a normal pull request:
 
 ```sh
 git -C ../pqty fetch --tags
-git -C ../pqty switch --detach v0.1.2
-cargo xtask pqty update v0.1.2 ../pqty
+git -C ../pqty switch --detach v0.1.4
+cargo xtask pqty update v0.1.4 ../pqty
 cargo xtask verify contracts
 ```
 
