@@ -82,6 +82,10 @@ fn canonical(path: &Path) -> Result<PathBuf, TexeError> {
     })
 }
 
+const NATIVE_FONT_SELECTION: &str = "<selectfont><rejectfont><pattern>\n\
+    <patelt name=\"fontformat\"><string>Type 1</string></patelt>\n\
+    </pattern></rejectfont></selectfont>\n";
+
 /// A portable renderer must resolve font families from its pinned bytes, rather
 /// than an ambient fontconfig installation or the researcher's home directory.
 pub(crate) fn font_environment(
@@ -104,6 +108,13 @@ pub(crate) fn font_environment(
     for font in fonts.iter().filter(|path| path.is_dir()) {
         writeln!(config, "<dir>{}</dir>", escape(font)).expect("write to String");
     }
+    // XeTeX enumerates outline fonts rather than asking Fontconfig to rank
+    // formats. Type 1 and OpenType faces can have identical family/style names;
+    // their enumeration order depends on the absolute path. A Type 1 duplicate
+    // can then shadow the Unicode face and lose every private-use icon. Keep
+    // legacy fonts available through TeX's metric/map paths, but exclude them
+    // from native Unicode family lookup.
+    config.push_str(NATIVE_FONT_SELECTION);
     writeln!(
         config,
         "<cachedir>{}</cachedir>\n</fontconfig>",
@@ -1451,6 +1462,7 @@ mod tests {
         assert!(config.contains("locked &amp; fonts"));
         assert!(!config.contains("<include"));
         assert!(!config.contains("/etc/fonts"));
+        assert!(config.contains(super::NATIVE_FONT_SELECTION));
         assert_eq!(environment[0].0, "FONTCONFIG_FILE");
     }
 
