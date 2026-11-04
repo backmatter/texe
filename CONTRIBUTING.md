@@ -121,13 +121,3 @@ release body repeats the changelog entry. Do not edit `CHANGELOG.md` by hand;
 correct a wrong entry by amending the commit title before it is released.
 
 Contributions are licensed under the [MIT License](LICENSE).
-
-## Reuse CI for release metadata
-
-Code changes run the full platform checks on the pull request. Merging does not
-repeat those checks on `main`. A version-only release PR can reuse the successful
-source check when its base has exactly the same tree as the checked, merged PR.
-The scope job checks parsed manifests and lockfiles. Source changes, dependency
-changes, incomplete checks, or unavailable proof require the full matrix.
-The reused run is linked in the workflow summary. Ordinary manual CI runs always run the full checks. The synchronized tex-ls
-release request can reuse a verified source check. Run `python3 scripts/test_ci_scope.py` when changing this guard.
