@@ -442,7 +442,7 @@ fn read_environment(path: &Path) -> Result<TraceEnvironment, TexeError> {
 fn missing_package_inputs(log: &str, texmf: &Path) -> Vec<(String, String)> {
     let mut missing = BTreeSet::new();
     for line in logical_log_lines(log) {
-        let line = line.as_ref();
+        let line = diagnostic_message(line.as_ref());
         if let Some((requested, kind)) = missing_file_input(line) {
             missing.insert((requested, kind));
         }
@@ -472,6 +472,9 @@ fn missing_package_inputs(log: &str, texmf: &Path) -> Vec<(String, String)> {
         if let Some(requested) = missing_pdftex_type1_file(line) {
             missing.insert((requested, "type1-font".to_string()));
         }
+        if let Some(requested) = missing_pdftex_encoding_file(line) {
+            missing.insert((requested, "encoding".to_string()));
+        }
         if let Some(requested) = missing_nfss_definition(line) {
             missing.insert((requested, "tex".to_string()));
         }
@@ -499,6 +502,24 @@ fn logical_log_lines(log: &str) -> Vec<Cow<'_, str>> {
         start = end + 1;
     }
     logical
+}
+
+// TeX emits either `! message` or `path:line: message`. Strip only
+// a numeric file/line prefix, including Windows drive letters, before matching
+// diagnostic-specific text. Ordinary source/log lines remain unchanged.
+fn diagnostic_message(line: &str) -> &str {
+    if line.starts_with("! ") {
+        return line;
+    }
+    for (offset, _) in line.match_indices(": ") {
+        if let Some((_, number)) = line[..offset].rsplit_once(':')
+            && !number.is_empty()
+            && number.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return &line[offset + 2..];
+        }
+    }
+    line
 }
 
 fn missing_file_input(line: &str) -> Option<(String, String)> {
@@ -624,6 +645,18 @@ fn missing_pdftex_type1_file(line: &str) -> Option<String> {
         .then(|| requested.to_string())
 }
 
+fn missing_pdftex_encoding_file(line: &str) -> Option<String> {
+    let (_, tail) = line.split_once("(file ")?;
+    let (requested, message) = tail.split_once(')')?;
+    let requested = requested.trim();
+    (message.contains("cannot open encoding file for reading")
+        && Path::new(requested)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("enc"))
+        && is_safe_registry_file_request(requested))
+    .then(|| requested.to_string())
+}
+
 fn missing_nfss_definition(line: &str) -> Option<String> {
     let requested = line.strip_prefix("No file ")?.strip_suffix('.')?.trim();
     if !requested.to_ascii_lowercase().ends_with(".fd")
@@ -695,7 +728,10 @@ fn babel_language_definition(texmf: &Path, language: &str) -> Option<String> {
 }
 
 fn missing_tikz_library(line: &str) -> Option<String> {
-    let tail = line.strip_prefix("! Package tikz Error: I did not find the tikz library '")?;
+    let tail = line
+        .strip_prefix("! ")
+        .unwrap_or(line)
+        .strip_prefix("Package tikz Error: I did not find the tikz library '")?;
     let end = tail.find('\'')?;
     let library = tail[..end].trim();
     if library.is_empty()
@@ -710,7 +746,10 @@ fn missing_tikz_library(line: &str) -> Option<String> {
 }
 
 fn missing_biblatex_style(line: &str) -> Option<String> {
-    let tail = line.strip_prefix("! Package biblatex Error: Style '")?;
+    let tail = line
+        .strip_prefix("! ")
+        .unwrap_or(line)
+        .strip_prefix("Package biblatex Error: Style '")?;
     let end = tail.find('\'')?;
     let style = tail[..end].trim();
     if !tail[end..].contains("not found")
@@ -726,7 +765,10 @@ fn missing_biblatex_style(line: &str) -> Option<String> {
 }
 
 fn missing_font_metric(line: &str) -> Option<String> {
-    let line = line.strip_prefix("! Font ")?;
+    let line = line
+        .strip_prefix("! ")
+        .unwrap_or(line)
+        .strip_prefix("Font ")?;
     let (_, tail) = line.split_once('=')?;
     let metric = tail.split_whitespace().next()?.trim();
     if metric.eq_ignore_ascii_case("nullfont")
@@ -748,7 +790,10 @@ fn missing_font_metric(line: &str) -> Option<String> {
 }
 
 fn missing_luatex_font_metric(line: &str) -> Option<String> {
-    let tail = line.strip_prefix("! Font ")?;
+    let tail = line
+        .strip_prefix("! ")
+        .unwrap_or(line)
+        .strip_prefix("Font ")?;
     let (_, metric_description) = tail.rsplit_once('=')?;
     let metric = metric_description.split_whitespace().next()?.trim();
     if metric.eq_ignore_ascii_case("nullfont")
@@ -954,6 +999,29 @@ No file LGRcmr.fd.
                 ("ushyphex.tex".to_string(), "data".to_string()),
                 ("xcolor.sty".to_string(), "tex".to_string())
             ]
+        );
+    }
+
+    #[test]
+    fn file_line_diagnostics_discover_metrics_tikz_and_encodings() {
+        let log = r"C:\paper\main.tex:4: Font OT1/pplx/m/n/10=pplr9t at 10pt not loadable: Metric (TFM) file not found.
+/project/main.tex:5: Package tikz Error: I did not find the tikz library 'quantikz'.
+/project/main.tex:6: Font \SOUL@tt=ectt1000 not loadable: metric data not found or bad.
+!pdfTeX error: pdftex (file texnansi.enc): cannot open encoding file for reading
+!pdfTeX error: pdftex (file ../secret.enc): cannot open encoding file for reading
+/project/main.tex:8: Font T1/cmr/m/n/10=nullfont not loadable: Metric (TFM) file not found.";
+        assert_eq!(
+            missing_package_inputs(log, Path::new("/missing-texmf")),
+            vec![
+                ("ectt1000.tfm".into(), "font-metric".into()),
+                ("pplr9t.tfm".into(), "font-metric".into()),
+                ("texnansi.enc".into(), "encoding".into()),
+                ("tikzlibraryquantikz.code.tex".into(), "tex".into()),
+            ]
+        );
+        assert_eq!(
+            super::diagnostic_message("chapter: Font text"),
+            "chapter: Font text"
         );
     }
 
