@@ -41,11 +41,12 @@ impl BuildContext<'_> {
         }
         self.materialize_generated_inputs(output_dir)?;
         let portable = crate::portable::active(self.project_root)?;
+        let cached = crate::portable::cached(self.project_root)?;
         let entry = crate::portable::entry_for_build(
             self.project_root,
             self.manifest,
             output_dir,
-            portable.as_ref(),
+            cached.as_ref(),
         )?;
         if self.toolchain.managed.is_none()
             && managed_format.is_some()

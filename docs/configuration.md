@@ -167,3 +167,13 @@ Paper lock, keeps its package selection, and can add the current target's
 verified runtime identity. Use `--frozen` to require that identity already,
 and `--offline` to use populated caches only. A Paper without a lock needs an
 initial `texe build` to discover and resolve its dependencies.
+
+A Paper manifest always owns its build settings. Connected environment bundles
+populate verified runtime and package caches; `.texe/environment.json` cannot
+override `texe.toml` or `texe.lock`.
+
+Hosted operators can set `TEXE_HOSTED=1` to require managed tools (or the
+opt-in Shipout runtime), reject shell escape and external source roots, and
+set `TEXE_HOST_SECCOMP_PATH` to an operator-owned Linux BPF filter. The filter
+is intersected with texe's compiler policy for every source interpreter.
+Fetch can use an explicit proxy; protected offline builds never need it.

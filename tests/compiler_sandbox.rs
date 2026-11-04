@@ -378,9 +378,21 @@ fn protected_system_shipout_cannot_write_project_sources_or_see_home() {
     fs::write(project.join("main.tex"), source).unwrap();
     fs::write(
         project.join("texe.toml"),
-        "schema = \"texe.project/v1\"\n[project]\nentry = \"main.tex\"\n\
-         [toolchain]\nprovider = \"system\"\nengine = \"shipout\"\n\
-         [packages]\nremote = false\n",
+        format!(
+            r#"schema = "texe.project/v1"
+[project]
+entry = "main.tex"
+[toolchain]
+provider = "system"
+engine = "shipout"
+[packages]
+remote = false
+manager = {}
+trace_adapter = {}
+"#,
+            serde_json::to_string(&tools.join("pqty").to_string_lossy()).unwrap(),
+            serde_json::to_string(&tools.join("pqty-fls").to_string_lossy()).unwrap(),
+        ),
     )
     .unwrap();
     let escaped = fixture.path().join("escaped");

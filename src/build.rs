@@ -155,6 +155,23 @@ pub(crate) fn protected_manifest(
         effective.packages.texmf = ".texe/protected-texmf".into();
     }
     effective.validate()?;
+    if std::env::var_os("TEXE_HOSTED").is_some() {
+        if effective.uses_unmanaged_commands()
+            || effective.toolchain.shell_escape
+            || !(effective.toolchain.provider == "managed"
+                || (effective.toolchain.provider == "system"
+                    && effective.toolchain.engine == "shipout"))
+        {
+            return Err(TexeError::Build(
+                "Hosted Papers require managed tools with shell escape disabled".into(),
+            ));
+        }
+        if !process::source_read_roots(root, &effective)?.is_empty() {
+            return Err(TexeError::Build(
+                "Hosted Paper inputs must stay inside the Paper directory".into(),
+            ));
+        }
+    }
     let portable = crate::portable::active(root)?.is_some();
     let reserved = [
         ".texe/recovery",

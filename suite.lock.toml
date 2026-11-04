@@ -1,3 +1,3 @@
-pqty_version = "0.1.4"
-pqty_revision = "39c070a9c3b5036527e12603a45c86d2b8d3d332"
+pqty_version = "0.1.5"
+pqty_revision = "6591f6cb9654bb47170f555dfd2b5ca49c9f66dd"
 pqty_capabilities_schema = "pqty.capabilities/v1"

@@ -48,6 +48,8 @@ static SIGNAL_HANDLER: OnceLock<()> = OnceLock::new();
 #[serde(deny_unknown_fields)]
 pub(crate) struct Policy {
     version: u32,
+    #[serde(default)]
+    host_seccomp: Vec<(u16, u8, u8, u32)>,
     project: PathBuf,
     write_roots: Vec<PathBuf>,
     read_roots: Vec<PathBuf>,
@@ -166,6 +168,29 @@ fn system_read_paths() -> Result<Vec<(PathBuf, bool)>, TexeError> {
     Ok(result)
 }
 
+// Operator configuration is captured by the trusted parent, never read from a Paper.
+fn host_seccomp() -> Result<Vec<(u16, u8, u8, u32)>, TexeError> {
+    let Some(path) = std::env::var_os("TEXE_HOST_SECCOMP_PATH") else {
+        return Ok(Vec::new());
+    };
+    let bytes = crate::build::generated::read_local(&PathBuf::from(path), 4096 * 8)?;
+    let (instructions, remainder) = bytes.as_chunks::<8>();
+    if instructions.is_empty() || !remainder.is_empty() {
+        return Err(error("invalid hosted compiler seccomp filter"));
+    }
+    Ok(instructions
+        .iter()
+        .map(|instruction| {
+            (
+                u16::from_ne_bytes([instruction[0], instruction[1]]),
+                instruction[2],
+                instruction[3],
+                u32::from_ne_bytes(instruction[4..8].try_into().expect("four bytes")),
+            )
+        })
+        .collect())
+}
+
 impl Policy {
     pub(crate) fn new(
         project: &Path,
@@ -175,6 +200,7 @@ impl Policy {
     ) -> Result<Self, TexeError> {
         let value = Self {
             version: POLICY_VERSION,
+            host_seccomp: host_seccomp()?,
             project: canonical(project)?,
             write_roots: write_roots
                 .iter()
@@ -1148,6 +1174,31 @@ fn apply(policy: &Policy) -> Result<(), TexeError> {
             },
         ],
     );
+    if !policy.host_seccomp.is_empty() {
+        let length = policy.host_seccomp.len();
+        if length + program.len() > 4096 {
+            return Err(error(
+                "hosted compiler seccomp filter exceeds the BPF limit",
+            ));
+        }
+        let mut hosted = Vec::with_capacity(length + program.len());
+        for (index, &(code, jt, jf, k)) in policy.host_seccomp.iter().enumerate() {
+            // Host denials return immediately. ALLOW continues into texe's
+            // stricter filter, preserving both policies in one installation.
+            hosted.push(if code == 0x06 && k == 0x7fff_0000 {
+                seccompiler::sock_filter {
+                    code: 0x05,
+                    jt: 0,
+                    jf: 0,
+                    k: u32::try_from(length - index - 1).map_err(error)?,
+                }
+            } else {
+                seccompiler::sock_filter { code, jt, jf, k }
+            });
+        }
+        hosted.extend(program);
+        program = hosted;
+    }
     seccompiler::apply_filter(&program).map_err(error)?;
     Ok(())
 }

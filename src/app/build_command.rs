@@ -255,7 +255,10 @@ pub(super) fn run_fetch(
 ) -> Result<(), TexeError> {
     // Fetch never executes a source interpreter or project-supplied helper.
     let _protection = build::process::ProtectionScope::enter(true);
-    let context = load_project(project)?;
+    let mut context = load_project(project)?;
+    if std::env::var_os("TEXE_HOSTED").is_some() {
+        context.manifest = build::protected_manifest(&context.root, &context.manifest)?;
+    }
     let root = &context.root;
     if !root.join(crate::lockfile::LOCK_NAME).is_file() {
         return Err(TexeError::Build(
@@ -291,6 +294,21 @@ pub(super) fn run_fetch(
         &root.join(&context.manifest.packages.texmf),
         &progress,
     )?;
+    let package_bytes =
+        crate::build::generated::read_local(&lock, crate::build::generated::MAX_METADATA)?;
+    let packages: serde_json::Value =
+        serde_json::from_slice(&package_bytes).map_err(|source| TexeError::Json {
+            path: lock.clone(),
+            source,
+        })?;
+    if packages["closure"].as_array().is_some_and(|closure| {
+        closure
+            .iter()
+            .any(|package| package["provider"] == "biblatex")
+    }) && let Some(runtime) = &toolchain.managed
+    {
+        crate::toolchain::ensure_managed_biber(runtime)?;
+    }
     let bytes = crate::lockfile::project_lock_bytes(
         root,
         &lock,
@@ -310,7 +328,7 @@ pub(super) fn run_fetch(
     crate::build::generated::write(root, &root.join(crate::lockfile::LOCK_NAME), &bytes)?;
     if presentation.json {
         print_json(
-            &serde_json::json!({"schema": "texe.fetch-report/v1", "lock": root.join(crate::lockfile::LOCK_NAME)}),
+            &serde_json::json!({"schema": "texe.fetch-report/v1", "lock": root.join(crate::lockfile::LOCK_NAME), "engine": context.manifest.toolchain.engine, "entry": context.manifest.project.entry}),
         )?;
     }
     Ok(())

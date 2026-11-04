@@ -1,5 +1,5 @@
 //! Retire only owned, inactive project environments under the project lock.
-use super::{active, directory, error, parse, text, validate};
+use super::{cached, directory, error, parse, text, validate};
 use crate::{TexeError, atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -93,9 +93,9 @@ impl Drop for Candidate {
         if self.committed {
             return;
         }
-        let protected = active(&self.root).ok().flatten();
+        let protected = cached(&self.root).ok().flatten();
         // A damaged active pointer makes ownership uncertain; preserve caches.
-        if active(&self.root).is_err() {
+        if cached(&self.root).is_err() {
             return;
         }
         if protected
@@ -122,7 +122,7 @@ impl Drop for Candidate {
 
 pub(crate) fn built(root: &Path, identity: &str) {
     let result = (|| {
-        let Some(current) = active(root)? else {
+        let Some(current) = cached(root)? else {
             return Ok(());
         };
         if text(&current, "id")? != identity {
@@ -236,7 +236,7 @@ fn remove_owned(root: &Path, value: &Value) -> Result<(), TexeError> {
 
 fn protects_source(root: &Path, directory: &Path, value: &Value) -> Result<bool, TexeError> {
     let mut manifests = vec![super::manifest_for_project(root, value)?];
-    if let Some(current) = active(root)? {
+    if let Some(current) = cached(root)? {
         manifests.push(super::manifest_for_project(root, &current)?);
     }
     let local = root.join(crate::config::MANIFEST_NAME);
@@ -351,7 +351,7 @@ mod tests {
         drop(prepared(root, &b));
         assert!(!root.join(directory(&b).unwrap()).exists());
         assert!(root.join(directory(&a).unwrap()).exists());
-        assert_eq!(active(root).unwrap().unwrap(), a);
+        assert_eq!(cached(root).unwrap().unwrap(), a);
     }
 
     #[test]

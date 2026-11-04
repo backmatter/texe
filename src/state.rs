@@ -144,6 +144,17 @@ pub fn build_fingerprint(
     hasher.update(canonical_json(toolchain, "toolchain identity")?);
     hasher.update(command_suite_fingerprint.as_bytes());
     hasher.update(&lock_bytes);
+    if let Some(content) = crate::portable::cached(project_root)
+        .ok()
+        .flatten()
+        .and_then(|value| {
+            value["managedBibliography"]["content"]
+                .as_str()
+                .map(str::to_owned)
+        })
+    {
+        hasher.update(content.as_bytes());
+    }
     let Some(mut paths) = locked_project_files(&lock) else {
         return Ok(None);
     };
@@ -190,9 +201,27 @@ pub(crate) fn source_fingerprint(
     manifest: &ProjectManifest,
 ) -> Result<Option<String>, TexeError> {
     #[cfg(target_os = "linux")]
-    return source_stability_inventory(project_root, manifest);
+    let base = source_stability_inventory(project_root, manifest)?;
     #[cfg(not(target_os = "linux"))]
-    source_fingerprint_portable(project_root, manifest)
+    let base = source_fingerprint_portable(project_root, manifest)?;
+    Ok(base.map(|base| {
+        if let Some(content) = crate::portable::cached(project_root)
+            .ok()
+            .flatten()
+            .and_then(|value| {
+                value["managedBibliography"]["content"]
+                    .as_str()
+                    .map(str::to_owned)
+            })
+        {
+            let mut hasher = Sha256::new();
+            hasher.update(base.as_bytes());
+            hasher.update(content.as_bytes());
+            hex::encode(hasher.finalize())
+        } else {
+            base
+        }
+    }))
 }
 
 /// Held directory descriptors prevent a concurrent directory replacement from
