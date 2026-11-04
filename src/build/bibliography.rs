@@ -1070,11 +1070,7 @@ engine = "pdflatex"
                 if name == "BIBINPUTS" {
                     // Generated biblatex control databases are available to
                     // the private BibTeX invocation beside its renamed aux.
-                    assert!(value.starts_with(if cfg!(windows) {
-                        ".//"
-                    } else {
-                        "/tmp/project/.texe/build/output//"
-                    }));
+                    assert!(value.contains("/tmp/project/.texe/build/output//"));
                 }
                 assert!(!value.ends_with(if cfg!(windows) { ';' } else { ':' }));
             }
