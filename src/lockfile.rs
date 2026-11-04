@@ -167,9 +167,21 @@ pub(crate) fn project_lock_bytes(
                 source,
             })?;
         validate_runtimes(&prior.runtimes, toolchain)?;
+        if prior.runtimes.get(target_key(&toolchain.target)) == Some(toolchain)
+            && prior.packages == packages
+            && prior.source_date_epoch == source_date_epoch
+        {
+            // A frozen replay is read-only even when texe versions or JSON
+            // formatting differ. Do not make clients rewrite each other's stamp.
+            return Ok(bytes);
+        }
+        // Source scan metadata may change without changing package bytes.
         // Runtime identities describe this exact closure. A changed closure must
         // be verified again on every target, rather than retaining stale claims.
-        if prior.packages == packages {
+        if ["closure", "registries", "environment"]
+            .iter()
+            .all(|key| prior.packages[*key] == packages[*key])
+        {
             runtimes = prior.runtimes;
         } else if !prior.runtimes.contains_key(target_key(&toolchain.target)) {
             return Err(TexeError::Build(

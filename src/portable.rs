@@ -2,12 +2,8 @@
 pub(crate) mod native;
 pub(crate) mod retention;
 use crate::{
-    TexeError, atomic,
-    config::ProjectManifest,
-    guard::BuildGuard,
-    package::PqtyClient,
-    progress::{Progress, ProgressLayout},
-    toolchain::{ManagedToolchainProvider, ToolchainProvider, VerificationPolicy},
+    TexeError, atomic, config::ProjectManifest, guard::BuildGuard, package::PqtyClient,
+    toolchain::VerificationPolicy,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -207,6 +203,14 @@ fn inject_managed_bibliography(source: &str) -> String {
     }
 }
 pub(crate) fn active(root: &Path) -> Result<Option<Value>, TexeError> {
+    if root.join(crate::config::MANIFEST_NAME).is_file() {
+        return Ok(None);
+    }
+    cached(root)
+}
+
+/// Download metadata may supply a verified native runtime, never Paper settings.
+pub(crate) fn cached(root: &Path) -> Result<Option<Value>, TexeError> {
     let path = root.join(ACTIVE);
     match fs::symlink_metadata(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -300,12 +304,6 @@ pub(crate) fn manifest_for_project(
     }
     Ok(result)
 }
-pub(crate) fn requires_biber(descriptor: &Value) -> bool {
-    descriptor["packages"]["closure"]
-        .as_array()
-        .is_some_and(|items| items.iter().any(|item| item["provider"] == "biblatex"))
-}
-
 /// The descriptor owns this derived lock. Recreate it after clean, or repair
 /// damaged cache bytes, without changing the project's selected environment.
 pub(crate) fn restore_package_lock_from_descriptor(
@@ -391,71 +389,30 @@ pub(crate) fn prepare(
     if digest(&bytes) != text(&value["bundle"], "sha256")? {
         return Err(error("Environment bundle checksum mismatch"));
     }
-    let manifest = manifest_for_project(&root, &value)?;
-    let previous = active(&root)?;
+    let manifest = ProjectManifest::load(&root.join(crate::config::MANIFEST_NAME))?;
+    let previous = cached(&root)?;
     let candidate_path = directory(&value)?;
     let newly_created = !root.join(&candidate_path).exists();
     private_directory(&root, &candidate_path)?;
     let mut candidate = retention::Candidate::new(&root, &value, newly_created)?;
     let tools = PqtyClient::resolve(&root, &manifest, offline)?;
-    let lock = root.join(&manifest.packages.lock);
+    let lock = root.join(candidate_path).join("pqty.lock");
     tools.import_bundle(&root, bundle, &lock)?;
     if parse(&lock)? != value["packages"] {
         return Err(error(
             "Environment package lock differs from the verified bundle",
         ));
     }
-    let toolchain = if text(&value, "engine")? == "shipout" {
-        native::install(&value, runtime, VerificationPolicy::Interval)?;
-        native::resolve(
-            &root,
-            &manifest,
-            &value,
-            VerificationPolicy::Interval,
-            offline,
-        )?
-    } else {
-        ManagedToolchainProvider.resolve(
-            &root,
-            &manifest.toolchain,
-            VerificationPolicy::Interval,
-            offline,
-        )?
-    };
-    verify_engine(&value, &toolchain.engine_executable)?;
-    let progress = Progress::new(
-        crate::progress::history_path(&root)?,
-        &manifest.toolchain.engine,
-        true,
-        manifest.toolchain.max_passes,
-        false,
-        false,
-        ProgressLayout::Standalone,
-    );
-    crate::build::prepare_portable(&root, &manifest, &toolchain, &tools, &value, &progress)?;
-    if requires_biber(&value)
-        && let Some(runtime) = &toolchain.managed
-    {
-        crate::toolchain::ensure_managed_biber(runtime)?;
+    let paper_lock = root.join(crate::lockfile::LOCK_NAME);
+    if paper_lock.is_file() && parse(&paper_lock)?["packages"] != value["packages"] {
+        return Err(error(
+            "Environment packages differ from the Paper's texe.lock; sync the Paper before importing its cache",
+        ));
     }
     if text(&value, "engine")? == "shipout" {
-        native::build(
-            &root,
-            &manifest,
-            &toolchain,
-            &tools,
-            &value,
-            crate::build::BuildOptions {
-                protected: true,
-                frozen: true,
-                force: true,
-                offline: true,
-            },
-            &progress,
-            false,
-        )?;
+        native::install(&value, runtime, VerificationPolicy::Deep)?;
     }
-    // Last commit point: failures above never replace the previous environment.
+    // Only reusable bytes are imported. Builds always read texe.toml and texe.lock.
     atomic::write(
         &root.join(ACTIVE),
         &serde_json::to_vec(&value).map_err(|_| error("Invalid environment metadata"))?,
@@ -465,6 +422,7 @@ pub(crate) fn prepare(
         serde_json::json!({"schema":"texe.environment-report/v1", "id":value["id"], "ready":true, "engine":value["engine"]}),
     )
 }
+
 pub(crate) fn verify_engine(value: &Value, executable: &Path) -> Result<(), TexeError> {
     // Concurrent process startup can briefly retain a writer on a newly
     // extracted executable, even after the installing thread closed it.

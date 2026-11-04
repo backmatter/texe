@@ -262,6 +262,18 @@ impl PqtyClient {
             arguments.push(OsString::from(&managed.registry_url));
             arguments.push(OsString::from("--tlpdb-sha256"));
             arguments.push(OsString::from(&managed.registry_metadata_sha256));
+        } else if manifest.packages.remote
+            && let (Some(base), Some(digest)) = (
+                &toolchain.identity.registry_url,
+                &toolchain.identity.registry_metadata_digest,
+            )
+        {
+            arguments.extend([
+                "--tlpdb-url".into(),
+                format!("{base}/tlpkg/texlive.tlpdb.xz").into(),
+                "--tlpdb-sha256".into(),
+                digest.trim_start_matches("sha256:").into(),
+            ]);
         } else if manifest.packages.remote {
             arguments.push(OsString::from("--remote"));
             arguments.push(OsString::from("latest"));

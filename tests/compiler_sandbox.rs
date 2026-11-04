@@ -306,7 +306,9 @@ binary, policy, pids = sys.argv[1:]
 code = "import os,pathlib,sys,time; pid=os.fork(); pathlib.Path(sys.argv[1]).write_text(str(os.getpid())+','+str(pid)) if pid else None; time.sleep(60)"
 child = subprocess.Popen([binary, '__sandbox-run', '--policy', policy, '--executable', '/usr/bin/python3', '--', '-c', code, pids], process_group=0, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for _ in range(200):
-    if pathlib.Path(pids).exists():
+    content = pathlib.Path(pids).read_text() if pathlib.Path(pids).exists() else ""
+    ids = content.split(',')
+    if len(ids) == 2 and all(value.isdigit() for value in ids):
         print('ready', flush=True)
         time.sleep(60)
         break
@@ -378,9 +380,21 @@ fn protected_system_shipout_cannot_write_project_sources_or_see_home() {
     fs::write(project.join("main.tex"), source).unwrap();
     fs::write(
         project.join("texe.toml"),
-        "schema = \"texe.project/v1\"\n[project]\nentry = \"main.tex\"\n\
-         [toolchain]\nprovider = \"system\"\nengine = \"shipout\"\n\
-         [packages]\nremote = false\n",
+        format!(
+            r#"schema = "texe.project/v1"
+[project]
+entry = "main.tex"
+[toolchain]
+provider = "system"
+engine = "shipout"
+[packages]
+remote = false
+manager = {}
+trace_adapter = {}
+"#,
+            serde_json::to_string(&tools.join("pqty").to_string_lossy()).unwrap(),
+            serde_json::to_string(&tools.join("pqty-fls").to_string_lossy()).unwrap(),
+        ),
     )
     .unwrap();
     let escaped = fixture.path().join("escaped");

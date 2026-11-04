@@ -282,6 +282,7 @@ impl BuildContext<'_> {
             .parent()
             .ok_or_else(|| TexeError::Build("Shipout has no install directory".into()))?;
         let mut reads = source_read_roots(self.project_root, self.manifest)?;
+        reads.extend(self.toolchain.engine_roots.iter().cloned());
         reads.extend(
             bin.parent()
                 .unwrap_or(bin)
@@ -293,14 +294,34 @@ impl BuildContext<'_> {
     }
 
     fn shipout_environment(&self) -> Vec<(OsString, OsString)> {
-        source_date_environment(&self.timestamp.effective.to_string()).to_vec()
+        let mut environment =
+            source_date_environment(&self.timestamp.effective.to_string()).to_vec();
+        if let Some(runtime) = self
+            .toolchain
+            .engine_roots
+            .iter()
+            .find(|root| root.join("assets/shipout-core").is_dir())
+        {
+            environment.push((
+                "SHIPOUT_ASSETS_ROOT".into(),
+                runtime.join("assets/shipout-core").into_os_string(),
+            ));
+        }
+        environment
     }
 
     fn shipout_arguments(&self) -> Result<Vec<String>, TexeError> {
         let text = |path: &Path| path.to_string_lossy().into_owned();
         let stem = job_stem(&self.manifest.project.entry)?;
+        let cached = crate::portable::cached(self.project_root)?;
+        let entry = crate::portable::entry_for_build(
+            self.project_root,
+            self.manifest,
+            &self.output_dir,
+            cached.as_ref(),
+        )?;
         let mut arguments = vec![
-            text(&self.manifest.project.entry),
+            text(&entry),
             "--output".to_string(),
             text(&self.output_dir.join(format!("{stem}.pdf"))),
             "--out-dir".to_string(),

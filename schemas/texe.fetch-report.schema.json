@@ -6,13 +6,21 @@
   "additionalProperties": false,
   "required": [
     "schema",
-    "lock"
+    "lock",
+    "engine",
+    "entry"
   ],
   "properties": {
     "schema": {
       "const": "texe.fetch-report/v1"
     },
     "lock": {
+      "type": "string"
+    },
+    "engine": {
+      "type": "string"
+    },
+    "entry": {
       "type": "string"
     }
   }

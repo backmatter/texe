@@ -3,14 +3,16 @@ use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest as _, Sha256};
+use sha2::{Digest as _, Sha256, Sha512};
+use std::io::Read as _;
 
 use crate::TexeError;
 use crate::config::ToolchainConfig;
 use crate::toolchain::catalog;
 use crate::toolchain::component::biber_artifact_identities;
 use crate::toolchain::{
-    ResolvedToolchain, ToolchainIdentity, ToolchainProvider, VerificationPolicy,
+    ResolvedToolchain, ToolchainArtifactIdentity, ToolchainIdentity, ToolchainProvider,
+    VerificationPolicy,
 };
 
 #[derive(Debug, Default)]
@@ -101,27 +103,96 @@ fn resolve_shipout(
     verification: VerificationPolicy,
     offline: bool,
 ) -> Result<ResolvedToolchain, TexeError> {
-    let engine_executable = resolve_executable(project_root, &request.engine)?;
+    let cached = crate::portable::cached(project_root)?
+        .filter(|value| value["engine"] == "shipout" && value.get("runtime").is_some());
+    let native = cached
+        .as_ref()
+        .map(|value| {
+            crate::portable::native::resolve(
+                project_root,
+                &crate::config::ProjectManifest::load(
+                    &project_root.join(crate::config::MANIFEST_NAME),
+                )?,
+                value,
+                verification,
+                offline,
+            )
+        })
+        .transpose()?;
+    let mut engine_executable = native.as_ref().map_or_else(
+        || resolve_executable(project_root, &request.engine),
+        |native| Ok(native.engine_executable.clone()),
+    )?;
+    if crate::build::process::protection_requested() {
+        engine_executable = protected_executable(project_root, &engine_executable, &[])?;
+    }
     let version = executable_version(&engine_executable)?;
+    let canonical = engine_executable
+        .canonicalize()
+        .map_err(|source| TexeError::Io {
+            path: engine_executable.clone(),
+            source,
+        })?;
+    let runtime_root = canonical.parent().and_then(Path::parent);
+    let mut roots = native
+        .as_ref()
+        .map_or_else(Vec::new, |native| native.engine_roots.clone());
+    if let Some(root) = runtime_root.filter(|root| root.join("assets/shipout-core").is_dir()) {
+        roots.push(root.to_owned());
+    }
+    let archive_digest = cached
+        .as_ref()
+        .and_then(|value| value["runtime"]["sha256"].as_str())
+        .map(str::to_owned)
+        .or_else(|| {
+            runtime_root.and_then(|root| std::fs::read_to_string(root.join("runtime.sha256")).ok())
+        });
+    let mut file = std::fs::File::open(&canonical).map_err(|source| TexeError::Io {
+        path: canonical.clone(),
+        source,
+    })?;
+    let mut binary = Sha512::new();
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let size = file.read(&mut buffer).map_err(|source| TexeError::Io {
+            path: canonical.clone(),
+            source,
+        })?;
+        if size == 0 {
+            break;
+        }
+        binary.update(&buffer[..size]);
+    }
+    let binary = hex::encode(binary.finalize());
+    let selection = catalog::select_platform(&request.channel)?;
     let mut hasher = Sha256::new();
-    hasher.update(engine_executable.as_os_str().as_encoded_bytes());
+    hasher.update(binary.as_bytes());
     hasher.update(version.as_bytes());
+    if let Some(digest) = archive_digest {
+        hasher.update(digest.trim().as_bytes());
+    }
     Ok(ResolvedToolchain {
         provider: request.provider.clone(),
         engine: request.engine.clone(),
         engine_executable,
         kpsewhich_executable: PathBuf::new(),
         texmf_dist: PathBuf::new(),
-        engine_roots: Vec::new(),
+        engine_roots: roots,
         identity: ToolchainIdentity {
-            provider: "system".to_string(),
+            provider: "system".into(),
             engine: request.engine.clone(),
-            channel: "system".to_string(),
+            channel: selection.snapshot.snapshot.clone(),
             target: format!("{}-{}", env::consts::ARCH, env::consts::OS),
             fingerprint: hex::encode(hasher.finalize()),
-            registry_url: None,
-            registry_metadata_digest: None,
-            artifacts: Vec::new(),
+            registry_url: Some(selection.snapshot.tlnet_base.clone()),
+            registry_metadata_digest: Some(format!(
+                "sha256:{}",
+                selection.snapshot.registry_sha256
+            )),
+            artifacts: vec![ToolchainArtifactIdentity {
+                provider: "shipout".into(),
+                sha512: format!("sha512:{binary}"),
+            }],
         },
         managed: None,
         verification,
@@ -230,7 +301,9 @@ pub(crate) fn validate_protected_tools(
     project_root: &Path,
     manifest: &crate::config::ProjectManifest,
 ) -> Result<(), TexeError> {
-    if !crate::build::process::protection_requested() {
+    if !crate::build::process::protection_requested() || manifest.toolchain.engine == "shipout" {
+        // Shipout validates its resolved native executable itself and has no
+        // ambient kpathsea executable to probe.
         return Ok(());
     }
     // Validate both before either probe is started.
