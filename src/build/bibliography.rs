@@ -869,7 +869,10 @@ fn bibliography_environment(
     let package_biblatex = texmf.join("biblatex/bib");
     let package_styles = texmf.join("bibtex/bst");
     let generated = working_directory.join(".texe-generated");
-    let mut bibliography_roots = vec![generated.as_path(), project_root];
+    // Biblatex writes <job>-blx.bib beside its auxiliary control. Include
+    // this private output directory explicitly: setting BIBINPUTS replaces
+    // kpathsea's default current-directory search.
+    let mut bibliography_roots = vec![working_directory, generated.as_path(), project_root];
     bibliography_roots.extend(configured_roots.iter().map(PathBuf::as_path));
     bibliography_roots.extend([package_bibtex.as_path(), package_biblatex.as_path()]);
     let mut style_roots = vec![project_root];
@@ -1064,6 +1067,15 @@ engine = "pdflatex"
             if matches!(name.to_str(), Some("BIBINPUTS" | "BSTINPUTS")) {
                 let value = value.to_string_lossy();
                 assert!(value.contains("/tmp/project//"));
+                if name == "BIBINPUTS" {
+                    // Generated biblatex control databases are available to
+                    // the private BibTeX invocation beside its renamed aux.
+                    assert!(value.starts_with(if cfg!(windows) {
+                        ".//"
+                    } else {
+                        "/tmp/project/.texe/build/output//"
+                    }));
+                }
                 assert!(!value.ends_with(if cfg!(windows) { ';' } else { ':' }));
             }
         }

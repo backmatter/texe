@@ -177,3 +177,11 @@ opt-in Shipout runtime), reject shell escape and external source roots, and
 set `TEXE_HOST_SECCOMP_PATH` to an operator-owned Linux BPF filter. The filter
 is intersected with texe's compiler policy for every source interpreter.
 Fetch can use an explicit proxy; protected offline builds never need it.
+
+Locked formats retain Knuth's English patterns as language zero and enable
+additional languages whose registry declarations and complete pattern files are
+already in the package closure. The declarations come from the exact pqty lock,
+so frozen offline builds do not fetch language metadata. texe generates the
+TeX and Lua language configuration from that metadata and preserves declared
+synonyms, minima and Lua-specific restrictions. This does not infer or install
+arbitrary languages from document text.
