@@ -7,7 +7,6 @@ use crate::atomic;
 use crate::config::ProjectManifest;
 use crate::integrations::IntegrationReport;
 
-const LEGACY_WORKSPACE_PATH: &str = ".texe/editor/texe.code-workspace";
 const PROJECT_SETTINGS_PATH: &str = ".vscode/settings.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,17 +183,6 @@ fn plan(
     for (key, value) in desired_settings() {
         leaves(vec![key.to_string()], &value, &mut desired);
     }
-    // Carry explicit build preferences across the one-time companion cutover.
-    for (old, new) in [
-        ("texe.allowDownloads", "citet.allowDownloads"),
-        ("texe.buildOnSave", "citet.buildOnSave"),
-    ] {
-        if current.get(new).is_none()
-            && let Some(value) = current.get(old).filter(|value| value.is_boolean())
-        {
-            leaves(vec![new.to_string()], value, &mut desired);
-        }
-    }
     // Retire only settings still equal to values owned by texe. Later user edits survive.
     ownership.edits.retain(|edit| {
         if desired.iter().any(|(path, _)| path == &edit.path) {
@@ -320,7 +308,6 @@ fn configure_with_policy(
     {
         return Ok(ProjectSettingsOutcome::Preserved);
     }
-    remove_legacy_workspace(root)?;
     ensure_directory(&root.join(".vscode"), "VS Code settings")?;
     ownership.installed.clone_from(&proposed);
     let ledger = root.join(".vscode/texe-integration.json");
@@ -342,7 +329,6 @@ fn configure_with_policy(
 
 pub(crate) fn remove(root: &Path) -> Result<IntegrationReport, TexeError> {
     validate_directory(&root.join(".vscode"), "remove", "VS Code settings")?;
-    remove_legacy_workspace(root)?;
     let ledger = root.join(".vscode/texe-integration.json");
     if let Some(text) = read_optional(&ledger)? {
         let ownership: Ownership =
@@ -425,63 +411,12 @@ pub(crate) fn remove(root: &Path) -> Result<IntegrationReport, TexeError> {
     })
 }
 
-fn legacy_workspace_path(root: &Path) -> PathBuf {
-    root.join(LEGACY_WORKSPACE_PATH)
-}
-
 pub(crate) fn project_settings_path(root: &Path) -> PathBuf {
     root.join(PROJECT_SETTINGS_PATH)
 }
 
 pub(crate) fn project_settings_exist(root: &Path) -> Result<bool, TexeError> {
     path_exists(&project_settings_path(root))
-}
-
-fn remove_if_empty(path: &Path) -> Result<(), TexeError> {
-    match fs::remove_dir(path) {
-        Ok(()) => Ok(()),
-        Err(source)
-            if matches!(
-                source.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-            ) =>
-        {
-            Ok(())
-        }
-        Err(source) => Err(TexeError::Io {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
-}
-
-fn remove_legacy_workspace(root: &Path) -> Result<bool, TexeError> {
-    let path = legacy_workspace_path(root);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(source) => {
-            return Err(TexeError::Io { path, source });
-        }
-    };
-    let private_root = root.join(".texe");
-    let directory = path.parent().expect("legacy workspace path has a parent");
-    if !validate_directory(&private_root, "remove", "legacy VS Code workspace")?
-        || !validate_directory(directory, "remove", "legacy VS Code workspace")?
-        || !metadata.is_file()
-        || metadata.file_type().is_symlink()
-    {
-        return Err(TexeError::Build(format!(
-            "refusing to remove legacy VS Code workspace through non-file {}",
-            path.display()
-        )));
-    }
-    fs::remove_file(&path).map_err(|source| TexeError::Io {
-        path: path.clone(),
-        source,
-    })?;
-    remove_if_empty(directory)?;
-    Ok(true)
 }
 
 fn ensure_directory(path: &Path, subject: &str) -> Result<(), TexeError> {
@@ -598,7 +533,7 @@ mod tests {
     use std::path::Path;
 
     use crate::integrations::vscode::settings::{
-        ProjectSettingsOutcome, configure, legacy_workspace_path, project_settings_path, remove,
+        ProjectSettingsOutcome, configure, project_settings_path, remove,
     };
 
     fn write_manifest(root: &Path, entry: &str) {
@@ -905,7 +840,6 @@ mod tests {
         assert_eq!(settings["files.associations"]["*.tikz"], "latex");
         assert_eq!(settings["files.watcherExclude"]["**/.texe/**"], true);
         assert_eq!(settings["search.exclude"]["**/.texe"], true);
-        assert!(!legacy_workspace_path(directory.path()).exists());
     }
 
     #[test]
@@ -1017,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn cutover_retires_owned_companion_settings_and_preserves_user_changes() {
+    fn refresh_retires_owned_settings_and_preserves_user_changes() {
         let directory = tempfile::tempdir().unwrap();
         write_manifest(directory.path(), "main.tex");
         configure(directory.path(), false).unwrap();
@@ -1052,53 +986,6 @@ mod tests {
             .unwrap();
         assert!(value.get("latex-workshop.latex.autoBuild.run").is_none());
         assert_eq!(value["texe.allowDownloads"], false);
-        assert_eq!(value["citet.allowDownloads"], false);
         assert_eq!(value["citet.openPaper"], true);
-    }
-
-    #[test]
-    fn setup_and_removal_delete_only_the_legacy_generated_workspace() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        write_manifest(directory.path(), "main.tex");
-        let vscode = directory.path().join(".vscode");
-        fs::create_dir_all(&vscode).expect("vscode");
-        let settings = b"{\"editor.tabSize\":2}\n";
-        fs::write(vscode.join("settings.json"), settings).expect("settings");
-        let legacy_workspace = legacy_workspace_path(directory.path());
-        fs::create_dir_all(legacy_workspace.parent().expect("legacy workspace parent"))
-            .expect("legacy workspace directory");
-        fs::write(&legacy_workspace, b"legacy").expect("legacy workspace");
-        configure(directory.path(), false).expect("setup");
-
-        assert!(!legacy_workspace.exists());
-        fs::create_dir_all(legacy_workspace.parent().expect("legacy workspace parent"))
-            .expect("legacy workspace directory");
-        fs::write(&legacy_workspace, b"legacy").expect("legacy workspace");
-        remove(directory.path()).expect("remove");
-        assert!(!legacy_workspace.exists());
-        assert_eq!(
-            fs::read(vscode.join("settings.json")).expect("unchanged settings"),
-            settings
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn setup_and_removal_refuse_a_symlinked_editor_directory() {
-        use std::os::unix::fs::symlink;
-
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let outside = tempfile::tempdir().expect("outside directory");
-        write_manifest(directory.path(), "main.tex");
-        fs::create_dir(directory.path().join(".texe")).expect("private root");
-        symlink(outside.path(), directory.path().join(".texe/editor")).expect("editor symlink");
-        fs::write(outside.path().join("texe.code-workspace"), b"outside").expect("outside file");
-
-        assert!(configure(directory.path(), false).is_err());
-        assert!(remove(directory.path()).is_err());
-        assert_eq!(
-            fs::read(outside.path().join("texe.code-workspace")).expect("outside file"),
-            b"outside"
-        );
     }
 }

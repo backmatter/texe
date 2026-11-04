@@ -169,13 +169,6 @@ impl Progress {
         self
     }
 
-    pub(crate) fn with_legacy_history(self, legacy_history_path: &Path) -> Self {
-        if !self.history_path.is_file() {
-            self.inner.lock().expect("progress mutex").history = read_history(legacy_history_path);
-        }
-        self
-    }
-
     pub(crate) fn begin(&self, incremental: bool) {
         let mut inner = self.inner.lock().expect("progress mutex");
         // Start after manifest discovery, but before toolchain preparation, so
@@ -830,37 +823,6 @@ mod tests {
         )
         .expect("replace history");
         assert!(read_history(&path).samples.is_empty());
-    }
-
-    #[test]
-    fn legacy_project_history_moves_to_shared_storage_after_a_build() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let legacy = directory.path().join("project/.texe/build/timings.json");
-        let shared = directory.path().join("home/timings/project.json");
-        write_history(
-            &legacy,
-            &TimingHistory {
-                schema: HISTORY_SCHEMA.to_string(),
-                samples: vec![sample("pdflatex", false, 42_000)],
-            },
-        )
-        .expect("legacy history");
-        let progress = Progress::new(
-            shared.clone(),
-            "pdflatex",
-            false,
-            5,
-            false,
-            false,
-            ProgressLayout::Standalone,
-        )
-        .with_legacy_history(&legacy);
-        progress.begin(false);
-        progress.finish(1, 0, 0, 0, "sha256:environment");
-
-        let migrated = read_history(&shared);
-        assert_eq!(migrated.samples.len(), 2);
-        assert_eq!(migrated.samples[0].total_millis, 42_000);
     }
 
     #[test]
