@@ -1203,6 +1203,16 @@ fn apply(policy: &Policy) -> Result<(), TexeError> {
     Ok(())
 }
 
+fn validate_biber_cache(project: &Path, cache: &Path) -> Result<(), TexeError> {
+    if std::env::var_os("TEXE_HOSTED").is_some() {
+        let home = canonical(&crate::toolchain::texe_data_home()?)?;
+        if cache.starts_with(&home) && !cache.starts_with(project) {
+            return Ok(());
+        }
+    }
+    Policy::new(project, &[cache.to_owned()], &[], &[]).map(|_| ())
+}
+
 /// Prepare PAR's lazy native module copies from a freshly unpacked, trusted
 /// Biber runtime. No project bibliography or compiler-produced bytes may be
 /// passed to this parent-side preparation step.
@@ -1211,7 +1221,7 @@ pub(crate) fn prepare_biber_native_libraries(
     cache: &Path,
 ) -> Result<(), TexeError> {
     let cache = canonical(cache)?;
-    Policy::new(project, std::slice::from_ref(&cache), &[], &[])?;
+    validate_biber_cache(project, &cache)?;
     let mut pending = vec![cache.clone()];
     let mut files = 0usize;
     while let Some(path) = pending.pop() {

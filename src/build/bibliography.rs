@@ -466,7 +466,24 @@ fn run_bibliography_processor(
             library_dir.as_os_str().to_os_string(),
         ));
     }
-    let private_cache = protected.then(|| {
+    let hosted = protected && std::env::var_os("TEXE_HOSTED").is_some();
+    // Hosted job filesystems remain non-executable. Only the trusted parent
+    // populates this shared PAR runtime; source interpreters receive read/exec.
+    let _shared_cache_guard =
+        if hosted {
+            executable
+                .par_cache
+                .as_ref()
+                .map(|cache| {
+                    crate::guard::BuildGuard::acquire(cache.parent().ok_or_else(|| {
+                        TexeError::Build("Invalid bibliography runtime cache".into())
+                    })?)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+    let private_cache = (protected && !hosted).then(|| {
         project_root
             .join(&manifest.project.build_dir)
             .join("biber-cache")
@@ -476,7 +493,7 @@ fn run_bibliography_processor(
         .as_ref()
         .map(|cache| private_cache.as_ref().unwrap_or(cache));
     if let Some(cache) = par_cache {
-        if protected {
+        if protected && !hosted {
             crate::portable::private_directory(
                 project_root,
                 cache.strip_prefix(project_root).map_err(|_| {
@@ -508,12 +525,19 @@ fn run_bibliography_processor(
                 path: cache.clone(),
                 source,
             })?;
-            crate::portable::private_directory(
-                project_root,
-                cache.strip_prefix(project_root).map_err(|_| {
-                    TexeError::Build("Private bibliography cache is outside the project".into())
-                })?,
-            )?;
+            if hosted {
+                fs::create_dir_all(cache).map_err(|source| TexeError::Io {
+                    path: cache.clone(),
+                    source,
+                })?;
+            } else {
+                crate::portable::private_directory(
+                    project_root,
+                    cache.strip_prefix(project_root).map_err(|_| {
+                        TexeError::Build("Private bibliography cache is outside the project".into())
+                    })?,
+                )?;
+            }
             let mut warm = crate::process::command(&executable.path);
             warm.env_clear()
                 .args(["--noconf", "--version"])
@@ -530,9 +554,10 @@ fn run_bibliography_processor(
                 source,
             })?;
             if !warmed.status.success() {
-                return Err(TexeError::Build(
-                    "Could not prepare the pinned bibliography processor".into(),
-                ));
+                return Err(TexeError::Build(format!(
+                    "Could not prepare the pinned bibliography processor: {}",
+                    String::from_utf8_lossy(&warmed.stderr).trim()
+                )));
             }
             crate::compiler_sandbox::prepare_biber_native_libraries(project_root, cache)?;
         }
@@ -541,6 +566,7 @@ fn run_bibliography_processor(
             .iter()
             .cloned()
             .chain(super::process::source_read_roots(project_root, manifest)?)
+            .chain(par_cache.filter(|_| hosted).cloned())
             .collect::<Vec<_>>();
         let executes = par_cache.into_iter().cloned().collect::<Vec<_>>();
         portable_output(
