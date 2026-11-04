@@ -175,7 +175,9 @@ pub(crate) fn read(
         use rustix::fs::{Mode, OFlags, ResolveFlags, open, openat2};
         let directory = open(
             project,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            // Only a resolution anchor: opening it must not require listing
+            // unrelated ancestor directories under an outer Landlock policy.
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
         )
         .map_err(|source| io(project, source.into()))?;
