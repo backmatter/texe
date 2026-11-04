@@ -25,8 +25,7 @@ cargo xtask pqty check ../pqty
 
 Set `PQTY_REPO` if pqty lives elsewhere.
 
-See [native suite releases](docs/releasing.md) for the automated pqty update
-handoff, protected dependency checks and release recovery.
+See [native suite releases](docs/releasing.md) to pin a new pqty release.
 
 ## Run the checks
 
