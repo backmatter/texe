@@ -30,7 +30,8 @@ jobs:
             os: windows-2025
           - platform: macOS Apple Silicon
             os: macos-15
-    runs-on: ${{ matrix.os }}
+    # Preserve check contexts while avoiding the exhausted macOS 15 arm64 pool.
+    runs-on: ${{ matrix.os == 'macos-15' && 'macos-26' || matrix.os }}
     timeout-minutes: 30
 
     steps:
@@ -121,7 +122,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-2025, macos-15]
-    runs-on: ${{ matrix.os }}
+    # Preserve check contexts while avoiding the exhausted macOS 15 arm64 pool.
+    runs-on: ${{ matrix.os == 'macos-15' && 'macos-26' || matrix.os }}
     timeout-minutes: 120
     defaults:
       run:
@@ -200,7 +202,8 @@ jobs:
             os: windows-2025
           - platform: macOS Apple Silicon
             os: macos-15
-    runs-on: ${{ matrix.os }}
+    # Preserve check contexts while avoiding the exhausted macOS 15 arm64 pool.
+    runs-on: ${{ matrix.os == 'macos-15' && 'macos-26' || matrix.os }}
     timeout-minutes: 120
 
     steps:
