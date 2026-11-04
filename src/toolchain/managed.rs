@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::TexeError;
 use crate::atomic;
@@ -10,7 +10,7 @@ use crate::toolchain::catalog::ManagedArtifact;
 use crate::toolchain::component::runtime_file_identities;
 use crate::toolchain::{
     READY_MARKER, RuntimeMarker, ToolchainIdentity, VERIFICATION_INTERVAL_SECONDS,
-    VERIFICATION_SCHEMA, VERIFIED_MARKER, VerificationPolicy, VerificationStamp,
+    VERIFICATION_SCHEMA, VerificationPolicy, VerificationStamp,
 };
 
 pub(super) fn install_managed_runtime(
@@ -158,8 +158,19 @@ pub(super) fn deep_verification_due(
     now < stamp.verified_at || now - stamp.verified_at >= VERIFICATION_INTERVAL_SECONDS
 }
 
+// Verification metadata and atomic replacement files live beside the immutable
+// payload, never inside the tree that a concurrent verifier enumerates.
+// Canonicalize the trusted cache root so aliases share the same stamp.
+pub(super) fn verification_stamp_path(root: &Path) -> Option<PathBuf> {
+    let root = fs::canonicalize(root).ok()?;
+    let name = root.file_name()?;
+    let mut filename = name.to_os_string();
+    filename.push(".json");
+    Some(root.parent()?.join(".texe-verification").join(filename))
+}
+
 fn read_verification_stamp(root: &Path) -> Option<VerificationStamp> {
-    let bytes = fs::read(root.join(VERIFIED_MARKER)).ok()?;
+    let bytes = fs::read(verification_stamp_path(root)?).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 
@@ -177,7 +188,9 @@ pub(super) fn record_verification(root: &Path, fingerprint: &str) {
     };
     if let Ok(mut bytes) = serde_json::to_vec_pretty(&stamp) {
         bytes.push(b'\n');
-        let _ = atomic::write(&root.join(VERIFIED_MARKER), &bytes);
+        if let Some(path) = verification_stamp_path(root) {
+            let _ = atomic::write(&path, &bytes);
+        }
     }
 }
 
