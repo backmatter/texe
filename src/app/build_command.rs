@@ -97,7 +97,6 @@ pub(super) fn execute_build(
             ProgressLayout::Standalone
         },
     )
-    .with_legacy_history(&build_root.join("timings.json"))
     .with_machine_output(presentation.json);
     progress.begin(state::read(&build_root.join(state::STATE_NAME)).is_some());
     build::announce_configuration_warnings(&context.manifest, &progress);
