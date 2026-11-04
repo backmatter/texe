@@ -1,5 +1,6 @@
 use sha2::{Digest as _, Sha256};
 use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -183,7 +184,7 @@ pub(super) fn ensure(
 // multiplying path length with nested hashes that Windows TeX cannot open.
 fn format_cache_key(toolchain: &str, environment: &str, recipe: &str) -> String {
     let mut hash = Sha256::new();
-    for value in [toolchain, environment, recipe] {
+    for value in ["locked-languages-v2", toolchain, environment, recipe] {
         hash.update(value.as_bytes());
         hash.update([0]);
     }
@@ -341,19 +342,13 @@ fn prepare_format_configuration(build: &FormatBuild<'_>) -> Result<(), TexeError
             ini.display()
         )));
     }
-    copy_format_config(
-        &build.texmf.join("tex/generic/config/language.us"),
-        &build.config.join("language.dat"),
-    )?;
-    copy_format_config(
-        &build.texmf.join("tex/generic/config/language.us.def"),
-        &build.config.join("language.def"),
+    write_language_configuration(
+        build.texmf,
+        &build.config,
+        &build.package_environment.languages,
+        build.recipe.language_lua,
     )?;
     if build.recipe.language_lua {
-        copy_format_config(
-            &build.texmf.join("tex/generic/config/language.us.lua"),
-            &build.config.join("language.dat.lua"),
-        )?;
         write_luaotfload_config(&build.config.join("luaotfload.conf"))?;
     }
     write_pdftex_map(
@@ -560,19 +555,111 @@ fn publish_generated_format(build: &FormatBuild<'_>) -> Result<(), TexeError> {
     }
 }
 
-fn copy_format_config(source: &Path, target: &Path) -> Result<(), TexeError> {
-    if !source.is_file() {
-        return Err(TexeError::Build(format!(
-            "locked format bootstrap file is absent from pqty.lock: {}",
-            source.display()
-        )));
+fn write_language_configuration(
+    texmf: &Path,
+    config: &Path,
+    languages: &[crate::package::LockedLanguage],
+    language_lua: bool,
+) -> Result<(), TexeError> {
+    let read_base = |name: &str| {
+        let path = texmf.join("tex/generic/config").join(name);
+        super::generated::text_local(&path, super::generated::MAX_METADATA)
+    };
+    let mut dat = read_base("language.us")?;
+    let mut def = read_base("language.us.def")?;
+    let mut lua = if language_lua {
+        read_base("language.us.lua")?
+    } else {
+        String::new()
+    };
+    let mut names = dat
+        .lines()
+        .filter_map(|line| line.split('%').next()?.split_whitespace().next())
+        .map(|name| name.trim_start_matches('=').to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    dat.push('\n');
+    def.push('\n');
+    for language in languages {
+        let declaration = &language.declaration;
+        let name = &declaration.name;
+        let valid_name = |name: &str| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        };
+        if !valid_name(name) || declaration.synonyms.iter().any(|name| !valid_name(name)) {
+            return Err(TexeError::Build(format!(
+                "Invalid locked language name from {}",
+                language.provider
+            )));
+        }
+        // English remains language zero, with Knuth's original patterns and
+        // aliases. Never redefine an initial language through package metadata.
+        if names.contains(name) {
+            continue;
+        }
+        for path in std::iter::once(&declaration.loader)
+            .chain(&declaration.patterns)
+            .chain(&declaration.exceptions)
+        {
+            if path.is_empty()
+                || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+                || !path.bytes().all(|b| {
+                    b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b'+')
+                })
+                || !texmf.join(path).is_file()
+            {
+                return Err(TexeError::Build(format!(
+                    "Invalid or absent locked language file: {path}"
+                )));
+            }
+        }
+        let loader = &declaration.loader;
+        let left = declaration.left_hyphen_min;
+        let right = declaration.right_hyphen_min;
+        writeln!(dat, "{name} {loader}").expect("write to String");
+        writeln!(
+            def,
+            "\\addlanguage {{{name}}}{{{loader}}}{{}}{{{left}}}{{{right}}}"
+        )
+        .expect("write to String");
+        names.insert(name.clone());
+        let mut synonyms = Vec::new();
+        for synonym in &declaration.synonyms {
+            if names.insert(synonym.clone()) {
+                writeln!(dat, "={synonym}").expect("write to String");
+                writeln!(
+                    def,
+                    "\\addlanguage {{{synonym}}}{{{loader}}}{{}}{{{left}}}{{{right}}}"
+                )
+                .expect("write to String");
+                synonyms.push(synonym.clone());
+            }
+        }
+        if language_lua {
+            let quote = |value: &str| serde_json::to_string(value).expect("serialize string");
+            write!(lua, "[{}]={{loader={},lefthyphenmin={left},righthyphenmin={right},patterns={},hyphenation={},synonyms={{{}}}",
+                quote(name), quote(loader), quote(&declaration.patterns.join(",")), quote(&declaration.exceptions.join(",")),
+                synonyms.iter().map(|s| quote(s)).collect::<Vec<_>>().join(",")).expect("write to String");
+            if let Some(special) = declaration
+                .attributes
+                .iter()
+                .find(|attribute| attribute.name == "luaspecial")
+            {
+                write!(lua, ",special={}", quote(&special.value)).expect("write to String");
+            }
+            lua.push_str("},\n");
+        }
     }
-    fs::copy(source, target)
-        .map(|_| ())
-        .map_err(|source_error| TexeError::Io {
-            path: target.to_path_buf(),
-            source: source_error,
-        })
+    def.push_str("\\uselanguage {USenglish}\n");
+    atomic_write(&config.join("language.dat"), dat.as_bytes())?;
+    atomic_write(&config.join("language.def"), def.as_bytes())?;
+    if language_lua {
+        lua.push_str("}\n");
+        atomic_write(&config.join("language.dat.lua"), lua.as_bytes())?;
+    }
+    Ok(())
 }
 
 fn write_luaotfload_config(target: &Path) -> Result<(), TexeError> {
@@ -697,6 +784,54 @@ fn remove_format_staging(path: &Path, format_name: &str) -> Result<(), TexeError
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn locked_languages_preserve_english_and_generate_all_engine_configurations() {
+        let root = tempfile::tempdir().unwrap();
+        let texmf = root.path().join("texmf");
+        let base = texmf.join("tex/generic/config");
+        let config = root.path().join("config");
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        fs::write(base.join("language.us"), "english hyphen.tex\n=american\n").unwrap();
+        fs::write(
+            base.join("language.us.def"),
+            "\\addlanguage {USenglish}{hyphen}{}{2}{3}\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("language.us.lua"),
+            "return { [\"english\"]={special=\"language0\"},\n",
+        )
+        .unwrap();
+        for file in ["loadhyph-pl.tex", "hyph-pl.pat.txt", "hyph-pl.hyp.txt"] {
+            fs::write(texmf.join(file), b"locked language bytes").unwrap();
+        }
+        let language = serde_json::from_value(
+            serde_json::json!({"provider":"hyphen-polish", "declaration": {
+                "name":"polish", "synonyms":["Polish"], "loader":"loadhyph-pl.tex",
+                "patterns":["hyph-pl.pat.txt"], "exceptions":["hyph-pl.hyp.txt"],
+                "left_hyphen_min":2, "right_hyphen_min":2,
+                "attributes":[{"name":"luaspecial", "value":"disabled:fixture restriction"}]
+            }}),
+        )
+        .unwrap();
+        super::write_language_configuration(&texmf, &config, &[language], true).unwrap();
+        let dat = fs::read_to_string(config.join("language.dat")).unwrap();
+        assert_eq!(
+            dat,
+            "english hyphen.tex\n=american\n\npolish loadhyph-pl.tex\n=Polish\n"
+        );
+        let def = fs::read_to_string(config.join("language.def")).unwrap();
+        assert!(def.starts_with("\\addlanguage {USenglish}{hyphen}{}{2}{3}"));
+        assert!(def.contains("\\addlanguage {polish}{loadhyph-pl.tex}{}{2}{2}"));
+        assert!(def.ends_with("\\uselanguage {USenglish}\n"));
+        let lua = fs::read_to_string(config.join("language.dat.lua")).unwrap();
+        assert!(lua.contains("patterns=\"hyph-pl.pat.txt\""));
+        assert!(lua.contains("hyphenation=\"hyph-pl.hyp.txt\""));
+        assert!(lua.contains("special=\"disabled:fixture restriction\""));
+        assert!(lua.ends_with("}\n"));
+    }
+
     #[test]
     fn format_cache_keys_are_bounded_and_separate_each_identity_component() {
         let inputs = [
@@ -849,6 +984,7 @@ mod tests {
                 schema: "pqty.environment/v1".into(),
                 fingerprint: "sha256:test-packages".into(),
                 font_maps: Vec::new(),
+                languages: Vec::new(),
             };
             let progress = Progress::new(
                 root.join("timing.json"),

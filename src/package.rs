@@ -78,6 +78,32 @@ pub(crate) struct PackageEnvironment {
     pub(crate) fingerprint: String,
     #[serde(default)]
     pub(crate) font_maps: Vec<String>,
+    #[serde(default)]
+    pub(crate) languages: Vec<LockedLanguage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct LockedLanguage {
+    pub(crate) provider: String,
+    pub(crate) declaration: LanguageDeclaration,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct LanguageDeclaration {
+    pub(crate) name: String,
+    pub(crate) synonyms: Vec<String>,
+    pub(crate) loader: String,
+    pub(crate) patterns: Vec<String>,
+    pub(crate) exceptions: Vec<String>,
+    pub(crate) left_hyphen_min: u8,
+    pub(crate) right_hyphen_min: u8,
+    pub(crate) attributes: Vec<LanguageAttribute>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct LanguageAttribute {
+    pub(crate) name: String,
+    pub(crate) value: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
