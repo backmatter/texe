@@ -110,13 +110,13 @@ internal API and may change between releases.
 
 ## Releases
 
-Release PRs require a `feat`, `fix`, `docs`, `perf`, or `revert` commit, or a
-breaking change marked with `!` or a `BREAKING CHANGE:` footer. Internal
-maintenance commits alone do not trigger a release.
+Releases are cut by hand and stay on 0.1.x while texe has no users:
 
-release-plz opens a release PR that bumps the version, rewrites `CHANGELOG.md`
-from the commit titles, and tags and drafts the GitHub release once merged. The
-release body repeats the changelog entry. Do not edit `CHANGELOG.md` by hand;
-correct a wrong entry by amending the commit title before it is released.
+1. Open a `chore: release vX.Y.Z` pull request that bumps the version in
+   `Cargo.toml` and `Cargo.lock` and adds a `CHANGELOG.md` entry from the commit
+   titles since the last release.
+2. After it is merged, tag the merge commit `vX.Y.Z` and push the tag.
+3. The release workflow builds and tests the suite, publishes the crate, and
+   creates the GitHub release from the changelog entry.
 
 Contributions are licensed under the [MIT License](LICENSE).

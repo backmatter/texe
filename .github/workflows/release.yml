@@ -414,5 +414,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release upload "${{ needs.metadata.outputs.tag }}" dist/* --clobber
-          gh release edit "${{ needs.metadata.outputs.tag }}" --draft=false --latest
+          tag="${{ needs.metadata.outputs.tag }}"
+          version="${{ needs.metadata.outputs.version }}"
+          # Releases are cut by hand: create the draft from this version's
+          # CHANGELOG entry when it does not exist yet.
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            awk -v v="$version" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md \
+              | sed '/./,$!d' > release-notes.md
+            [ -s release-notes.md ] || { echo "::error::CHANGELOG.md has no entry for $version"; exit 1; }
+            gh release create "$tag" --draft --verify-tag --title "$tag" --notes-file release-notes.md
+          fi
+          gh release upload "$tag" dist/* --clobber
+          gh release edit "$tag" --draft=false --latest
