@@ -19,7 +19,7 @@ cargo xtask verify contracts
 
 The update records the release's Git revision, version and capabilities schema
 in `suite.lock.toml`. The pull request runs the usual platform checks; after
-merge, release-plz prepares the texe release PR.
+merge, cut a texe release as described in `CONTRIBUTING.md`.
 
 ## Editor delivery
 
