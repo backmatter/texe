@@ -27,6 +27,7 @@ const CACHE_DIRECTORIES: &[&str] = &[
     "components",
     "downloads",
     "pqty",
+    "package-trees",
     "editor",
     "timings",
 ];
@@ -111,6 +112,10 @@ fn append_shared_storage(home: &Path, report: &mut StorageReport) -> Result<(), 
         ("components", "checksummed bibliography tools"),
         ("downloads", "verified reusable downloads"),
         ("pqty", "package registry, downloads, and shared store"),
+        (
+            "package-trees",
+            "package environments shared by hosted builds",
+        ),
         ("editor", "bundled VS Code integration"),
         ("timings", "local per-project build timing history"),
     ] {

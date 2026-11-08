@@ -327,7 +327,7 @@ impl BuildContext<'_> {
             "--out-dir".to_string(),
             text(&self.output_dir),
             "--texmf".to_string(),
-            text(&self.texmf),
+            text(&self.texmf()),
             "--synctex".to_string(),
             "--json".to_string(),
         ];

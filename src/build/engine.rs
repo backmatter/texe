@@ -52,7 +52,7 @@ impl BuildContext<'_> {
             && managed_format.is_some()
             && !is_portable_build(self.project_root, &self.build_root)
         {
-            write_system_fontconfig(output_dir, &self.texmf)?;
+            write_system_fontconfig(output_dir, &self.texmf())?;
         }
 
         let mut arguments = Vec::new();
@@ -81,7 +81,7 @@ impl BuildContext<'_> {
             self.toolchain,
             &EngineEnvironmentContext {
                 working_directory: self.project_root,
-                texmf: &self.texmf,
+                texmf: &self.texmf(),
                 build_root: output_dir,
                 input_roots: &self.manifest.inputs.roots,
                 managed_format,
@@ -91,7 +91,7 @@ impl BuildContext<'_> {
             },
         );
         if is_portable_build(self.project_root, &self.build_root) {
-            let mut fonts = vec![self.texmf.join("fonts")];
+            let mut fonts = vec![self.texmf().join("fonts")];
             if let Some(runtime) = &self.toolchain.managed {
                 fonts.push(runtime.root.join("texmf-dist/fonts"));
             } else if portable.is_none() {

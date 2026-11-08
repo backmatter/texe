@@ -375,6 +375,39 @@ impl PqtyClient {
         filename_database::refresh(texmf)
     }
 
+    /// Install a lock's closure into a tree shared between hosted Papers
+    /// (`crate::build::shared_tree`). The tree is always copied from the
+    /// trusted default store, never a project-configured one, so no project
+    /// directory can supply its bytes; pqty verifies each provider's integrity
+    /// while materializing.
+    pub(crate) fn install_shared(
+        &self,
+        project_root: &Path,
+        toolchain: &ResolvedToolchain,
+        lock: &Path,
+        texmf: &Path,
+        progress: &Progress,
+    ) -> Result<(), TexeError> {
+        generated::read(project_root, project_root, lock, generated::MAX_METADATA)?;
+        let mut arguments = vec![
+            OsString::from("--no-config"),
+            OsString::from("--progress"),
+            OsString::from("json"),
+            OsString::from("install"),
+            OsString::from("--lock"),
+            lock.as_os_str().to_os_string(),
+            OsString::from("--out"),
+            texmf.as_os_str().to_os_string(),
+            OsString::from("--link"),
+            OsString::from("copy"),
+        ];
+        append_registry_transport_argument(&mut arguments, toolchain);
+        self.checked_output_with_progress(&arguments, project_root, progress)
+            .map(|_| ())
+            .map_err(|error| error.context("could not install shared pqty environment"))?;
+        filename_database::refresh(texmf)
+    }
+
     pub(crate) fn environment(
         &self,
         project_root: &Path,

@@ -3,6 +3,7 @@ mod format;
 pub(crate) mod generated;
 mod index;
 pub(crate) mod process;
+pub(crate) mod shared_tree;
 pub(crate) mod shipout;
 mod synctex;
 mod trace;
@@ -102,7 +103,9 @@ struct BuildContext<'a> {
     tools: &'a PqtyClient,
     entry: PathBuf,
     lock: PathBuf,
-    texmf: PathBuf,
+    /// The package tree of the current environment: the Paper's own, or a
+    /// shared one in hosted builds (`shared_tree`), which changes with it.
+    texmf: std::cell::RefCell<PathBuf>,
     build_root: PathBuf,
     discovery_dir: PathBuf,
     output_dir: PathBuf,
@@ -524,7 +527,7 @@ impl<'a> BuildContext<'a> {
             tools,
             entry,
             lock: project_root.join(&manifest.packages.lock),
-            texmf,
+            texmf: std::cell::RefCell::new(texmf),
             environment_path: build_root.join("pqty.env.json"),
             state_path: build_root.join(state::STATE_NAME),
             auxiliary_cache_path: build_root.join(auxiliary::CACHE_NAME),
@@ -659,27 +662,15 @@ impl<'a> BuildContext<'a> {
                 })
             })?;
         }
-        self.progress.phase(
+        let environment = self.progress.phase(
             PhaseKind::Package,
             "fetching/materializing package environment",
-            || {
-                self.tools.install(
-                    self.project_root,
-                    self.manifest,
-                    self.toolchain,
-                    &self.lock,
-                    &self.texmf,
-                    &self.progress,
-                )
-            },
+            || self.materialize_environment(),
         )?;
-        let environment =
-            self.tools
-                .environment(self.project_root, &self.lock, &self.environment_path)?;
         let managed_format = format::ensure(
             self.project_root,
             self.toolchain,
-            &self.texmf,
+            &self.texmf(),
             &environment,
             &self.build_root,
             self.manifest.packages.remote,
@@ -741,7 +732,7 @@ impl<'a> BuildContext<'a> {
                 tools: self.tools,
                 toolchain: self.toolchain,
                 environment_path: &self.environment_path,
-                texmf: &self.texmf,
+                texmf: &self.texmf(),
                 output_dir: &self.discovery_dir,
                 log_path: &run.log_path,
                 recorder_path: &run.fls_path,
@@ -783,7 +774,7 @@ impl<'a> BuildContext<'a> {
                         tools: self.tools,
                         toolchain: self.toolchain,
                         environment_path: &self.environment_path,
-                        texmf: &self.texmf,
+                        texmf: &self.texmf(),
                         output_dir: &self.discovery_dir,
                         log_path: &verified.log_path,
                         recorder_path: &verified.fls_path,
@@ -930,7 +921,7 @@ impl<'a> BuildContext<'a> {
             tools: self.tools,
             toolchain: self.toolchain,
             environment_path: &self.environment_path,
-            texmf: &self.texmf,
+            texmf: &self.texmf(),
             output_dir: if discovery {
                 &self.discovery_dir
             } else {
@@ -957,7 +948,7 @@ impl<'a> BuildContext<'a> {
                 project_root: self.project_root,
                 manifest: self.manifest,
                 toolchain: self.toolchain,
-                texmf: &self.texmf,
+                texmf: &self.texmf(),
                 output_dir: &self.output_dir,
                 recorder_path: &run.fls_path,
                 progress: &self.progress,
@@ -968,7 +959,7 @@ impl<'a> BuildContext<'a> {
             self.project_root,
             self.manifest,
             self.toolchain,
-            &self.texmf,
+            &self.texmf(),
             &self.output_dir,
             &mut state.index,
             &self.progress,
@@ -976,24 +967,48 @@ impl<'a> BuildContext<'a> {
         Ok(bibliography_ran || index_ran)
     }
 
+    /// The current package tree.
+    fn texmf(&self) -> PathBuf {
+        self.texmf.borrow().clone()
+    }
+
+    /// Materialize the lock's package environment and return it. Hosted
+    /// protected builds use the environment's shared tree; every other build
+    /// installs into the Paper's own.
+    fn materialize_environment(&self) -> Result<PackageEnvironment, TexeError> {
+        if shared_tree::enabled(self.project_root, self.manifest, self.toolchain) {
+            let environment =
+                self.tools
+                    .environment(self.project_root, &self.lock, &self.environment_path)?;
+            let tree = shared_tree::ensure(
+                self.tools,
+                self.project_root,
+                self.toolchain,
+                &self.lock,
+                &environment,
+                &self.progress,
+            )?;
+            *self.texmf.borrow_mut() = tree;
+            return Ok(environment);
+        }
+        self.tools.install(
+            self.project_root,
+            self.manifest,
+            self.toolchain,
+            &self.lock,
+            &self.texmf(),
+            &self.progress,
+        )?;
+        self.tools
+            .environment(self.project_root, &self.lock, &self.environment_path)
+    }
+
     fn refresh_environment(&self, state: &mut BuildState) -> Result<(), TexeError> {
-        self.progress.phase(
+        state.environment = self.progress.phase(
             PhaseKind::Package,
             "fetching/materializing updated package environment",
-            || {
-                self.tools.install(
-                    self.project_root,
-                    self.manifest,
-                    self.toolchain,
-                    &self.lock,
-                    &self.texmf,
-                    &self.progress,
-                )
-            },
+            || self.materialize_environment(),
         )?;
-        state.environment =
-            self.tools
-                .environment(self.project_root, &self.lock, &self.environment_path)?;
         let auxiliary_cache_key = auxiliary::cache_key(
             self.manifest,
             self.toolchain,
@@ -1007,7 +1022,7 @@ impl<'a> BuildContext<'a> {
         state.managed_format = format::ensure(
             self.project_root,
             self.toolchain,
-            &self.texmf,
+            &self.texmf(),
             &state.environment,
             &self.build_root,
             self.manifest.packages.remote,
