@@ -1,4 +1,5 @@
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::fs;
@@ -304,6 +305,15 @@ fn validate_private_format_paths(
 
 fn generate_format(build: &FormatBuild<'_>) -> Result<(), TexeError> {
     prepare_format_configuration(build)?;
+    if let Some((format, inputs)) = reusable_format(build) {
+        let target = build.formats.join(format!("{}.fmt", build.recipe.name));
+        fs::copy(&format, &target).map_err(|source| TexeError::Io {
+            path: target.clone(),
+            source,
+        })?;
+        write_format_inputs(&build.staging, &inputs)?;
+        return publish_generated_format(build);
+    }
     let arguments = format_arguments(build);
     let environment = format_environment(build);
     let output = if build
@@ -331,7 +341,351 @@ fn generate_format(build: &FormatBuild<'_>) -> Result<(), TexeError> {
         )?
     };
     validate_generated_format(build, &output)?;
-    publish_generated_format(build)
+    let inputs = recorded_format_inputs(build);
+    if let Some(inputs) = &inputs {
+        write_format_inputs(&build.staging, inputs)?;
+    }
+    publish_generated_format(build)?;
+    if let Some(inputs) = &inputs {
+        share_format(build, inputs)?;
+    }
+    Ok(())
+}
+
+/// Format reuse by recorded inputs.
+///
+/// A format is a pure function of the engine, its recipe, fixed arguments and
+/// environment, and the bytes initex reads. Every generated format records
+/// those inputs from `-recorder` (`inputs.json`): each file relative to the
+/// tree it came from (format staging, the locked package tree or the managed
+/// runtime) with its SHA-256. A format whose recorded inputs are all
+/// byte-identical in the current build is reused instead of running initex
+/// again, so a package environment change that does not touch the format (a
+/// font provider added during convergence) keeps it, and a fresh build
+/// directory with the same packages copies it from the shared store.
+///
+/// A format that read anything outside those three trees (for example a
+/// project file through a `.` search path) records no inputs and is never
+/// reused or shared. A shared format is only taken after the consuming build
+/// hashed its own copy of every recorded input, so a paper that altered its
+/// package tree can at most produce a format no other paper accepts.
+const FORMAT_INPUTS_SCHEMA: &str = "texe.format-inputs/v1";
+const FORMAT_INPUTS: &str = "inputs.json";
+/// Shared formats live in the managed runtime's format cache under this name.
+const SHARED_FORMATS: &str = "by-inputs";
+/// Candidate formats examined per lookup, newest first.
+const MAX_FORMAT_CANDIDATES: usize = 64;
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
+enum FormatInputRoot {
+    Staging,
+    Packages,
+    Runtime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FormatInput {
+    root: FormatInputRoot,
+    path: String,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FormatInputs {
+    schema: String,
+    toolchain: String,
+    recipe: String,
+    inputs: Vec<FormatInput>,
+}
+
+fn format_input_roots(build: &FormatBuild<'_>) -> Vec<(FormatInputRoot, PathBuf)> {
+    let mut roots = vec![
+        (FormatInputRoot::Staging, build.staging.clone()),
+        (FormatInputRoot::Packages, build.texmf.to_path_buf()),
+    ];
+    if let Some(runtime) = &build.toolchain.managed {
+        roots.push((FormatInputRoot::Runtime, runtime.root.clone()));
+    }
+    roots
+}
+
+/// The inputs a recorder file lists, relative to their trees, or `None` when
+/// any input lies outside `roots` (or cannot be placed lexically).
+fn recorded_inputs(
+    recorder: &str,
+    roots: &[(FormatInputRoot, PathBuf)],
+) -> Option<Vec<(FormatInputRoot, String)>> {
+    let working_directory = recorder
+        .lines()
+        .find_map(|line| line.strip_prefix("PWD "))
+        .map(PathBuf::from);
+    // Absolute and lexically normal, or `None` (a relative path without a
+    // working directory, or one climbing with `..`).
+    let place = |recorded: &str| -> Option<PathBuf> {
+        let path = Path::new(recorded);
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            working_directory.as_ref()?.join(path)
+        };
+        let mut normalized = PathBuf::new();
+        for component in absolute.components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => return None,
+                other => normalized.push(other),
+            }
+        }
+        Some(normalized)
+    };
+    // Files initex wrote itself (and may read back, as `texsys.aux`) are
+    // outputs, not inputs.
+    let outputs = recorder
+        .lines()
+        .filter_map(|line| line.strip_prefix("OUTPUT "))
+        .filter_map(place)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut inputs = std::collections::BTreeSet::new();
+    for line in recorder.lines() {
+        let Some(input) = line.strip_prefix("INPUT ") else {
+            continue;
+        };
+        // TeX opens the null device for empty streams; it holds no bytes.
+        if input == "/dev/null" {
+            continue;
+        }
+        let normalized = place(input)?;
+        if outputs.contains(&normalized) {
+            continue;
+        }
+        let (root, relative) = roots.iter().find_map(|(kind, root)| {
+            normalized
+                .strip_prefix(root)
+                .ok()
+                .filter(|relative| !relative.as_os_str().is_empty())
+                .map(|relative| (*kind, relative))
+        })?;
+        let relative = relative
+            .components()
+            .map(|part| part.as_os_str().to_str())
+            .collect::<Option<Vec<_>>>()?
+            .join("/");
+        inputs.insert((root, relative));
+    }
+    (!inputs.is_empty()).then(|| inputs.into_iter().collect())
+}
+
+/// SHA-256 of a regular (non-symlink) file of at most `MAX_ARTIFACT` bytes.
+/// Hard links are fine here: only the bytes matter.
+fn input_digest(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > super::generated::MAX_ARTIFACT {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    let mut file = fs::File::open(path)
+        .ok()?
+        .take(super::generated::MAX_ARTIFACT + 1);
+    let mut buffer = vec![0; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let read = file.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        total += read as u64;
+        hasher.update(&buffer[..read]);
+    }
+    (total <= super::generated::MAX_ARTIFACT).then(|| hex::encode(hasher.finalize()))
+}
+
+fn recorded_format_inputs(build: &FormatBuild<'_>) -> Option<FormatInputs> {
+    let recorder_text = super::generated::text_local(
+        &build.formats.join(format!("{}.fls", build.recipe.name)),
+        super::generated::MAX_METADATA,
+    )
+    .ok()?;
+    let roots = format_input_roots(build);
+    let listed = recorded_inputs(&recorder_text, &roots)?;
+    let mut inputs = Vec::with_capacity(listed.len());
+    for (root, path) in listed {
+        let base = &roots
+            .iter()
+            .find(|(kind, _)| *kind == root)
+            .expect("known root")
+            .1;
+        let sha256 = input_digest(&base.join(&path))?;
+        inputs.push(FormatInput { root, path, sha256 });
+    }
+    Some(FormatInputs {
+        schema: FORMAT_INPUTS_SCHEMA.to_string(),
+        toolchain: build.toolchain.identity.fingerprint.clone(),
+        recipe: build.recipe.name.to_string(),
+        inputs,
+    })
+}
+
+fn write_format_inputs(root: &Path, inputs: &FormatInputs) -> Result<(), TexeError> {
+    let bytes = serde_json::to_vec_pretty(inputs).map_err(|source| TexeError::Json {
+        path: root.join(FORMAT_INPUTS),
+        source,
+    })?;
+    atomic_write(&root.join(FORMAT_INPUTS), &bytes)
+}
+
+fn read_format_inputs(root: &Path) -> Option<FormatInputs> {
+    let text =
+        super::generated::text_local(&root.join(FORMAT_INPUTS), super::generated::MAX_METADATA)
+            .ok()?;
+    serde_json::from_str::<FormatInputs>(&text)
+        .ok()
+        .filter(|inputs| inputs.schema == FORMAT_INPUTS_SCHEMA)
+}
+
+/// Whether every recorded input is byte-identical in this build's trees.
+fn inputs_match(
+    inputs: &FormatInputs,
+    build: &FormatBuild<'_>,
+    roots: &[(FormatInputRoot, PathBuf)],
+    digests: &mut BTreeMap<(FormatInputRoot, String), Option<String>>,
+) -> bool {
+    inputs.toolchain == build.toolchain.identity.fingerprint
+        && inputs.recipe == build.recipe.name
+        && !inputs.inputs.is_empty()
+        && inputs.inputs.iter().all(|input| {
+            let Some(base) = roots
+                .iter()
+                .find(|(kind, _)| *kind == input.root)
+                .map(|(_, base)| base)
+            else {
+                return false;
+            };
+            if input
+                .path
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+            {
+                return false;
+            }
+            digests
+                .entry((input.root, input.path.clone()))
+                .or_insert_with(|| input_digest(&base.join(&input.path)))
+                .as_deref()
+                == Some(input.sha256.as_str())
+        })
+}
+
+fn shared_format_store(build: &FormatBuild<'_>) -> Option<PathBuf> {
+    build
+        .toolchain
+        .managed
+        .as_ref()
+        .map(|runtime| runtime.format_cache.join(SHARED_FORMATS))
+}
+
+/// A format generated earlier from exactly this build's inputs: a sibling in
+/// the same format cache, or one in the shared store.
+fn reusable_format(build: &FormatBuild<'_>) -> Option<(PathBuf, FormatInputs)> {
+    let mut candidates = Vec::new();
+    for directory in build
+        .target
+        .parent()
+        .into_iter()
+        .chain(shared_format_store(build).as_deref())
+    {
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path == build.staging
+                || entry.file_name().to_string_lossy().starts_with('.')
+                || !entry.file_type().is_ok_and(|kind| kind.is_dir())
+            {
+                continue;
+            }
+            let modified = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok();
+            candidates.push((modified, path));
+        }
+    }
+    candidates.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    let roots = format_input_roots(build);
+    let mut digests = BTreeMap::new();
+    candidates
+        .into_iter()
+        .take(MAX_FORMAT_CANDIDATES)
+        .find_map(|(_, candidate)| {
+            let inputs = read_format_inputs(&candidate)?;
+            let format = candidate
+                .join("formats")
+                .join(format!("{}.fmt", build.recipe.name));
+            (fs::symlink_metadata(&format).is_ok_and(|metadata| metadata.is_file())
+                && inputs_match(&inputs, build, &roots, &mut digests))
+            .then_some((format, inputs))
+        })
+}
+
+/// Offer a freshly generated format to other build directories through the
+/// shared store, named by its inputs. Only this parent writes there.
+fn share_format(build: &FormatBuild<'_>, inputs: &FormatInputs) -> Result<(), TexeError> {
+    let Some(store) = shared_format_store(build) else {
+        return Ok(());
+    };
+    // A format already in the runtime cache is found there as a sibling.
+    if store
+        .parent()
+        .is_some_and(|cache| build.target.starts_with(cache))
+    {
+        return Ok(());
+    }
+    let serialized = serde_json::to_vec(inputs).map_err(|source| TexeError::Json {
+        path: store.clone(),
+        source,
+    })?;
+    let name = hex::encode(Sha256::digest(&serialized));
+    let destination = store.join(&name);
+    if destination.exists() {
+        return Ok(());
+    }
+    let staging = store.join(format!(".{name}.{}.tmp", std::process::id()));
+    let result = (|| {
+        let formats = staging.join("formats");
+        fs::create_dir_all(&formats).map_err(|source| TexeError::Io {
+            path: formats.clone(),
+            source,
+        })?;
+        let file = format!("{}.fmt", build.recipe.name);
+        fs::copy(
+            build.target.join("formats").join(&file),
+            formats.join(&file),
+        )
+        .map_err(|source| TexeError::Io {
+            path: formats.join(&file),
+            source,
+        })?;
+        write_format_inputs(&staging, inputs)?;
+        match fs::rename(&staging, &destination) {
+            Ok(()) => Ok(()),
+            Err(_) if destination.is_dir() => Ok(()),
+            Err(source) => Err(TexeError::Io {
+                path: destination.clone(),
+                source,
+            }),
+        }
+    })();
+    if staging.exists() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
 }
 
 fn prepare_format_configuration(build: &FormatBuild<'_>) -> Result<(), TexeError> {
@@ -1022,5 +1376,79 @@ mod tests {
             assert_eq!(fs::read(&source).unwrap(), b"research source", "{alias}");
             assert_eq!(fs::read_dir(&research).unwrap().count(), 1, "{alias}");
         }
+    }
+
+    #[test]
+    fn recorded_format_inputs_are_placed_in_their_trees() {
+        use super::{FormatInputRoot, recorded_inputs};
+        let roots = [
+            (
+                FormatInputRoot::Staging,
+                Path::new("/p/.texe/build/formats/.stage").into(),
+            ),
+            (
+                FormatInputRoot::Packages,
+                Path::new("/p/.texe/texmf").into(),
+            ),
+            (
+                FormatInputRoot::Runtime,
+                Path::new("/home/texe/toolchains/tl").into(),
+            ),
+        ];
+        let recorder = "PWD /p\n\
+            INPUT /home/texe/toolchains/tl/texmf-dist/web2c/texmf.cnf\n\
+            INPUT /p/.texe/texmf/tex/latex/base/latex.ltx\n\
+            INPUT /dev/null\n\
+            OUTPUT /p/.texe/build/formats/.stage/formats/texsys.aux\n\
+            INPUT /p/.texe/build/formats/.stage/formats/./texsys.aux\n\
+            OUTPUT /p/.texe/build/formats/.stage/formats/pdflatex.log\n\
+            INPUT /p/.texe/build/formats/.stage/config/tex/generic/config/language.dat\n\
+            INPUT /p/.texe/texmf/tex/latex/base/latex.ltx\n";
+        assert_eq!(
+            recorded_inputs(recorder, &roots),
+            Some(vec![
+                (
+                    FormatInputRoot::Staging,
+                    "config/tex/generic/config/language.dat".into()
+                ),
+                (FormatInputRoot::Packages, "tex/latex/base/latex.ltx".into()),
+                (
+                    FormatInputRoot::Runtime,
+                    "texmf-dist/web2c/texmf.cnf".into()
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn formats_that_read_a_project_file_are_never_reused_or_shared() {
+        use super::{FormatInputRoot, recorded_inputs};
+        let roots = [
+            (
+                FormatInputRoot::Staging,
+                Path::new("/p/.texe/build/formats/.stage").into(),
+            ),
+            (
+                FormatInputRoot::Packages,
+                Path::new("/p/.texe/texmf").into(),
+            ),
+            (
+                FormatInputRoot::Runtime,
+                Path::new("/home/texe/toolchains/tl").into(),
+            ),
+        ];
+        let package = "INPUT /p/.texe/texmf/tex/latex/base/latex.ltx\n";
+        for project_file in [
+            // A `.` search path resolving a project file.
+            "INPUT ./cmr10.tfm\n",
+            "INPUT /p/cmr10.tfm\n",
+            "INPUT /p/.texe/texmf/../../hyphen.tex\n",
+            "INPUT /elsewhere/fonttext.cfg\n",
+        ] {
+            let recorder = format!("PWD /p\n{package}{project_file}");
+            assert_eq!(recorded_inputs(&recorder, &roots), None, "{project_file}");
+        }
+        // Relative inputs cannot be placed without a working directory.
+        assert_eq!(recorded_inputs("INPUT tex/latex.ltx\n", &roots), None);
     }
 }

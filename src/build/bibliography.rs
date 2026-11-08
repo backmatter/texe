@@ -252,7 +252,7 @@ fn bibliography_control_digest(
         BibliographyProcessor::Biber => {
             let bytes =
                 super::generated::read_local(&control.path, super::generated::MAX_METADATA)?;
-            hasher.update(bytes);
+            hasher.update(biber_control_identity(&bytes));
         }
         BibliographyProcessor::Bibtex => {
             let root = fs::canonicalize(output_dir).map_err(|source| TexeError::Io {
@@ -263,6 +263,71 @@ fn bibliography_control_digest(
         }
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+/// What of a Biber control file (`.bcf`) Biber's output depends on.
+///
+/// Biber sorts entries by the sorting templates the file declares, so the
+/// order and repetition of citations matter only to a template that sorts by
+/// citation order (`citeorder`, as biblatex's `none` does). Otherwise each
+/// section's set of cited keys is what counts: a later pass that cites the
+/// same keys in another order (floats and captions move once the bibliography
+/// exists) must not rerun Biber on unchanged input. Anything unexpected keeps
+/// the whole file.
+pub(super) fn biber_control_identity(bytes: &[u8]) -> Vec<u8> {
+    if bytes
+        .windows(b"citeorder".len())
+        .any(|window| window == b"citeorder")
+    {
+        return bytes.to_vec();
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return bytes.to_vec();
+    };
+    let mut identity = String::with_capacity(text.len());
+    let mut section: Option<BTreeSet<String>> = None;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if let Some(citation) = trimmed
+            .strip_prefix("<bcf:citekey")
+            .and_then(|rest| rest.strip_suffix("</bcf:citekey>"))
+        {
+            let (Some(keys), Some((attributes, key))) =
+                (section.as_mut(), citation.split_once('>'))
+            else {
+                return bytes.to_vec();
+            };
+            let attributes = attributes
+                .split_whitespace()
+                .filter(|attribute| {
+                    !attribute.starts_with("order=") && !attribute.starts_with("intorder=")
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            keys.insert(format!("{attributes}>{key}"));
+            continue;
+        }
+        if trimmed.starts_with("<bcf:section ") {
+            if section.is_some() {
+                return bytes.to_vec();
+            }
+            section = Some(BTreeSet::new());
+        } else if trimmed == "</bcf:section>" {
+            let Some(keys) = section.take() else {
+                return bytes.to_vec();
+            };
+            for key in keys {
+                identity.push_str("<bcf:citekey ");
+                identity.push_str(&key);
+                identity.push('\n');
+            }
+        }
+        identity.push_str(line);
+    }
+    if section.is_some() {
+        return bytes.to_vec();
+    }
+    identity.into_bytes()
 }
 
 fn persistent_control_digest(
@@ -466,11 +531,14 @@ fn run_bibliography_processor(
             library_dir.as_os_str().to_os_string(),
         ));
     }
-    let hosted = protected && std::env::var_os("TEXE_HOSTED").is_some();
-    // Hosted job filesystems remain non-executable. Only the trusted parent
-    // populates this shared PAR runtime; source interpreters receive read/exec.
+    // Protected runs use the shared PAR runtime of the pinned executable
+    // (outside every project, so also usable where hosted job filesystems are
+    // non-executable). Only the trusted parent populates it, under the shared
+    // cache guard; source interpreters receive read/exec and a per-run view in
+    // the project's build directory.
+    let shared = protected && cfg!(unix);
     let _shared_cache_guard =
-        if hosted {
+        if shared {
             executable
                 .par_cache
                 .as_ref()
@@ -489,14 +557,14 @@ fn run_bibliography_processor(
             .join("biber-cache")
     });
     let par_cache = executable.par_cache.as_ref().map(|cache| {
-        if hosted {
+        if shared {
             cache
         } else {
             private_cache.as_ref().unwrap_or(cache)
         }
     });
     if let Some(cache) = par_cache {
-        if protected && !hosted {
+        if protected && !shared {
             crate::portable::private_directory(
                 project_root,
                 cache.strip_prefix(project_root).map_err(|_| {
@@ -519,56 +587,70 @@ fn run_bibliography_processor(
     }
     let output = if protected {
         if let Some(cache) = par_cache {
-            // Only the pinned processor's version mode runs before isolation,
-            // so its executable PAR files can be extracted without exposing
-            // compiler-driven chmod to the researcher's source tree.
-            // An earlier compiler could have changed its writable PAR cache.
-            // Never execute those bytes in the unsandboxed parent preparation.
-            fs::remove_dir_all(cache).map_err(|source| TexeError::Io {
-                path: cache.clone(),
-                source,
-            })?;
-            if hosted {
-                fs::create_dir_all(cache).map_err(|source| TexeError::Io {
+            // The shared runtime is written only by this trusted parent and is
+            // read/execute-only to every compiler, so one that finished
+            // unpacking stays valid for the same executable. Reuse it rather
+            // than unpacking the PAR bundle again (about 12 s per Biber run).
+            // A project-private runtime (where the shared one is unavailable)
+            // is writable by that project's compilers and is always unpacked
+            // afresh.
+            if !(shared && par_cache_ready(cache, &executable.path)) {
+                // Only the pinned processor's version mode runs before isolation,
+                // so its executable PAR files can be extracted without exposing
+                // compiler-driven chmod to the researcher's source tree.
+                // An earlier compiler could have changed its writable PAR cache.
+                // Never execute those bytes in the unsandboxed parent preparation.
+                fs::remove_dir_all(cache).map_err(|source| TexeError::Io {
                     path: cache.clone(),
                     source,
                 })?;
-            } else {
-                crate::portable::private_directory(
-                    project_root,
-                    cache.strip_prefix(project_root).map_err(|_| {
-                        TexeError::Build("Private bibliography cache is outside the project".into())
-                    })?,
-                )?;
+                if shared {
+                    fs::create_dir_all(cache).map_err(|source| TexeError::Io {
+                        path: cache.clone(),
+                        source,
+                    })?;
+                } else {
+                    crate::portable::private_directory(
+                        project_root,
+                        cache.strip_prefix(project_root).map_err(|_| {
+                            TexeError::Build(
+                                "Private bibliography cache is outside the project".into(),
+                            )
+                        })?,
+                    )?;
+                }
+                let mut warm = crate::process::command(&executable.path);
+                warm.env_clear()
+                    .args(["--noconf", "--version"])
+                    .current_dir(cache);
+                for (name, value) in &environment {
+                    warm.env(name, value);
+                }
+                warm.env("HOME", cache)
+                    .env("TMPDIR", cache)
+                    .env("TEMP", cache)
+                    .env("TMP", cache);
+                let warmed = warm.output().map_err(|source| TexeError::Spawn {
+                    tool: executable.path.clone(),
+                    source,
+                })?;
+                if !warmed.status.success() {
+                    return Err(TexeError::Build(format!(
+                        "Could not prepare the pinned bibliography processor: {}",
+                        String::from_utf8_lossy(&warmed.stderr).trim()
+                    )));
+                }
+                crate::compiler_sandbox::prepare_biber_native_libraries(project_root, cache)?;
+                if shared {
+                    mark_par_cache_ready(cache, &executable.path)?;
+                }
             }
-            let mut warm = crate::process::command(&executable.path);
-            warm.env_clear()
-                .args(["--noconf", "--version"])
-                .current_dir(cache);
-            for (name, value) in &environment {
-                warm.env(name, value);
-            }
-            warm.env("HOME", cache)
-                .env("TMPDIR", cache)
-                .env("TEMP", cache)
-                .env("TMP", cache);
-            let warmed = warm.output().map_err(|source| TexeError::Spawn {
-                tool: executable.path.clone(),
-                source,
-            })?;
-            if !warmed.status.success() {
-                return Err(TexeError::Build(format!(
-                    "Could not prepare the pinned bibliography processor: {}",
-                    String::from_utf8_lossy(&warmed.stderr).trim()
-                )));
-            }
-            crate::compiler_sandbox::prepare_biber_native_libraries(project_root, cache)?;
             #[cfg(unix)]
-            if hosted {
+            if shared {
                 let view = private_cache
                     .as_ref()
                     .ok_or_else(|| TexeError::Build("Missing bibliography cache view".into()))?;
-                prepare_hosted_biber_view(project_root, cache, view)?;
+                prepare_biber_runtime_view(project_root, cache, view)?;
                 for (name, value) in &mut environment {
                     if matches!(name.to_str(), Some("PAR_GLOBAL_TEMP" | "PAR_GLOBAL_TMPDIR")) {
                         view.as_os_str().clone_into(value);
@@ -581,7 +663,7 @@ fn run_bibliography_processor(
             .iter()
             .cloned()
             .chain(super::process::source_read_roots(project_root, manifest)?)
-            .chain(par_cache.filter(|_| hosted).cloned())
+            .chain(par_cache.filter(|_| shared).cloned())
             .collect::<Vec<_>>();
         let executes = par_cache.into_iter().cloned().collect::<Vec<_>>();
         portable_output(
@@ -913,10 +995,40 @@ fn managed_bibliography_path(
     })
 }
 
+/// Marks a shared Biber PAR runtime whose unpacking and native-module
+/// preparation completed, naming the executable it was unpacked from.
+const PAR_READY_MARKER: &str = ".texe-par-ready";
+
+fn executable_digest(executable: &Path) -> Result<String, TexeError> {
+    let bytes = fs::read(executable).map_err(|source| TexeError::Io {
+        path: executable.to_path_buf(),
+        source,
+    })?;
+    Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+/// Whether `cache` holds a completed runtime unpacked from exactly `executable`.
+fn par_cache_ready(cache: &Path, executable: &Path) -> bool {
+    let marker = cache.join(PAR_READY_MARKER);
+    fs::symlink_metadata(&marker).is_ok_and(|metadata| metadata.is_file())
+        && fs::read_to_string(&marker)
+            .ok()
+            .zip(executable_digest(executable).ok())
+            .is_some_and(|(recorded, digest)| recorded.trim() == digest)
+}
+
+fn mark_par_cache_ready(cache: &Path, executable: &Path) -> Result<(), TexeError> {
+    let digest = executable_digest(executable)?;
+    crate::atomic::write(
+        &cache.join(PAR_READY_MARKER),
+        format!("{digest}\n").as_bytes(),
+    )
+}
+
 /// PAR opens inc.lock for writing even when its entire runtime is present.
 /// The job owns that lock; executable links still resolve to trusted cache bytes.
 #[cfg(unix)]
-fn prepare_hosted_biber_view(project: &Path, cache: &Path, view: &Path) -> Result<(), TexeError> {
+fn prepare_biber_runtime_view(project: &Path, cache: &Path, view: &Path) -> Result<(), TexeError> {
     super::generated::validate_parent(project, view)?;
     if view.exists() {
         fs::remove_dir_all(view).map_err(|source| TexeError::Io {
@@ -937,7 +1049,7 @@ fn prepare_hosted_biber_view(project: &Path, cache: &Path, view: &Path) -> Resul
             path: cache.into(),
             source,
         })?;
-        if entry.file_name() == "inc.lock" {
+        if entry.file_name() == "inc.lock" || entry.file_name() == PAR_READY_MARKER {
             continue;
         }
         let target = view.join(entry.file_name());
@@ -1292,5 +1404,30 @@ engine = "pdflatex"
         manifest.bibliography.biber = "./tools/biber".to_string();
         assert!(!persistent_cache_supported(&bibtex, &manifest));
         assert!(!persistent_cache_supported(&biber, &manifest));
+    }
+
+    #[test]
+    fn biber_reruns_follow_the_cited_keys_not_their_order() {
+        use super::biber_control_identity;
+        let control = |citations: &str, template: &str| {
+            format!(
+                "<?xml version=\"1.0\"?>\n<bcf:controlfile>\n  <bcf:sortingtemplate name=\"{template}\">\n  <bcf:section number=\"0\">\n{citations}  </bcf:section>\n</bcf:controlfile>\n"
+            )
+        };
+        let first = "    <bcf:citekey order=\"1\" intorder=\"1\">gu2020hippo</bcf:citekey>\n    <bcf:citekey order=\"2\" intorder=\"1\">dao2023hungry</bcf:citekey>\n";
+        // A later pass cites the same keys in another order, one of them twice.
+        let reordered = "    <bcf:citekey order=\"1\" intorder=\"1\">dao2023hungry</bcf:citekey>\n    <bcf:citekey order=\"2\" intorder=\"1\">gu2020hippo</bcf:citekey>\n    <bcf:citekey order=\"3\" intorder=\"1\">dao2023hungry</bcf:citekey>\n";
+        let added = "    <bcf:citekey order=\"1\" intorder=\"1\">gu2020hippo</bcf:citekey>\n    <bcf:citekey order=\"2\" intorder=\"1\">pile</bcf:citekey>\n";
+        let id = |citations: &str, template: &str| {
+            biber_control_identity(control(citations, template).as_bytes())
+        };
+        assert_eq!(id(first, "nyt"), id(reordered, "nyt"));
+        assert_ne!(id(first, "nyt"), id(added, "nyt"));
+        // Sorting by citation order (biblatex's `none`) depends on the order.
+        let by_citation = "nyt\"><bcf:sortitem order=\"1\">citeorder</bcf:sortitem><x name=\"";
+        assert_ne!(id(first, by_citation), id(reordered, by_citation));
+        // A citation outside any section keeps the whole file.
+        let stray = "<bcf:citekey order=\"1\" intorder=\"1\">x</bcf:citekey>\n";
+        assert_eq!(biber_control_identity(stray.as_bytes()), stray.as_bytes());
     }
 }

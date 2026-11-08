@@ -476,7 +476,9 @@ mod warnings;
 
 use artifact::{BuildTimestamp, PublishedBuild, publish_artifact, resolve_build_timestamp};
 use errors::{engine_failure, package_error_with_engine_context};
-use filesystem::{auxiliary_snapshot, find_artifact, job_stem, mirror_project_directories};
+use filesystem::{
+    auxiliary_settled, auxiliary_snapshot, find_artifact, job_stem, mirror_project_directories,
+};
 use warnings::collect_warnings;
 
 impl<'a> BuildContext<'a> {
@@ -900,7 +902,10 @@ impl<'a> BuildContext<'a> {
                 continue;
             }
             let auxiliary = auxiliary_snapshot(&self.output_dir)?;
-            if previous_auxiliary.as_ref() == Some(&auxiliary) {
+            if previous_auxiliary
+                .as_ref()
+                .is_some_and(|previous| auxiliary_settled(previous, &auxiliary))
+            {
                 return artifact.ok_or_else(|| {
                     TexeError::Build(format!(
                         "{} succeeded but produced no PDF or DVI in {}",
