@@ -242,9 +242,10 @@ fn verify_plain_tree(tree: &Path) -> Result<(), TexeError> {
 mod tests {
     use std::fs;
 
-    use super::{
-        READY_MARKER, READY_SCHEMA, ReadyMarker, TREE, is_ready, trees_root_in, verify_plain_tree,
-    };
+    use super::{READY_MARKER, READY_SCHEMA, ReadyMarker, TREE, is_ready, trees_root_in};
+    // Only the Unix link test needs it.
+    #[cfg(unix)]
+    use super::verify_plain_tree;
 
     const FINGERPRINT: &str =
         "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
