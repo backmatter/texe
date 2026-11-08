@@ -286,14 +286,22 @@ pub(super) fn run_fetch(
     .with_machine_output(presentation.json);
     let lock = root.join(&context.manifest.packages.lock);
     crate::lockfile::restore_package_lock(root, &lock, &toolchain.identity, frozen)?;
-    tools.install(
-        root,
-        &context.manifest,
-        &toolchain,
-        &lock,
-        &root.join(&context.manifest.packages.texmf),
-        &progress,
-    )?;
+    if build::shared_tree::enabled(root, &context.manifest, &toolchain) {
+        // Hosted Papers build against the environment's shared tree.
+        let build_root = root.join(&context.manifest.project.build_dir);
+        crate::portable::private_directory(root, &context.manifest.project.build_dir)?;
+        let environment = tools.environment(root, &lock, &build_root.join("pqty.env.json"))?;
+        build::shared_tree::ensure(&tools, root, &toolchain, &lock, &environment, &progress)?;
+    } else {
+        tools.install(
+            root,
+            &context.manifest,
+            &toolchain,
+            &lock,
+            &root.join(&context.manifest.packages.texmf),
+            &progress,
+        )?;
+    }
     let package_bytes =
         crate::build::generated::read_local(&lock, crate::build::generated::MAX_METADATA)?;
     let packages: serde_json::Value =

@@ -72,6 +72,26 @@ pub(super) fn source_read_roots(
     Ok(sources)
 }
 
+/// Trees outside the project that every compiler of this build may read but
+/// never write: the shared package trees of hosted builds.
+static SHARED_READ_ROOTS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn add_shared_read_root(root: PathBuf) {
+    let mut roots = SHARED_READ_ROOTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !roots.contains(&root) {
+        roots.push(root);
+    }
+}
+
+fn shared_read_roots() -> Vec<PathBuf> {
+    SHARED_READ_ROOTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn portable_output(
     root: &Path,
@@ -85,6 +105,7 @@ pub(super) fn portable_output(
     extra_executes: &[PathBuf],
 ) -> Result<Output, TexeError> {
     let mut reads = extra_reads.to_vec();
+    reads.extend(shared_read_roots());
     let mut executes = extra_executes.to_vec();
     if let Some(runtime) = &toolchain.managed {
         reads.push(runtime.root.clone());

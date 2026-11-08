@@ -185,6 +185,17 @@ set `TEXE_HOST_SECCOMP_PATH` to an operator-owned Linux BPF filter. The filter
 is intersected with texe's compiler policy for every source interpreter.
 Fetch can use an explicit proxy; protected offline builds never need it.
 
+Hosted protected builds do not copy their packages into each Paper. Each
+locked environment is materialized once into
+`TEXE_HOME/package-trees/<fingerprint>/texmf`, named by the pqty environment
+fingerprint (which covers every provider's integrity and file path), and every
+engine, bibliography and index run of a Paper with that environment reads it
+there. texe installs a tree from the trusted default package store, checks
+that it holds only plain files and directories, and marks it complete before
+renaming it into place; an incomplete or unmarked tree is never used.
+Compilers may read the tree but not write it, and a Paper cannot name it.
+Shipout builds keep their own tree.
+
 Locked formats retain Knuth's English patterns as language zero and enable
 additional languages whose registry declarations and complete pattern files are
 already in the package closure. The declarations come from the exact pqty lock,
