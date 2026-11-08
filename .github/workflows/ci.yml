@@ -255,6 +255,14 @@ jobs:
           PQTY_REPO: ${{ github.workspace }}/pqty
         run: cargo xtask verify platform
 
+      # Hosted-only paths under the Citet latex-worker's outer Landlock policy;
+      # fails if the runner cannot enforce Landlock V3.
+      - name: Run hosted builds under the latex-worker sandbox
+        if: matrix.platform == 'Linux x86-64'
+        env:
+          PQTY_REPO: ${{ github.workspace }}/pqty
+        run: cargo xtask verify hosted
+
   dependency-policy:
     name: Dependency security, licenses, and sources
     runs-on: ubuntu-latest

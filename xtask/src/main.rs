@@ -7,6 +7,8 @@ mod pqty;
 mod render;
 mod snapshot;
 mod verify;
+#[cfg(target_os = "linux")]
+mod worker_sandbox;
 
 use std::error::Error;
 use std::io;
@@ -48,6 +50,30 @@ enum XtaskCommand {
     },
     /// Generate a pinned TeX Live snapshot recipe.
     Snapshot(SnapshotArgs),
+    /// Apply the Citet latex-worker's Landlock policy, then run a command.
+    #[cfg(target_os = "linux")]
+    #[command(name = "__worker-sandbox", hide = true)]
+    WorkerSandbox(WorkerSandboxArgs),
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Args)]
+struct WorkerSandboxArgs {
+    /// Worker stage: fetch or compile.
+    #[arg(long)]
+    stage: String,
+    /// TEXE_HOME, the worker's TEXE_CACHE.
+    #[arg(long)]
+    texe_home: PathBuf,
+    /// The job directory.
+    #[arg(long)]
+    job: PathBuf,
+    /// Directory holding texe, pqty and pqty-fls.
+    #[arg(long)]
+    binaries: PathBuf,
+    /// Command and arguments to run.
+    #[arg(last = true, required = true)]
+    command: Vec<std::ffi::OsString>,
 }
 
 #[derive(Debug, Args)]
@@ -70,6 +96,7 @@ enum VerifyCase {
     Bibliography,
     Index,
     Local,
+    Hosted,
 }
 
 impl VerifyCase {
@@ -83,6 +110,7 @@ impl VerifyCase {
             Self::Bibliography => "bibliography",
             Self::Index => "index",
             Self::Local => "local",
+            Self::Hosted => "hosted",
         }
     }
 }
@@ -204,6 +232,14 @@ fn run(cli: Cli) -> Result<()> {
                 render::winget(&options.version, &options.sha256, &options.output)
             }
         },
+        #[cfg(target_os = "linux")]
+        XtaskCommand::WorkerSandbox(options) => worker_sandbox::launch(
+            &options.stage,
+            &options.texe_home,
+            &options.job,
+            &options.binaries,
+            &options.command,
+        ),
         XtaskCommand::Snapshot(options) => snapshot::generate(
             &options.snapshot,
             &options.base,
