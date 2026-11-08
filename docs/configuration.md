@@ -192,3 +192,16 @@ so frozen offline builds do not fetch language metadata. texe generates the
 TeX and Lua language configuration from that metadata and preserves declared
 synonyms, minima and Lua-specific restrictions. This does not infer or install
 arbitrary languages from document text.
+
+Each generated format records the files initex read (from `-recorder`) with
+their SHA-256, relative to the format staging, the locked package tree or the
+managed runtime. A format is reused instead of regenerated whenever every one
+of those files is byte-identical in the current build, so adding a package
+that the format never reads (a font provider found during discovery) keeps it.
+Protected builds also offer their formats to other build directories through
+`TEXE_HOME/formats/by-inputs`; a build takes one only after hashing its own copy
+of every recorded input. A format that read anything else, such as a project
+file through a `.` search path, is neither reused nor shared. Protected builds
+unpack the pinned Biber runtime once per executable into `TEXE_HOME`, which
+compilers can read and execute but not modify, and give each run its own view
+of it.
