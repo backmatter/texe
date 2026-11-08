@@ -15,10 +15,11 @@
 //! The locks come from an ordinary build outside the sandbox, as the Citet
 //! server keeps them. Landlock V3 must be enforceable: in CI a runner that
 //! cannot enforce it fails this case; elsewhere the case is skipped.
-use std::ffi::OsString;
-use std::path::Path;
 #[cfg(target_os = "linux")]
-use std::path::PathBuf;
+use std::ffi::OsString;
+#[cfg(target_os = "linux")]
+use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
 use std::process::Output;
 
 use super::SuiteBinaries;
@@ -220,6 +221,7 @@ fn worker_environment(command: &mut std::process::Command, home: &Path, job: &Pa
         .env("TEXE_COMPILER_TIMEOUT_SECONDS", "600");
 }
 
+#[cfg(target_os = "linux")]
 fn successful(what: &str, output: &Output) -> Result<()> {
     if output.status.success() {
         return Ok(());
