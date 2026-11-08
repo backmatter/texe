@@ -1215,11 +1215,10 @@ fn apply(policy: &Policy) -> Result<(), TexeError> {
 }
 
 fn validate_biber_cache(project: &Path, cache: &Path) -> Result<(), TexeError> {
-    if std::env::var_os("TEXE_HOSTED").is_some() {
-        let home = canonical(&crate::toolchain::texe_data_home()?)?;
-        if cache.starts_with(&home) && !cache.starts_with(project) {
-            return Ok(());
-        }
+    // The shared runtime of the pinned executable, outside every project.
+    let home = canonical(&crate::toolchain::texe_data_home()?)?;
+    if cache.starts_with(&home) && !cache.starts_with(project) {
+        return Ok(());
     }
     Policy::new(project, &[cache.to_owned()], &[], &[]).map(|_| ())
 }

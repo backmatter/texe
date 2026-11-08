@@ -128,6 +128,37 @@ fn convergence_snapshot_tracks_nested_include_auxiliaries() {
 }
 
 #[test]
+fn a_pass_that_only_settles_a_latex_rerun_request_is_stable() {
+    let snapshot = |aux: &str, request: &str| {
+        BTreeMap::from([
+            (PathBuf::from("main.aux"), aux.as_bytes().to_vec()),
+            (PathBuf::from("main.run.xml"), request.as_bytes().to_vec()),
+        ])
+    };
+    let pending = r#"<requests><internal package="biblatex" priority="9" active="1">"#;
+    let settled = r#"<requests><internal package="biblatex" priority="9" active="0">"#;
+    // biblatex settles its request without changing anything LaTeX reads.
+    assert!(auxiliary_settled(
+        &snapshot("a", pending),
+        &snapshot("a", settled)
+    ));
+    // A pass that still asks for another run, or changed what LaTeX reads, is not.
+    assert!(!auxiliary_settled(
+        &snapshot("a", settled),
+        &snapshot("a", pending)
+    ));
+    assert!(!auxiliary_settled(
+        &snapshot("a", pending),
+        &snapshot("b", settled)
+    ));
+    // Unchanged state stays stable, whatever it requests.
+    assert!(auxiliary_settled(
+        &snapshot("a", pending),
+        &snapshot("a", pending)
+    ));
+}
+
+#[test]
 fn frozen_texinputs_has_no_system_fallback() {
     let value = package_search_path_value(
         Path::new("/tmp/project"),
@@ -588,7 +619,7 @@ use crate::build::engine::{
 use crate::build::environment::{EngineEnvironmentContext, engine_environment};
 use crate::build::errors::{LOG_EXCERPT_LINES, engine_failure_detail, engine_log_excerpt};
 use crate::build::filesystem::{
-    auxiliary_snapshot, mirror_project_directories, package_search_path_value,
+    auxiliary_settled, auxiliary_snapshot, mirror_project_directories, package_search_path_value,
 };
 use crate::build::format::ManagedFormat;
 use crate::build::warnings::collect_warnings;

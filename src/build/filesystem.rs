@@ -137,6 +137,14 @@ pub(super) fn auxiliary_snapshot(
                 .strip_prefix(directory)
                 .expect("auxiliary came from the output directory")
                 .to_path_buf();
+            // LaTeX never reads the Biber control file: only what Biber's
+            // output depends on can make another pass necessary, not the
+            // order a moving float cites the same keys in.
+            let bytes = if path.extension() == Some(OsStr::new("bcf")) {
+                super::bibliography::biber_control_identity(&bytes)
+            } else {
+                bytes
+            };
             snapshot.insert(relative, bytes);
         }
     }
@@ -166,10 +174,52 @@ fn is_auxiliary(path: &Path) -> bool {
                 | "nav"
                 | "snm"
         )
-    ) || path
-        .file_name()
+    ) || is_request_file(path)
+}
+
+fn is_request_file(path: &Path) -> bool {
+    path.file_name()
         .and_then(OsStr::to_str)
         .is_some_and(|name| name.ends_with(".run.xml"))
+}
+
+/// Whether a pass left the auxiliary state settled after `previous`.
+///
+/// Everything a later pass reads must be unchanged. A `.run.xml` request file
+/// (logreq, which LaTeX writes but never reads back) may differ only by no
+/// longer asking for another LaTeX run: biblatex's request flips from
+/// `active="1"` to `active="0"` in the pass that settles it, and repeating
+/// that pass cannot change the output.
+pub(super) fn auxiliary_settled(
+    previous: &BTreeMap<PathBuf, Vec<u8>>,
+    current: &BTreeMap<PathBuf, Vec<u8>>,
+) -> bool {
+    if previous == current {
+        return true;
+    }
+    read_by_latex(previous).eq(read_by_latex(current))
+        && previous
+            .keys()
+            .filter(|path| is_request_file(path))
+            .eq(current.keys().filter(|path| is_request_file(path)))
+        && current
+            .iter()
+            .filter(|(path, _)| is_request_file(path))
+            .all(|(_, bytes)| !requests_latex_rerun(bytes))
+}
+
+/// The auxiliary files a later pass reads (everything but request files).
+fn read_by_latex(
+    snapshot: &BTreeMap<PathBuf, Vec<u8>>,
+) -> impl Iterator<Item = (&PathBuf, &Vec<u8>)> {
+    snapshot.iter().filter(|(path, _)| !is_request_file(path))
+}
+
+/// Whether a logreq file still asks for another LaTeX run.
+fn requests_latex_rerun(bytes: &[u8]) -> bool {
+    String::from_utf8_lossy(bytes)
+        .split('<')
+        .any(|element| element.starts_with("internal ") && element.contains("active=\"1\""))
 }
 
 pub(super) fn find_artifact(output_dir: &Path, entry: &Path) -> Option<PathBuf> {
