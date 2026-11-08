@@ -353,7 +353,12 @@ fn prepare_format_configuration(build: &FormatBuild<'_>) -> Result<(), TexeError
     }
     write_pdftex_map(
         build.texmf,
-        &["pdftex35.map"],
+        // TeX Live's updmap default (pdftexDownloadBase14 = true): the base
+        // fonts come from ps2pk35.map, which embeds the URW outlines. The
+        // pdftex35.map alternative leaves Symbol and ZapfDingbats unembedded
+        // with no outline to read, so pdfTeX stops at the first `\ding`
+        // ("builtin glyph names is empty"), as in arXiv 2312.00752.
+        &[FOUNDATIONAL_PDFTEX_MAP],
         &build.package_environment.font_maps,
         &build
             .staging
@@ -674,6 +679,9 @@ fn write_luaotfload_config(target: &Path) -> Result<(), TexeError> {
     )
 }
 
+/// The base-font map TeX Live's updmap puts first in pdftex.map by default.
+const FOUNDATIONAL_PDFTEX_MAP: &str = "ps2pk35.map";
+
 fn write_pdftex_map(
     texmf: &Path,
     foundational_maps: &[&str],
@@ -884,13 +892,14 @@ mod tests {
         let texmf = directory.path().join("texmf");
         let maps = texmf.join("fonts/map/dvips/example");
         fs::create_dir_all(&maps).expect("font map directory");
-        fs::write(maps.join("pdftex35.map"), b"pbkl8r URWBookman\n").expect("foundational map");
+        fs::write(maps.join("ps2pk35.map"), b"pbkl8r URWBookman <ubkl8a.pfb\n")
+            .expect("foundational map");
         fs::write(maps.join("example.map"), b"Example Example-Regular\n").expect("package map");
         let target = directory.path().join("pdftex.map");
 
         write_pdftex_map(
             &texmf,
-            &["pdftex35.map"],
+            &[super::FOUNDATIONAL_PDFTEX_MAP],
             &["example.map".to_string()],
             &target,
         )
