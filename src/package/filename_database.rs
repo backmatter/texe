@@ -29,7 +29,15 @@ pub(super) fn refresh(root: &Path) -> Result<(), TexeError> {
         .ancestors()
         .last()
         .expect("absolute filesystem root");
+    // Every existing ancestor must be a real directory. This check only
+    // inspects metadata, so it works under an outer Landlock policy that
+    // grants nothing on `/`.
     generated::validate_parent(anchor, &absolute)?;
+    // Write relative to the tree itself (checked above to be a real
+    // directory), not the filesystem root: opening `/` to walk down fails
+    // under such a policy whenever the tree lies outside the temporary
+    // directory, as a hosted shared tree in `TEXE_HOME` does.
+    let tree = absolute.parent().expect("ls-R has a parent");
     let mut output =
         "% ls-R -- filename database for kpathsea; do not change this line.\n".to_string();
     visit(root, root, &mut output)?;
@@ -38,7 +46,7 @@ pub(super) fn refresh(root: &Path) -> Result<(), TexeError> {
         .as_deref()
         != Some(output.as_bytes())
     {
-        generated::write(anchor, &absolute, output.as_bytes())?;
+        generated::write(tree, &absolute, output.as_bytes())?;
     }
     Ok(())
 }
@@ -154,6 +162,65 @@ mod tests {
             fs::read_to_string(root.join("ls-R"))
                 .unwrap()
                 .contains("example.sty")
+        );
+    }
+
+    /// A hosted shared tree lies in `TEXE_HOME`, outside the temporary
+    /// directory, and the hosting sandbox grants nothing on `/`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn database_is_written_without_access_to_the_filesystem_root() {
+        use landlock::{
+            ABI, Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr as _,
+            RulesetCreatedAttr as _, RulesetStatus,
+        };
+        // The policy grants only this area, not any ancestor the database
+        // write could anchor at (`/`, or the temporary directory when the
+        // checkout itself lies below it).
+        let outside = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("landlock-ls-r-{}", std::process::id()));
+        let tree = outside.join("package-trees/0123/texmf");
+        fs::create_dir_all(tree.join("tex/latex/example")).unwrap();
+        fs::write(tree.join("tex/latex/example/example.sty"), "package").unwrap();
+        let restricted_tree = tree.clone();
+        let restricted_area = outside.clone();
+        // Landlock restricts only the thread that applies it (and its children).
+        let result = std::thread::spawn(move || {
+            let abi = ABI::V3;
+            let status = Ruleset::default()
+                .handle_access(AccessFs::from_all(abi))
+                .unwrap()
+                .create()
+                .unwrap()
+                .add_rule(PathBeneath::new(
+                    PathFd::new(&restricted_area).unwrap(),
+                    AccessFs::from_all(abi),
+                ))
+                .unwrap()
+                .restrict_self()
+                .unwrap();
+            if status.ruleset != RulesetStatus::FullyEnforced {
+                return None;
+            }
+            // The policy really denies listing `/`.
+            assert!(fs::read_dir("/").is_err());
+            Some(refresh(&restricted_tree).map_err(|error| error.to_string()))
+        })
+        .join()
+        .unwrap();
+        let written = fs::read_to_string(tree.join("ls-R")).ok();
+        fs::remove_dir_all(&outside).unwrap();
+        let Some(result) = result else {
+            eprintln!("skipping: the kernel cannot fully enforce Landlock V3");
+            return;
+        };
+        result.unwrap();
+        assert!(
+            written
+                .unwrap()
+                .contains("./tex/latex/example:\nexample.sty\n")
         );
     }
 }
