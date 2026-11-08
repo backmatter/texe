@@ -1848,6 +1848,7 @@ dependencies = [
  "clap",
  "flate2",
  "hex",
+ "landlock",
  "serde",
  "serde_json",
  "sha2",

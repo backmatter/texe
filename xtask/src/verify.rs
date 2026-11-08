@@ -1,4 +1,5 @@
 mod contracts;
+mod hosted;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,13 +46,18 @@ pub(crate) fn all() -> Result<()> {
         println!("== {selected}");
         case_with_suite(selected, &suite)?;
     }
+    if cfg!(target_os = "linux") {
+        println!("== hosted");
+        hosted::run(&suite)?;
+    }
     Ok(())
 }
 
 pub(crate) fn case(selected: &str, suite_bin: Option<&Path>) -> Result<()> {
     match selected {
         "platform" => platform(suite_bin),
-        "contracts" | "managed" | "luatex" | "common" | "bibliography" | "index" | "local" => {
+        "contracts" | "managed" | "luatex" | "common" | "bibliography" | "index" | "local"
+        | "hosted" => {
             let suite = match suite_bin {
                 Some(directory) => SuiteBinaries::from_directory(directory)?,
                 None => SuiteBinaries::build()?,
@@ -71,6 +77,7 @@ fn case_with_suite(selected: &str, suite: &SuiteBinaries) -> Result<()> {
         "bibliography" => bibliography(suite),
         "index" => index(suite),
         "local" => local(suite),
+        "hosted" => hosted::run(suite),
         _ => Err(message(format!(
             "`{selected}` is not an acceptance verification case"
         ))),

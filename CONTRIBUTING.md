@@ -51,6 +51,7 @@ the managed journeys still exercise clean installations.
 cargo xtask verify contracts   # the three commands against a local registry
 cargo xtask verify local       # build papers with a system TeX Live
 cargo xtask verify platform    # managed install and build checks per platform
+cargo xtask verify hosted      # hosted builds under the Citet worker's sandbox (Linux)
 cargo xtask verify             # Rust checks, contracts, and managed build cases
 ```
 
@@ -60,10 +61,16 @@ cargo xtask verify             # Rust checks, contracts, and managed build cases
 - `verify local` needs system `pdflatex`, `kpsewhich`, and a local
   `texlive.tlpdb`. It covers PDF production, package discovery, frozen
   rebuilds, repeatable output, and recovery from publication failures.
+- `verify hosted` runs `TEXE_HOSTED=1` protected fetches and builds (shared
+  package trees, the shared format store and Biber runtime) under the same
+  Landlock policy as Citet's latex-worker, which grants nothing on `/`. It
+  downloads the pinned tools and packages, needs Linux with Landlock V3, and
+  is skipped where the kernel cannot enforce it, except in CI, where that fails.
 - Plain `cargo xtask verify` reruns the Rust checks, then downloads the pinned
   tools and packages to check pdfLaTeX, LuaLaTeX, bibliographies, indexes, and
   glossaries with empty caches. Install Poppler's `pdffonts` for the font
-  checks. It does not include the `local` or `platform` cases.
+  checks, plus the `hosted` case on Linux. It does not include the `local` or
+  `platform` cases.
 
 Add `--suite-bin /path/to/suite/bin` to any single case to reuse existing
 binaries; the directory must hold all three executables. On Linux you can also
